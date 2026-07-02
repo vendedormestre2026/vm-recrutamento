@@ -115,6 +115,15 @@ CREATE TABLE IF NOT EXISTS vaga_acessos (
 );
 CREATE INDEX IF NOT EXISTS idx_vaga_acessos_job ON vaga_acessos(job_id);
 
+-- Configuracoes gerais (store chave/valor generico). Usado por ora para uma unica
+-- chave: entrevista_automatica_geral. Sem seed: a ausencia de linha significa "usar o
+-- default" (definido em quem le, ex.: obterConfigBool(..., true)).
+CREATE TABLE IF NOT EXISTS configuracoes (
+  chave         TEXT PRIMARY KEY,
+  valor         TEXT NOT NULL,
+  atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Indices uteis
 CREATE INDEX IF NOT EXISTS idx_jobs_ativo            ON jobs(ativo);
 CREATE INDEX IF NOT EXISTS idx_applications_token    ON applications(token);

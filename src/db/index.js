@@ -68,4 +68,10 @@ module.exports = {
   resumoUsoApi: driver.resumoUsoApi,
   usoApiPorOrigem: driver.usoApiPorOrigem,
   ultimasChamadasApi: driver.ultimasChamadasApi,
+
+  // configuracoes (store chave/valor)
+  obterConfig: driver.obterConfig,
+  definirConfig: driver.definirConfig,
+  obterConfigBool: driver.obterConfigBool,
+  definirConfigBool: driver.definirConfigBool,
 };

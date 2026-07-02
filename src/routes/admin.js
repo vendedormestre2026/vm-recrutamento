@@ -338,6 +338,7 @@ router.get('/', (req, res) => {
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
         <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
+        <a class="btn btn--ghost" href="/admin/config">Configurações</a>
         <a class="btn btn--ghost" href="/admin/uso">Custos / Uso API</a>
       </div>
     </div>
@@ -1200,6 +1201,65 @@ router.get('/uso', (req, res) => {
     </p>`;
 
   res.send(paginaAdmin({ titulo: 'Custos / Uso da API', conteudo }));
+});
+
+// ── Configuracoes gerais (Func. 2 — increment 1) ──
+//
+// PRECEDENCIA (decidida; o ROTEAMENTO ainda NAO e implementado aqui — vem no proximo
+// increment): o toggle GERAL e mestre. Geral OFF -> todo o sistema opera em modo
+// Simples (sem entrevista). Geral ON -> cada vaga decide pelo seu proprio toggle
+// (coluna por-vaga que sera criada depois). Default do geral: LIGADO (preserva o
+// comportamento atual em producao — entrevista automatica ativa).
+//
+// ATENCAO: nesta etapa o valor e apenas ARMAZENADO e EXIBIDO. Desligar NAO altera o
+// fluxo do candidato ainda (a UI deixa isso explicito para nao enganar o operador).
+const CHAVE_ENTREVISTA_AUTO = 'entrevista_automatica_geral';
+
+// ── GET /admin/config ── tela de configuracoes gerais ──
+router.get('/config', (req, res) => {
+  const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
+  const salvo = req.query.salvo === '1' ? '<p class="aviso-ok">Configuração salva.</p>' : '';
+
+  const estado = ativo
+    ? '<span class="badge badge--ativa">Ligada</span>'
+    : '<span class="badge badge--encerrada">Desligada</span>';
+
+  const conteudo = `
+    <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
+    <h1>Configurações gerais</h1>
+    ${salvo}
+
+    <section class="rel-sec">
+      <h2>Entrevista automática (geral)</h2>
+      <p style="margin:.2rem 0 1rem;">
+        Estado atual: ${estado}
+      </p>
+      <p class="aviso-alerta">
+        <b>Em breve.</b> Por enquanto este ajuste é apenas armazenado — desligá-lo
+        <b>ainda não altera</b> o fluxo do candidato (a entrevista automática continua
+        acontecendo normalmente). O efeito no roteamento entra em uma próxima atualização.
+      </p>
+      <form method="POST" action="/admin/config/entrevista-automatica">
+        <label class="campo" style="max-width:320px;">
+          <span>Entrevista automática (geral)</span>
+          <select name="ativo">
+            <option value="1"${ativo ? ' selected' : ''}>Ligada</option>
+            <option value="0"${ativo ? '' : ' selected'}>Desligada</option>
+          </select>
+        </label>
+        <button type="submit" class="btn">Salvar</button>
+      </form>
+    </section>`;
+
+  res.send(paginaAdmin({ titulo: 'Configurações gerais', conteudo }));
+});
+
+// ── POST /admin/config/entrevista-automatica ── alterna o toggle geral ──
+router.post('/config/entrevista-automatica', (req, res) => {
+  const b = req.body || {};
+  const ativo = b.ativo === '1' || b.ativo === 'on';
+  db.definirConfigBool(CHAVE_ENTREVISTA_AUTO, ativo);
+  res.redirect('/admin/config?salvo=1');
 });
 
 module.exports = router;

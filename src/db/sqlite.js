@@ -603,6 +603,40 @@ function ultimasChamadasApi(limite = 30) {
     .all(limite);
 }
 
+// ──────────────────────────────────────────────────────────────
+// Configuracoes gerais (store chave/valor generico)
+// ──────────────────────────────────────────────────────────────
+
+// Le uma config (string). Retorna `padrao` quando a chave nao existe (NAO cria linha).
+function obterConfig(chave, padrao = null) {
+  const linha = getDb().prepare('SELECT valor FROM configuracoes WHERE chave = ?').get(chave);
+  return linha ? linha.valor : padrao;
+}
+
+// Grava/atualiza uma config (UPSERT pela PK `chave`; nunca duplica linha). Atualiza
+// atualizado_em a cada gravacao subsequente.
+function definirConfig(chave, valor) {
+  getDb()
+    .prepare(
+      `INSERT INTO configuracoes (chave, valor) VALUES (?, ?)
+       ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, atualizado_em = datetime('now')`,
+    )
+    .run(chave, String(valor));
+}
+
+// Conveniencia booleana (valor e TEXT): true se '1', false se '0', `padrao` se ausente
+// (ou valor inesperado). Espelha definirConfigBool, que grava sempre '1' ou '0'.
+function obterConfigBool(chave, padrao = false) {
+  const v = obterConfig(chave, null);
+  if (v === '1') return true;
+  if (v === '0') return false;
+  return padrao;
+}
+
+function definirConfigBool(chave, valor) {
+  definirConfig(chave, valor ? '1' : '0');
+}
+
 module.exports = {
   getDb,
   aplicarSchema,
@@ -625,6 +659,11 @@ module.exports = {
   resumoUsoApi,
   usoApiPorOrigem,
   ultimasChamadasApi,
+  // configuracoes (store chave/valor)
+  obterConfig,
+  definirConfig,
+  obterConfigBool,
+  definirConfigBool,
   // roteiros
   obterRoteiro,
   obterRoteiroPorNome,
