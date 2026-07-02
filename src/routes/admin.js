@@ -12,6 +12,9 @@
 const express = require('express');
 const { config } = require('../config');
 const db = require('../db');
+const drive = require('../providers/drive');
+const llm = require('../providers/llm');
+const { importarVagaDeBriefing } = require('../lib/importar_vaga');
 const { calcularPontuacaoGeral } = require('../lib/relatorio');
 const { escapeHtml } = require('../views');
 
@@ -810,24 +813,107 @@ router.get('/vagas', (req, res) => {
   res.send(paginaAdmin({ titulo: 'Vagas', conteudo }));
 });
 
-// ── GET /admin/vagas/nova ── formulario de criacao (antes de /:id p/ nao casar como id) ──
-router.get('/vagas/nova', (req, res) => {
-  const erro = req.query.erro === 'titulo'
+// Mensagens de erro do import de briefing, por codigo (fonte unica p/ a rota).
+const MENSAGENS_IMPORT_ERRO = {
+  LINK_INVALIDO:
+    'Link de Google Doc inválido. Cole o link no formato https://docs.google.com/document/d/.../edit',
+  DOC_ERRO:
+    'Link de Google Doc inválido. Cole o link no formato https://docs.google.com/document/d/.../edit',
+  DOC_SEM_ACESSO:
+    'Não consegui acessar o documento. Confirme que ele foi compartilhado como Leitor com o e-mail da conta de serviço e que o link está correto.',
+  DOC_NAO_EXPORTAVEL:
+    'Esse link não é um Google Doc nativo (ex.: PDF não é suportado por ora). Cole o link de um Google Documento.',
+  EXTRACAO_FALHOU:
+    'Não consegui extrair os dados do briefing; preencha manualmente ou tente outro documento.',
+};
+
+// Bloco "Importar de um briefing (Google Doc)" — mini-form independente (nunca aninhado
+// no form de criacao), acima do form de nova vaga. Posta para POST /admin/vagas/importar.
+function blocoImportBriefing(erroImport) {
+  const alerta = erroImport ? `<p class="aviso-alerta">${escapeHtml(erroImport)}</p>` : '';
+  return `
+    <section class="rel-sec" style="border:1px solid var(--linha);border-radius:8px;padding:1rem 1.2rem;margin-bottom:1.5rem;">
+      <h2>Importar de um briefing (Google Doc)</h2>
+      <p style="color:var(--cinza);font-size:.85rem;margin:.2rem 0 1rem;">
+        Cole o link de um Google Documento com o briefing da vaga. A IA lê e pré-preenche
+        os campos abaixo para você revisar. Compartilhe o documento como <b>Leitor</b> com
+        o e-mail da conta de serviço antes de importar.</p>
+      ${alerta}
+      <form method="POST" action="/admin/vagas/importar">
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+          <input type="url" name="briefing_url" placeholder="https://docs.google.com/document/d/.../edit"
+            style="flex:1;min-width:18rem;background:var(--campo);color:var(--offwhite);border:1px solid var(--linha);border-radius:6px;padding:.6rem .7rem;font:inherit;">
+          <button type="submit" class="btn">Importar</button>
+        </div>
+      </form>
+    </section>`;
+}
+
+// Aviso (topo do form) listando os campos que a IA NAO conseguiu preencher, para o admin
+// completar na revisao. Nao impede o salvamento. Lista as chaves cruas dos campos.
+function avisoCamposAusentes(ausentes) {
+  if (!Array.isArray(ausentes) || !ausentes.length) return '';
+  return `<p class="aviso-alerta">A IA não encontrou estes campos no briefing — revise e
+    preencha antes de salvar: <b>${escapeHtml(ausentes.join(', '))}</b>.</p>`;
+}
+
+// Conteudo da tela de nova vaga (compartilhado entre GET /vagas/nova e o re-render do
+// POST /vagas/importar). `vaga` pre-preenche o form (default = vaga em branco); `erroImport`
+// e a mensagem do bloco de import; `ausentes` alimenta o aviso de campos nao preenchidos.
+function htmlNovaVaga({ vaga, erroTituloVazio = false, erroImport = '', ausentes = [] } = {}) {
+  const vagaBase = vaga || { ativo: true, perfil: 'CLOSER' };
+  const erroTitulo = erroTituloVazio
     ? '<p class="aviso-alerta">O título da vaga não pode ficar vazio.</p>'
     : '';
-
-  const conteudo = `
+  return `
     <p><a class="btn btn--ghost" href="/admin/vagas">← Voltar às vagas</a></p>
     <h1>Nova vaga</h1>
-    ${erro}
+    ${blocoImportBriefing(erroImport)}
+    ${avisoCamposAusentes(ausentes)}
+    ${erroTitulo}
     <form method="POST" action="/admin/vagas">
-      ${camposVagaHtml({ ativo: true, perfil: 'CLOSER' }, { perfilEditavel: true })}
+      ${camposVagaHtml(vagaBase, { perfilEditavel: true })}
       <p style="color:var(--cinza);font-size:.85rem;margin-top:-.5rem;">
         O roteiro de entrevista é vinculado automaticamente pelo perfil escolhido.</p>
       <button type="submit" class="btn">Criar vaga</button>
     </form>`;
+}
 
-  res.send(paginaAdmin({ titulo: 'Nova vaga', conteudo }));
+// ── GET /admin/vagas/nova ── formulario de criacao (antes de /:id p/ nao casar como id) ──
+router.get('/vagas/nova', (req, res) => {
+  res.send(
+    paginaAdmin({
+      titulo: 'Nova vaga',
+      conteudo: htmlNovaVaga({ erroTituloVazio: req.query.erro === 'titulo' }),
+    }),
+  );
+});
+
+// ── POST /admin/vagas/importar ── lê um Google Doc, extrai os campos por IA e re-renderiza
+// a MESMA tela de nova vaga pré-preenchida (revisão humana). NUNCA salva: o salvamento
+// segue no POST /vagas. Registrada ANTES de /vagas/:id para não casar como :id. ──
+router.post('/vagas/importar', async (req, res) => {
+  const url = String((req.body && req.body.briefing_url) || '');
+  let resultado;
+  try {
+    resultado = await importarVagaDeBriefing({ url, drive, llm });
+  } catch (e) {
+    // Rede de seguranca: importarVagaDeBriefing ja e best-effort, mas nunca deixamos uma
+    // excecao inesperada derrubar a rota.
+    console.error('[admin/importar] erro inesperado:', e && e.message);
+    resultado = { ok: false, erroCodigo: 'EXTRACAO_FALHOU' };
+  }
+
+  if (!resultado.ok) {
+    const msg = MENSAGENS_IMPORT_ERRO[resultado.erroCodigo] || MENSAGENS_IMPORT_ERRO.EXTRACAO_FALHOU;
+    return res.send(paginaAdmin({ titulo: 'Nova vaga', conteudo: htmlNovaVaga({ erroImport: msg }) }));
+  }
+  return res.send(
+    paginaAdmin({
+      titulo: 'Nova vaga',
+      conteudo: htmlNovaVaga({ vaga: resultado.vaga, ausentes: resultado.ausentes }),
+    }),
+  );
 });
 
 // ── POST /admin/vagas ── cria nova vaga ──
