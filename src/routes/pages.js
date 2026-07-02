@@ -5,9 +5,11 @@
 // e o orbe. O conteudo funcional de cada tela entra nas Fases 1-4.
 
 const express = require('express');
+const { config } = require('../config');
 const db = require('../db');
 const session = require('../lib/session');
 const entrevista = require('../lib/entrevista');
+const { modoEntrevistaAtivo } = require('../lib/modo');
 const { calcularPontuacaoGeral } = require('../lib/relatorio');
 const { pagina, escapeHtml } = require('../views');
 
@@ -20,6 +22,20 @@ function botao(href, texto, variante = 'primario') {
 
 // Gate de sessao: o middleware vive em lib/session.js (session.exigirCandidato).
 const { exigirCandidato } = session;
+
+// Guarda de MODO: bloqueia as telas de ENTREVISTA quando a vaga do candidato esta em
+// modo Simples (geral OFF, ou vaga com entrevista_ativa=0). Roda SEMPRE depois de
+// exigirCandidato (usa req.candidato). Assim, telas de entrevista nunca ficam
+// acessiveis por URL colada / link antigo de e-mail quando o modo e Simples — o
+// candidato e mandado para a confirmacao Simples da sua vaga. A decisao de modo vem
+// so de lib/modo (fail-safe Completo em caso de erro).
+function bloquearSeModoSimples(req, res, next) {
+  const vaga = req.candidato ? db.obterVaga(req.candidato.job_id) : null;
+  if (vaga && !modoEntrevistaAtivo(vaga)) {
+    return res.redirect(`/confirmacao/${vaga.slug}`);
+  }
+  return next();
+}
 
 // Bloco de placeholder padrao para as telas ainda nao implementadas.
 function placeholder({ kicker, titulo, descricao, acao, centro = false, badgeFase = null }) {
@@ -372,19 +388,76 @@ function paginaPreparacao(req) {
 }
 
 // /preparacao (sem slug): back-compat (links antigos, redirect de /instrucoes).
-router.get('/preparacao', exigirCandidato, (req, res) => {
+router.get('/preparacao', exigirCandidato, bloquearSeModoSimples, (req, res) => {
   res.send(paginaPreparacao(req));
 });
 
 // /preparacao/:slug: mesma pagina, com a slug da vaga na URL p/ diferenciar o lead
 // por vaga no GTM. A vaga real e sempre a da SESSAO: se a slug da URL nao bater com
 // a da sessao, redireciona para a slug correta (sem confiar na URL).
-router.get('/preparacao/:slug', exigirCandidato, (req, res) => {
+router.get('/preparacao/:slug', exigirCandidato, bloquearSeModoSimples, (req, res) => {
   const { vaga } = vagaERoteiroDaSessao(req);
   if (vaga && vaga.slug && req.params.slug !== vaga.slug) {
     return res.redirect(`/preparacao/${vaga.slug}`);
   }
   return res.send(paginaPreparacao(req));
+});
+
+// Monta a pagina de confirmacao do modo Simples. O botao de WhatsApp e um LINK <a> (o
+// disparo e o CLIQUE do usuario — nunca window.open automatico, que o mobile bloqueia).
+// O numero vem SO de RECRUITER_WHATSAPP (env); a mensagem e montada no SERVIDOR a partir
+// dos dados da application + titulo da vaga e vai URL-encoded. Sem numero: botao
+// desabilitado + aviso no log (a pagina ainda renderiza).
+function paginaConfirmacaoSimples({ candidato, vaga }) {
+  const nome = nomeCandidato(candidato);
+  const tituloVaga = (vaga && vaga.titulo) || 'a vaga';
+  const telefone = (candidato && candidato.telefone) || 'não informado';
+
+  const numero = String(config.recrutador.whatsapp || '').replace(/\D/g, ''); // wa.me: so digitos
+  const mensagem = `Olá! Nova candidatura para a vaga ${tituloVaga}. Candidato: ${nome}. Telefone: ${telefone}.`;
+
+  let botao;
+  if (numero) {
+    // encodeURIComponent no texto: tambem neutraliza aspas/&, entao o href e seguro no atributo.
+    const href = `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`;
+    botao = `<a class="vm-btn vm-btn--primario" href="${href}" target="_blank" rel="noopener noreferrer">Avisar recrutador no WhatsApp</a>`;
+  } else {
+    console.warn('[confirmacao] RECRUITER_WHATSAPP ausente; botão de WhatsApp desabilitado.');
+    botao = `<button type="button" class="vm-btn vm-btn--primario" disabled aria-disabled="true">Avisar recrutador no WhatsApp</button>
+      <p class="vm-rodape-nota">O canal de WhatsApp ainda não está configurado. Nossa equipe entrará em contato pelos dados da sua candidatura.</p>`;
+  }
+
+  const conteudo = `
+    <section class="vm-hero vm-hero--centro">
+      <p class="vm-kicker">Candidatura recebida</p>
+      <h1 class="vm-title">Tudo certo, ${escapeHtml(candidato.nome || nome)}!</h1>
+      <p class="vm-lead">Recebemos sua candidatura para a vaga ${escapeHtml(tituloVaga)}. Para agilizar, avise nosso recrutador no WhatsApp — é só tocar no botão abaixo.</p>
+      <div class="vm-acoes">
+        ${botao}
+      </div>
+    </section>`;
+
+  return pagina({ titulo: 'Candidatura recebida', tema: 'claro', conteudo });
+}
+
+// ── Confirmacao (modo SIMPLES) — GET /confirmacao/:slug ──
+// Destino do candidato quando a vaga opera em modo Simples: confirma o recebimento da
+// candidatura e oferece um botao para avisar o recrutador no WhatsApp. Sem preparacao,
+// permissoes, entrevista nem relatorio. A vaga real vem SEMPRE da sessao (nao da slug);
+// se a slug da URL divergir, redireciona para a correta. Se a vaga for, na verdade,
+// modo Completo, manda o candidato ao fluxo de entrevista (cada pagina serve so o seu modo).
+router.get('/confirmacao/:slug', exigirCandidato, (req, res) => {
+  const candidato = req.candidato;
+  const vaga = db.obterVaga(candidato.job_id);
+
+  if (vaga && modoEntrevistaAtivo(vaga)) {
+    return res.redirect(`/preparacao/${vaga.slug}`);
+  }
+  if (vaga && vaga.slug && req.params.slug !== vaga.slug) {
+    return res.redirect(`/confirmacao/${vaga.slug}`);
+  }
+
+  return res.send(paginaConfirmacaoSimples({ candidato, vaga }));
 });
 
 // ── Tela 4: Identificacao (fallback — so para quem volta sem sessao) ──
@@ -438,7 +511,7 @@ router.get('/instrucoes', exigirCandidato, (req, res) => res.redirect(302, '/pre
 // camera nao ha entrevista. Quando a permissao e negada/indisponivel, o JS troca o
 // pedido pela tela de bloqueio (data-cam-bloqueio) com a opcao de receber um link por
 // e-mail para retomar depois — nao existe mais "continuar sem camera". ──
-router.get('/permissao-camera', exigirCandidato, (req, res) => {
+router.get('/permissao-camera', exigirCandidato, bloquearSeModoSimples, (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro" data-tela-permissao-camera>
       <div data-cam-pedido>
@@ -475,7 +548,7 @@ router.get('/permissao-camera', exigirCandidato, (req, res) => {
 
 // ── Tela 7: Teste de camera (preview ao vivo). A gravacao em si comeca na entrevista;
 // aqui so confirmamos o enquadramento e reforcamos que havera gravacao em video. ──
-router.get('/teste-camera', exigirCandidato, (req, res) => {
+router.get('/teste-camera', exigirCandidato, bloquearSeModoSimples, (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro" data-tela-teste-camera>
       <p class="vm-kicker">Câmera</p>
@@ -497,7 +570,7 @@ router.get('/teste-camera', exigirCandidato, (req, res) => {
 });
 
 // ── Tela 8: Permissao de microfone (obrigatorio — canal principal da entrevista) ──
-router.get('/permissao-microfone', exigirCandidato, (req, res) => {
+router.get('/permissao-microfone', exigirCandidato, bloquearSeModoSimples, (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro">
       <p class="vm-kicker">Microfone</p>
@@ -520,7 +593,7 @@ router.get('/permissao-microfone', exigirCandidato, (req, res) => {
 });
 
 // ── Tela 9: Teste de microfone (medidor de nivel via Web Audio — sem gravar) ──
-router.get('/teste-microfone', exigirCandidato, (req, res) => {
+router.get('/teste-microfone', exigirCandidato, bloquearSeModoSimples, (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro" data-tela-teste-mic>
       <p class="vm-kicker">Microfone</p>
@@ -556,7 +629,7 @@ router.get('/teste-microfone', exigirCandidato, (req, res) => {
 });
 
 // ── Tela 10: Entrevista (push-to-talk com a Vera) ──
-router.get('/entrevista', exigirCandidato, (req, res) => {
+router.get('/entrevista', exigirCandidato, bloquearSeModoSimples, (req, res) => {
   // Guarda de reentrada: candidato que JA concluiu a entrevista nao pode reabrir a
   // interface (antes, o /start ate criava uma entrevista nova). Mostramos um card de
   // "entrevista concluida" na propria rota — sem redirect silencioso.
@@ -627,7 +700,9 @@ router.get('/entrevista', exigirCandidato, (req, res) => {
 });
 
 // ── Tela 11: Finalizacao ──
-router.get('/finalizacao', (req, res) => {
+// Guardada tambem por modo: candidato de vaga Simples nunca chega aqui pelo fluxo, e
+// se tentar por URL direta e mandado para a confirmacao Simples da sua vaga.
+router.get('/finalizacao', exigirCandidato, bloquearSeModoSimples, (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro vm-final">
       <div class="vm-orb vm-orb--idle" aria-hidden="true">

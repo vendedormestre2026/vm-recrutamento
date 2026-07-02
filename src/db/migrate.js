@@ -60,6 +60,11 @@ function migrar() {
   // Fase 5 - gravacao de video: link compartilhavel do Google Drive por entrevista.
   adicionarColunaSeFaltar('interviews', 'video_url', 'TEXT');
 
+  // Func. 2 - toggle por-vaga do modo do funil: 1 = Completo (entrevista automatica,
+  // comportamento atual), 0 = Simples (so confirmacao + WhatsApp). Default 1 preserva
+  // o comportamento de todas as vagas existentes. So vale quando o toggle GERAL esta ON.
+  adicionarColunaSeFaltar('jobs', 'entrevista_ativa', 'INTEGER NOT NULL DEFAULT 1');
+
   // Fase 5 - consentimento LGPD: momento em que o candidato aceitou a coleta/uso dos
   // dados (checkbox da aplicacao) e a gravacao da entrevista (checkbox do teste de
   // microfone). Texto ISO/UTC, igual aos demais timestamps (datetime('now')).

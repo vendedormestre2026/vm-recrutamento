@@ -102,12 +102,12 @@ function criarVaga(vaga) {
       (slug, titulo, perfil, faixa_pagamento, potencial_ganhos, skills,
        beneficios, atividades, requisitos, secoes_extras,
        endereco, modalidade, regime, horario,
-       descricao, sobre_empresa, roteiro_id, ativo)
+       descricao, sobre_empresa, roteiro_id, ativo, entrevista_ativa)
     VALUES
       (@slug, @titulo, @perfil, @faixa_pagamento, @potencial_ganhos, @skills,
        @beneficios, @atividades, @requisitos, @secoes_extras,
        @endereco, @modalidade, @regime, @horario,
-       @descricao, @sobre_empresa, @roteiro_id, @ativo)
+       @descricao, @sobre_empresa, @roteiro_id, @ativo, @entrevista_ativa)
   `);
   const info = stmt.run({
     slug: vaga.slug,
@@ -128,6 +128,8 @@ function criarVaga(vaga) {
     sobre_empresa: vaga.sobre_empresa || null,
     roteiro_id: vaga.roteiro_id || null,
     ativo: vaga.ativo === false ? 0 : 1,
+    // Default 1 (Completo). So vira 0 (Simples) quando explicitamente desmarcado.
+    entrevista_ativa: vaga.entrevista_ativa === false ? 0 : 1,
   });
   return Number(info.lastInsertRowid);
 }
@@ -153,7 +155,8 @@ function atualizarVaga(id, campos) {
          horario          = @horario,
          descricao        = @descricao,
          sobre_empresa    = @sobre_empresa,
-         ativo            = @ativo
+         ativo            = @ativo,
+         entrevista_ativa = @entrevista_ativa
        WHERE id = @id`,
     )
     .run({
@@ -173,6 +176,7 @@ function atualizarVaga(id, campos) {
       descricao: campos.descricao || null,
       sobre_empresa: campos.sobre_empresa || null,
       ativo: campos.ativo === false ? 0 : 1,
+      entrevista_ativa: campos.entrevista_ativa === false ? 0 : 1,
     });
 }
 

@@ -695,7 +695,16 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
     <label class="campo-check">
       <input type="checkbox" name="ativo" value="1"${vaga.ativo ? ' checked' : ''}>
       <span style="color:var(--offwhite);text-transform:none;">Vaga ativa</span>
-    </label>`;
+    </label>
+
+    <label class="campo-check">
+      <input type="checkbox" name="entrevista_ativa" value="1"${vaga.entrevista_ativa !== 0 ? ' checked' : ''}>
+      <span style="color:var(--offwhite);text-transform:none;">Entrevista automática (modo Completo)</span>
+    </label>
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+      Marcada: o candidato passa pela entrevista com a Vera (fluxo completo). Desmarcada:
+      modo Simples — só confirmação + botão de WhatsApp, sem entrevista. Só tem efeito
+      quando a <b>Entrevista automática (geral)</b> está ligada em Configurações.</p>`;
 }
 
 // Bloco "Links por etapa": URLs ABSOLUTAS (config.baseUrl + caminho) de cada etapa
@@ -842,6 +851,7 @@ router.post('/vagas', (req, res) => {
     sobre_empresa: String(b.sobre_empresa || '').trim(),
     roteiro_id: roteiro ? roteiro.id : null,
     ativo: b.ativo === '1' || b.ativo === 'on',
+    entrevista_ativa: b.entrevista_ativa === '1' || b.entrevista_ativa === 'on',
     ...lerCamposRicos(b),
   });
 
@@ -900,6 +910,7 @@ router.post('/vagas/:id', (req, res) => {
     descricao: String(b.descricao || '').trim(),
     sobre_empresa: String(b.sobre_empresa || '').trim(),
     ativo: b.ativo === '1' || b.ativo === 'on',
+    entrevista_ativa: b.entrevista_ativa === '1' || b.entrevista_ativa === 'on',
     ...lerCamposRicos(b),
   });
 
@@ -1235,9 +1246,11 @@ router.get('/config', (req, res) => {
         Estado atual: ${estado}
       </p>
       <p class="aviso-alerta">
-        <b>Em breve.</b> Por enquanto este ajuste é apenas armazenado — desligá-lo
-        <b>ainda não altera</b> o fluxo do candidato (a entrevista automática continua
-        acontecendo normalmente). O efeito no roteamento entra em uma próxima atualização.
+        <b>Este ajuste vale de fato.</b> É o interruptor <b>mestre</b>:
+        <b>Desligada</b> → todas as vagas operam em modo Simples (sem entrevista; só
+        confirmação + WhatsApp), independentemente do ajuste de cada vaga.
+        <b>Ligada</b> → cada vaga decide pelo próprio campo
+        <b>Entrevista automática (modo Completo)</b> no formulário da vaga.
       </p>
       <form method="POST" action="/admin/config/entrevista-automatica">
         <label class="campo" style="max-width:320px;">

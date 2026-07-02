@@ -15,6 +15,7 @@ const db = require('../db');
 const session = require('../lib/session');
 const { extrairTextoPdf } = require('../lib/curriculo');
 const entrevista = require('../lib/entrevista');
+const { modoEntrevistaAtivo } = require('../lib/modo');
 // Adaptadores agnosticos (interface). Os SDKs/chaves so sao tocados quando
 // INTERVIEW_MOCK=false; em mock estes modulos nem sao exercitados.
 const llm = require('../providers/llm');
@@ -209,10 +210,14 @@ router.post('/aplicacao', (req, res) => {
         );
       }
 
-      // Grava a sessao do candidato e manda o front redirecionar para a
-      // /preparacao/:slug da vaga (URL por etapa p/ rastreio no GTM).
+      // Grava a sessao do candidato e bifurca o funil (Func. 2), com a decisao
+      // centralizada em lib/modo: modo COMPLETO -> /preparacao/:slug (entrevista, URL
+      // por etapa p/ rastreio no GTM); modo SIMPLES -> /confirmacao/:slug (so WhatsApp).
       session.setToken(res, token);
-      return res.json({ ok: true, redirect: `/preparacao/${vaga.slug}` });
+      const destino = modoEntrevistaAtivo(vaga)
+        ? `/preparacao/${vaga.slug}`
+        : `/confirmacao/${vaga.slug}`;
+      return res.json({ ok: true, redirect: destino });
     } catch (erro) {
       console.error('[api/aplicacao] erro:', erro.message);
       return res

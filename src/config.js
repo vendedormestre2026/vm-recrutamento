@@ -60,6 +60,9 @@ const config = {
 
   recrutador: {
     email: process.env.RECRUITER_EMAIL || '',
+    // WhatsApp do recrutador (modo Simples): usado SOMENTE aqui, a partir do env —
+    // nunca de query string, tela ou conteudo do candidato. Vazio = botao desabilitado.
+    whatsapp: process.env.RECRUITER_WHATSAPP || '',
   },
 
   // Painel do recrutador: credenciais fixas (usuario + senha) da tela de login do
