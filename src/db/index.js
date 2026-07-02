@@ -59,6 +59,7 @@ module.exports = {
   // painel do recrutador (Fase 5)
   listarAplicacoesComContexto: driver.listarAplicacoesComContexto,
   obterReportPorInterview: driver.obterReportPorInterview,
+  registrarAcessoVaga: driver.registrarAcessoVaga,
   contarAplicacoes: driver.contarAplicacoes,
   contarEntrevistasConcluidas: driver.contarEntrevistasConcluidas,
 

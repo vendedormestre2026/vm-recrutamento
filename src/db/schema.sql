@@ -105,6 +105,16 @@ CREATE TABLE IF NOT EXISTS api_usage (
   custo_usd         REAL NOT NULL DEFAULT 0
 );
 
+-- Acessos a pagina publica da vaga (topo do funil: Acessos -> Aplicacoes ->
+-- Entrevistas -> Pre-aprovados). Um registro por acesso (preserva timestamp p/
+-- recorte por periodo depois); a agregacao/visualizacao vem em increments futuros.
+CREATE TABLE IF NOT EXISTS vaga_acessos (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id    INTEGER NOT NULL REFERENCES jobs(id),
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_vaga_acessos_job ON vaga_acessos(job_id);
+
 -- Indices uteis
 CREATE INDEX IF NOT EXISTS idx_jobs_ativo            ON jobs(ativo);
 CREATE INDEX IF NOT EXISTS idx_applications_token    ON applications(token);

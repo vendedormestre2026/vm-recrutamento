@@ -89,6 +89,14 @@ router.get('/vaga/:slug', (req, res) => {
     );
   }
 
+  // Registra o acesso (topo do funil) em fire-and-forget: nunca bloqueia nem quebra
+  // o render por causa de metrica. So chega aqui apos os gates 404/inativa acima.
+  try {
+    db.registrarAcessoVaga(vaga.id);
+  } catch (e) {
+    console.error('[vaga] falha ao registrar acesso (métrica, ignorado):', e.message);
+  }
+
   const esc = escapeHtml;
 
   // Monta uma <section> "titulo (h2) + lista". Retorna '' quando nao ha itens

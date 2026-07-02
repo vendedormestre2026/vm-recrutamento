@@ -494,6 +494,13 @@ function obterReportPorInterview(interviewId) {
   );
 }
 
+// Registra UM acesso a pagina publica da vaga (topo do funil). Uma linha por acesso
+// (inclui refresh) — deduplicacao por sessao/bot fica como refinamento futuro. O
+// criado_em usa o default da tabela (datetime('now')).
+function registrarAcessoVaga(jobId) {
+  getDb().prepare('INSERT INTO vaga_acessos (job_id) VALUES (?)').run(jobId);
+}
+
 // Totais para o rodape do painel.
 function contarAplicacoes() {
   return getDb().prepare('SELECT COUNT(*) AS n FROM applications').get().n;
@@ -610,6 +617,7 @@ module.exports = {
   // painel (Fase 5)
   listarAplicacoesComContexto,
   obterReportPorInterview,
+  registrarAcessoVaga,
   contarAplicacoes,
   contarEntrevistasConcluidas,
   // uso/custo de API (monitoramento de custos)
