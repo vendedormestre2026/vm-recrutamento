@@ -823,6 +823,8 @@ const MENSAGENS_IMPORT_ERRO = {
     'Não consegui acessar o documento. Confirme que ele foi compartilhado como Leitor com o e-mail da conta de serviço e que o link está correto.',
   DOC_NAO_EXPORTAVEL:
     'Esse link não é um Google Doc nativo (ex.: PDF não é suportado por ora). Cole o link de um Google Documento.',
+  EXTRACAO_TRUNCADA:
+    'O briefing é muito extenso para a extração automática. Tente novamente ou resuma o documento.',
   EXTRACAO_FALHOU:
     'Não consegui extrair os dados do briefing; preencha manualmente ou tente outro documento.',
 };
@@ -839,13 +841,31 @@ function blocoImportBriefing(erroImport) {
         os campos abaixo para você revisar. Compartilhe o documento como <b>Leitor</b> com
         o e-mail da conta de serviço antes de importar.</p>
       ${alerta}
-      <form method="POST" action="/admin/vagas/importar">
+      <form method="POST" action="/admin/vagas/importar" data-form-import>
         <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
-          <input type="url" name="briefing_url" placeholder="https://docs.google.com/document/d/.../edit"
+          <input type="url" name="briefing_url" required placeholder="https://docs.google.com/document/d/.../edit"
             style="flex:1;min-width:18rem;background:var(--campo);color:var(--offwhite);border:1px solid var(--linha);border-radius:6px;padding:.6rem .7rem;font:inherit;">
-          <button type="submit" class="btn">Importar</button>
+          <button type="submit" class="btn" data-btn-import>Importar</button>
         </div>
+        <p style="color:var(--cinza);font-size:.8rem;margin:.5rem 0 0;">
+          Isso pode levar alguns segundos (a IA está lendo o documento).</p>
       </form>
+      <script>
+        (function () {
+          var f = document.querySelector('[data-form-import]');
+          if (!f) return;
+          // POST tradicional (recarrega a pagina): ao enviar, desabilita o botao, troca o
+          // texto e evita duplo clique/reenvio ate a resposta do servidor chegar.
+          f.addEventListener('submit', function () {
+            var b = f.querySelector('[data-btn-import]');
+            if (b) {
+              b.disabled = true;
+              b.textContent = 'Importando... aguarde';
+              b.classList.add('btn--off');
+            }
+          });
+        })();
+      </script>
     </section>`;
 }
 

@@ -4,7 +4,7 @@
 // compativel com a da OpenAI). E o provedor PADRAO do projeto.
 // Chamado apenas quando INTERVIEW_MOCK=false.
 //
-// Contrato: completar(mensagens, opcoes) -> { texto, modelo, uso }
+// Contrato: completar(mensagens, opcoes) -> { texto, modelo, uso, finishReason }
 //   mensagens: [{ papel: 'system'|'user'|'assistant', conteudo: string }]
 //   opcoes:    { modelo?, tarefa?, temperatura?, maxTokens? }
 //
@@ -89,8 +89,12 @@ async function completar(mensagens, opcoes = {}) {
   }
 
   const dados = await resp.json();
-  const mensagem =
-    dados.choices && dados.choices[0] && dados.choices[0].message ? dados.choices[0].message : {};
+  const escolha = (dados.choices && dados.choices[0]) || {};
+  const mensagem = escolha.message || {};
+  // finishReason: 'stop' (completo) | 'length' (cortado pelo max_tokens) | outros. Exposto
+  // no retorno p/ os callers detectarem truncamento (ex.: import de vaga). Aditivo: quem
+  // desestrutura so { texto, modelo, uso } continua funcionando (relatorio, entrevista).
+  const finishReason = escolha.finish_reason || null;
 
   let texto = mensagem.content || '';
 
@@ -104,7 +108,7 @@ async function completar(mensagens, opcoes = {}) {
     texto = typeof mensagem.reasoning === 'string' ? mensagem.reasoning : '';
   }
 
-  return { texto, modelo, uso: normalizarUso(dados.usage) };
+  return { texto, modelo, uso: normalizarUso(dados.usage), finishReason };
 }
 
 module.exports = { completar };

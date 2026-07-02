@@ -76,6 +76,14 @@ function montarMensagensExtracao(briefingTexto) {
     '  "skills": ["string", ...],',
     '  "sobre_empresa": "string"',
     '}',
+    '',
+    'REGRAS DE TAMANHO (para caber na resposta e nao truncar):',
+    '- descricao: no maximo 2-3 frases (um resumo, NAO uma copia do briefing).',
+    '- sobre_empresa: no maximo 2-3 frases.',
+    '- atividades / requisitos / beneficios / skills: cada item da lista deve ser CURTO',
+    '  (uma linha, nao um paragrafo); nao copie trechos longos do briefing.',
+    '- Resuma com suas palavras; NAO copie paragrafos inteiros do briefing.',
+    '',
     'Responda so com o objeto JSON.',
   ].join('\n');
 
@@ -139,7 +147,8 @@ function parseExtracaoVaga(textoLLM) {
 
 // Orquestra o import: URL -> fileId -> texto do Doc -> extracao LLM -> objeto vaga-like.
 // Resultado discriminado (nunca lanca):
-//   { ok:false, erroCodigo:'LINK_INVALIDO' | 'DOC_SEM_ACESSO' | 'DOC_NAO_EXPORTAVEL' | 'EXTRACAO_FALHOU' }
+//   { ok:false, erroCodigo:'LINK_INVALIDO' | 'DOC_SEM_ACESSO' | 'DOC_NAO_EXPORTAVEL'
+//                          | 'EXTRACAO_TRUNCADA' | 'EXTRACAO_FALHOU' }
 //   { ok:true, vaga, ausentes[] }
 // deps = { drive, llm } injetaveis (providers agnosticos) — teste usa mocks.
 async function importarVagaDeBriefing({ url, drive, llm } = {}) {
@@ -157,15 +166,32 @@ async function importarVagaDeBriefing({ url, drive, llm } = {}) {
   }
   if (!texto || !texto.trim()) return { ok: false, erroCodigo: 'EXTRACAO_FALHOU' };
 
+  // maxTokens folgado: o shape tem 14 campos, varios de texto livre (descricao,
+  // atividades, requisitos, beneficios, sobre_empresa). 2200 da folga real sobre os 1500
+  // do relatorio (shape mais simples) e evita o truncamento que cortava o JSON no meio de
+  // uma string ("Unterminated string"). O prompt tambem pede concisao (menos tokens de saida).
+  let resp;
   try {
-    const resp = await llm.completar(montarMensagensExtracao(texto), {
+    resp = await llm.completar(montarMensagensExtracao(texto), {
       temperatura: 0.2,
-      maxTokens: 1200,
+      maxTokens: 2200,
     });
     const { vaga, ausentes } = parseExtracaoVaga(resp && resp.texto);
     return { ok: true, vaga, ausentes };
   } catch (err) {
-    console.error('[importar-vaga] falha na extracao/parse:', err && err.message);
+    // Observabilidade: loga finishReason e o TAMANHO do texto (nunca o texto inteiro em
+    // prod) + uma amostra curta do inicio, para confirmar truncamento sem poluir o log.
+    const finishReason = resp && resp.finishReason;
+    const tam = resp && typeof resp.texto === 'string' ? resp.texto.length : 0;
+    const amostra = resp && typeof resp.texto === 'string' ? resp.texto.slice(0, 200) : '';
+    console.error(
+      `[importar-vaga] falha na extracao/parse: ${err && err.message} ` +
+        `(finishReason=${finishReason}, textoLen=${tam}, amostra=${JSON.stringify(amostra)})`,
+    );
+    // Truncamento por limite de tokens -> mensagem especifica (diferente do generico).
+    if (finishReason === 'length') {
+      return { ok: false, erroCodigo: 'EXTRACAO_TRUNCADA' };
+    }
     return { ok: false, erroCodigo: 'EXTRACAO_FALHOU' };
   }
 }
