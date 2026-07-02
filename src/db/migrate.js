@@ -32,6 +32,11 @@ function migrar() {
     'status',
     "TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'gerado', 'enviado', 'erro'))",
   );
+  // Func. 3 - "pre-aprovado pela IA": recomendacao explicita emitida pelo relatorio.
+  // Enum 'avancar'|'talvez'|'descartar' validado no app (parseAvaliacao); coluna TEXT
+  // sem CHECK para nao travar bancos antigos. Reports antigos ficam com NULL (= sem
+  // recomendacao) e nao quebram nada.
+  adicionarColunaSeFaltar('reports', 'recomendacao', 'TEXT');
   // Fase 5 - edicao da vaga pelo painel: garante que os campos editaveis existam em
   // bancos antigos (no-op se ja existem; nunca faz DROP/recriacao). 'titulo' nao entra
   // aqui porque ja faz parte do schema original (NOT NULL) e sempre existe.

@@ -395,9 +395,9 @@ function reportDeLinha(linha) {
 function criarReport(report) {
   const info = getDb().prepare(`
     INSERT INTO reports
-      (interview_id, token, status, resumo, pontuacoes, destaque_pontos_fortes, destaque_atencao)
+      (interview_id, token, status, resumo, pontuacoes, destaque_pontos_fortes, destaque_atencao, recomendacao)
     VALUES
-      (@interview_id, @token, @status, @resumo, @pontuacoes, @destaque_pontos_fortes, @destaque_atencao)
+      (@interview_id, @token, @status, @resumo, @pontuacoes, @destaque_pontos_fortes, @destaque_atencao, @recomendacao)
   `).run({
     interview_id: report.interview_id,
     token: report.token,
@@ -407,6 +407,7 @@ function criarReport(report) {
     destaque_pontos_fortes:
       report.destaque_pontos_fortes != null ? JSON.stringify(report.destaque_pontos_fortes) : null,
     destaque_atencao: report.destaque_atencao != null ? JSON.stringify(report.destaque_atencao) : null,
+    recomendacao: report.recomendacao != null ? String(report.recomendacao) : null,
   });
   return Number(info.lastInsertRowid);
 }

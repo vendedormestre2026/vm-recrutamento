@@ -10,7 +10,7 @@ const db = require('../db');
 const session = require('../lib/session');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
-const { calcularPontuacaoGeral } = require('../lib/relatorio');
+const { calcularPontuacaoGeral, badgeRecomendacaoHtml } = require('../lib/relatorio');
 const { pagina, escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -819,6 +819,15 @@ router.get('/relatorio/:token', (req, res) => {
           ? `<section class="vm-secao">
               <h2 class="vm-h2">Resumo</h2>
               <div class="vm-card"><p>${escapeHtml(report.resumo)}</p></div>
+            </section>`
+          : ''
+      }
+
+      ${
+        badgeRecomendacaoHtml(report.recomendacao)
+          ? `<section class="vm-secao">
+              <h2 class="vm-h2">Recomendação da IA</h2>
+              <div class="vm-card">${badgeRecomendacaoHtml(report.recomendacao)}</div>
             </section>`
           : ''
       }

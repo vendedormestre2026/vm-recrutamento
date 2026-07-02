@@ -15,7 +15,7 @@ const db = require('../db');
 const drive = require('../providers/drive');
 const llm = require('../providers/llm');
 const { importarVagaDeBriefing } = require('../lib/importar_vaga');
-const { calcularPontuacaoGeral } = require('../lib/relatorio');
+const { calcularPontuacaoGeral, badgeRecomendacaoHtml } = require('../lib/relatorio');
 const { escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -446,6 +446,12 @@ router.get('/relatorio/:interviewId', (req, res) => {
     </section>
 
     ${report.resumo ? `<section class="rel-sec"><h2>Resumo</h2><p>${escapeHtml(report.resumo)}</p></section>` : ''}
+
+    ${
+      badgeRecomendacaoHtml(report.recomendacao)
+        ? `<section class="rel-sec"><h2>Recomendação da IA</h2><p>${badgeRecomendacaoHtml(report.recomendacao)}</p></section>`
+        : ''
+    }
 
     ${
       geral

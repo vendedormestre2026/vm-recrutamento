@@ -22,6 +22,56 @@ const { truncar, comTimeout, normalizarEstrutura } = require('./entrevista');
 const { calcularCustoDeepSeek } = require('./custos');
 const { escapeHtml } = require('../views');
 
+// ── Recomendacao da IA (Func. 3) — "pre-aprovado pela IA" ──
+// Campo explicito emitido pelo relatorio (nao e calculo sobre pontuacoes). Enum fechado;
+// qualquer outro valor (ausente/invalido) vira null no parse, sem travar o relatorio.
+const RECOMENDACOES_VALIDAS = ['avancar', 'talvez', 'descartar'];
+
+// Rotulo + cores da identidade visual por recomendacao. Regra da marca: laranja para o
+// caso positivo, neutro para o intermediario e um tom SOBRIO (escuro) para o negativo —
+// NUNCA vermelho puro. Cores usadas inline (e-mail e paginas) para render identico.
+const ESTILO_RECOMENDACAO = {
+  avancar: {
+    rotulo: 'Avançar',
+    descricao: 'Forte aderência ao perfil da vaga',
+    fundo: '#FF5500',
+    texto: '#FFFFFF',
+    borda: '#FF5500',
+  },
+  talvez: {
+    rotulo: 'Talvez',
+    descricao: 'Aderência parcial ou dúvidas relevantes',
+    fundo: '#F4F3F1',
+    texto: '#0D0B0A',
+    borda: '#D8D5D0',
+  },
+  descartar: {
+    rotulo: 'Descartar',
+    descricao: 'Baixa aderência ao perfil da vaga',
+    fundo: '#0D0B0A',
+    texto: '#F4F3F1',
+    borda: '#0D0B0A',
+  },
+};
+
+function estiloRecomendacao(recomendacao) {
+  return ESTILO_RECOMENDACAO[recomendacao] || null;
+}
+
+// HTML do selo (pill) da recomendacao, inline-styled e autossuficiente. Devolve '' quando
+// a recomendacao e null/invalida (relatorio antigo ou parse sem o campo) — nunca imprime
+// undefined/[object Object]. Reusado no e-mail e nas duas paginas de visualizacao.
+function badgeRecomendacaoHtml(recomendacao) {
+  const e = estiloRecomendacao(recomendacao);
+  if (!e) return '';
+  return (
+    `<span style="display:inline-block;padding:6px 14px;border-radius:999px;` +
+    `background:${e.fundo};color:${e.texto};border:1px solid ${e.borda};` +
+    `font-weight:700;font-size:14px;line-height:1.2">${e.rotulo}</span>` +
+    ` <span style="color:#555;font-size:13px">${e.descricao}</span>`
+  );
+}
+
 // ── Prompt de avaliacao (system + user) enviado ao DeepSeek ──
 // Saida exigida: SOMENTE JSON (sem markdown), com resumo, pontuacoes[], pontos_fortes[], pontos_atencao[].
 function montarMensagensAvaliacao({ roteiro, vaga, candidato, turns, agente }) {
@@ -62,12 +112,19 @@ function montarMensagensAvaliacao({ roteiro, vaga, candidato, turns, agente }) {
     '    { "competencia": "<nome exato da competencia>", "nota": <inteiro 1-5>, "justificativa": "1 a 2 frases", "coberta": <true|false> }',
     '  ],',
     '  "pontos_fortes": ["item curto", "..."],',
-    '  "pontos_atencao": ["item curto", "..."]',
+    '  "pontos_atencao": ["item curto", "..."],',
+    '  "recomendacao": "avancar" | "talvez" | "descartar"',
     '}',
     'No campo "coberta": use false quando a competencia NAO foi efetivamente abordada na ' +
       'transcricao (a pergunta nao chegou a ser feita, ou a resposta nao tocou no tema); ' +
       'use true nos demais casos. Mesmo com coberta=false, atribua uma nota cautelosa e ' +
       'explique na justificativa que o tema nao foi coberto.',
+    'No campo "recomendacao": emita UMA decisao geral de encaminhamento do candidato para a ' +
+      'vaga, com base na aderencia GERAL as competencias-chave (nao e a media das notas):',
+    '  - "avancar": forte aderencia as competencias-chave; candidato claramente alinhado ao perfil.',
+    '  - "talvez": aderencia parcial, sinais mistos ou duvidas relevantes que pedem uma segunda olhada.',
+    '  - "descartar": baixa aderencia ou sinais claros de desalinhamento com o perfil da vaga.',
+    'Use EXATAMENTE uma dessas tres strings, em minusculas e sem acento.',
     'Inclua TODAS as competencias listadas em "pontuacoes", usando o nome EXATO. Nao adicione campos extras.',
   ].join('\n');
 
@@ -112,6 +169,7 @@ function avaliacaoMock(roteiro) {
     pontuacoes,
     pontos_fortes: ['(mock) comunicacao clara', '(mock) postura resiliente'],
     pontos_atencao: ['(mock) aprofundar metricas de resultado'],
+    recomendacao: 'avancar', // deterministico: coerente com o resumo "bom alinhamento"
   };
 }
 
@@ -135,8 +193,22 @@ function parseAvaliacao(texto) {
   if (!obj || typeof obj !== 'object' || !Array.isArray(obj.pontuacoes)) {
     throw new Error('JSON do LLM sem o campo "pontuacoes" (array) esperado.');
   }
+
+  // Enum guard da recomendacao (Func. 3): so aceita uma das 3 strings validas. Ausente,
+  // invalida ou de tipo errado -> null (nao trava o relatorio; o resto ja era gerado sem
+  // este campo antes, entao um valor ruim aqui NAO pode derrubar a geracao inteira).
+  const recRaw =
+    typeof obj.recomendacao === 'string' ? obj.recomendacao.trim().toLowerCase() : '';
+  const recomendacao = RECOMENDACOES_VALIDAS.includes(recRaw) ? recRaw : null;
+  if (obj.recomendacao != null && recomendacao === null) {
+    console.warn(
+      `[relatorio] "recomendacao" invalida no JSON do LLM (${JSON.stringify(obj.recomendacao)}); assumindo null.`,
+    );
+  }
+
   return {
     resumo: typeof obj.resumo === 'string' ? obj.resumo : '',
+    recomendacao,
     pontuacoes: obj.pontuacoes
       .filter((p) => p && p.competencia)
       .map((p) => {
@@ -236,6 +308,14 @@ function montarEmailHtml({ candidato, vaga, avaliacao, token, roteiro }) {
     </p>
     <p>${escapeHtml(avaliacao.resumo)}</p>
     ${
+      badgeRecomendacaoHtml(avaliacao.recomendacao)
+        ? `<p style="margin:12px 0;font-size:15px">
+             <b>Recomendação da IA:</b><br>
+             ${badgeRecomendacaoHtml(avaliacao.recomendacao)}
+           </p>`
+        : ''
+    }
+    ${
       geral
         ? `<p style="margin:12px 0;font-size:15px">
              <b>Pontuação geral (ponderada):</b>
@@ -333,6 +413,7 @@ async function gerarRelatorio(interviewId, deps = {}) {
     pontuacoes: avaliacao.pontuacoes,
     destaque_pontos_fortes: avaliacao.pontos_fortes,
     destaque_atencao: avaliacao.pontos_atencao,
+    recomendacao: avaliacao.recomendacao || null,
   });
 
   // ── Envio ao recrutador (status 'enviado' em sucesso, 'erro' em falha) ──
@@ -364,4 +445,7 @@ module.exports = {
   avaliacaoMock,
   montarEmailHtml,
   calcularPontuacaoGeral,
+  RECOMENDACOES_VALIDAS,
+  estiloRecomendacao,
+  badgeRecomendacaoHtml,
 };

@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS reports (
   pontuacoes             TEXT,   -- JSON por competencia
   destaque_pontos_fortes TEXT,
   destaque_atencao       TEXT,
+  recomendacao           TEXT,   -- 'avancar' | 'talvez' | 'descartar' (pre-aprovacao pela IA); enum validado no app
   enviado_em             TEXT,
   destinatario           TEXT
 );
