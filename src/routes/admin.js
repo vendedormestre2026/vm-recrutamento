@@ -170,6 +170,18 @@ const ESTILO_ADMIN = `
   .bloco-card { border:1px solid var(--linha); border-radius:8px; padding:.2rem 1rem; margin-bottom:.7rem; }
   .bloco-card > summary { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.03em; cursor:pointer; padding:.7rem 0; color:var(--offwhite); font-weight:700; }
   .bloco-card[open] > summary { border-bottom:1px solid var(--linha); margin-bottom:.8rem; }
+  /* Funil de conversao (dashboard) — barras em CSS puro, sem lib de grafico. */
+  .funil { margin:.4rem 0 0; }
+  .funil-etapa { margin-bottom:1.1rem; }
+  .funil-topo { display:flex; justify-content:space-between; align-items:baseline; gap:1rem; margin-bottom:.3rem; }
+  .funil-rotulo { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.03em; color:var(--offwhite); font-weight:700; font-size:1.05rem; }
+  .funil-num { font-family:'Barlow Condensed',sans-serif; font-weight:900; font-size:1.9rem; color:var(--laranja); line-height:1; }
+  .funil-trilho { background:var(--campo); border:1px solid var(--linha); border-radius:6px; height:1.4rem; overflow:hidden; }
+  .funil-barra { height:100%; background:var(--laranja); border-radius:5px 0 0 5px; min-width:0; }
+  .funil-taxa { color:var(--cinza); font-size:.78rem; margin-top:.28rem; text-transform:uppercase; letter-spacing:.02em; }
+  .funil-taxa b { color:var(--offwhite); font-weight:700; }
+  tr.linha-zero { opacity:.5; }
+  td.col-num, th.col-num { text-align:right; font-variant-numeric:tabular-nums; }
 `;
 
 // Shell HTML do painel (sem o header/funil/app.js do candidato).
@@ -272,6 +284,22 @@ function nomeCompleto(linha) {
 function fmtInt(n) {
   return Number(n || 0).toLocaleString('pt-BR');
 }
+
+// Taxa de conversao numerador/denominador como percentual inteiro. Divisao por zero
+// (ou denominador ausente) -> '—' (nunca NaN/Infinity). Usado no funil do dashboard.
+function taxaConversao(numerador, denominador) {
+  const den = Number(denominador);
+  if (!Number.isFinite(den) || den <= 0) return '—';
+  return `${Math.round((Number(numerador) / den) * 100)}%`;
+}
+
+// Largura percentual (0–100) de uma barra proporcional ao maior valor do funil.
+// max<=0 (tudo zero) -> 0, sem divisao por zero.
+function larguraBarra(valor, max) {
+  const m = Number(max);
+  if (!Number.isFinite(m) || m <= 0) return 0;
+  return Math.max(0, Math.min(100, (Number(valor) / m) * 100));
+}
 // Custo em USD: 6 casas nos totais, 8 nas linhas (custos por chamada sao minusculos).
 function fmtUsd6(n) {
   return `$${Number(n || 0).toFixed(6)}`;
@@ -347,6 +375,7 @@ router.get('/', (req, res) => {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
       <h1 style="margin:0;">Candidatos</h1>
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+        <a class="btn btn--ghost" href="/admin/dashboard">Funil de Conversão</a>
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
         <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
         <a class="btn btn--ghost" href="/admin/config">Configurações</a>
@@ -521,6 +550,144 @@ router.get('/api/funil', (req, res) => {
 
   const funil = db.obterFunilConversao({ desde: desde || undefined, ate: ate || undefined });
   return res.json({ ok: true, filtro: { desde: desde || null, ate: ate || null }, ...funil });
+});
+
+// ── GET /admin/dashboard ── pagina visual do funil de conversao (Func. 3, sub-commit 3) ──
+// Server-side: chama db.obterFunilConversao direto (mesma fonte do endpoint JSON; NAO faz
+// fetch HTTP de si mesma). Filtro de periodo por querystring (?desde=&ate=), validado com
+// dataIsoValida — data malformada mostra aviso amigavel e NAO quebra a pagina.
+router.get('/dashboard', (req, res) => {
+  const desde = req.query.desde != null ? String(req.query.desde).trim() : '';
+  const ate = req.query.ate != null ? String(req.query.ate).trim() : '';
+
+  const erros = [];
+  if (desde && !dataIsoValida(desde)) erros.push('Data inicial inválida. Use o formato AAAA-MM-DD.');
+  if (ate && !dataIsoValida(ate)) erros.push('Data final inválida. Use o formato AAAA-MM-DD.');
+  const temErro = erros.length > 0;
+
+  // So consulta com datas validas; com erro, mantem a pagina de pe (form + aviso).
+  const funil = temErro
+    ? { vagas: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 } }
+    : db.obterFunilConversao({ desde: desde || undefined, ate: ate || undefined });
+
+  const t = funil.totais;
+
+  // Etapas do funil (na ordem). taxa = conversao a partir da etapa anterior ('—' se n/d).
+  const etapas = [
+    { rotulo: 'Acessos', valor: t.acessos, taxa: null },
+    { rotulo: 'Aplicações', valor: t.aplicacoes, taxa: taxaConversao(t.aplicacoes, t.acessos) },
+    {
+      rotulo: 'Entrevistas Realizadas',
+      valor: t.entrevistas_realizadas,
+      taxa: taxaConversao(t.entrevistas_realizadas, t.aplicacoes),
+    },
+    {
+      rotulo: 'Pré-aprovados pela IA',
+      valor: t.pre_aprovados,
+      taxa: taxaConversao(t.pre_aprovados, t.entrevistas_realizadas),
+    },
+  ];
+  const maxTotais = Math.max(...etapas.map((e) => e.valor), 0);
+
+  const barras = etapas
+    .map((e) => {
+      const largura = larguraBarra(e.valor, maxTotais).toFixed(1);
+      const taxaLinha = e.taxa
+        ? `Conversão da etapa anterior: <b>${e.taxa}</b>`
+        : 'Topo do funil';
+      return `
+        <div class="funil-etapa">
+          <div class="funil-topo">
+            <span class="funil-rotulo">${escapeHtml(e.rotulo)}</span>
+            <span class="funil-num">${fmtInt(e.valor)}</span>
+          </div>
+          <div class="funil-trilho">
+            <div class="funil-barra" style="width:${largura}%"></div>
+          </div>
+          <div class="funil-taxa">${taxaLinha}</div>
+        </div>`;
+    })
+    .join('');
+
+  const linhas = funil.vagas
+    .map((v) => {
+      const zero =
+        !v.acessos && !v.aplicacoes && !v.entrevistas_realizadas && !v.pre_aprovados;
+      return `
+        <tr class="${zero ? 'linha-zero' : ''}">
+          <td>${escapeHtml(v.titulo || '—')}</td>
+          <td class="col-num">${fmtInt(v.acessos)}</td>
+          <td class="col-num">${fmtInt(v.aplicacoes)}</td>
+          <td class="col-num">${taxaConversao(v.aplicacoes, v.acessos)}</td>
+          <td class="col-num">${fmtInt(v.entrevistas_realizadas)}</td>
+          <td class="col-num">${taxaConversao(v.entrevistas_realizadas, v.aplicacoes)}</td>
+          <td class="col-num">${fmtInt(v.pre_aprovados)}</td>
+          <td class="col-num">${taxaConversao(v.pre_aprovados, v.entrevistas_realizadas)}</td>
+        </tr>`;
+    })
+    .join('');
+
+  const temFiltro = desde || ate;
+  const resumoPeriodo = temErro
+    ? ''
+    : temFiltro
+      ? `Período: ${escapeHtml(desde || '…')} até ${escapeHtml(ate || '…')}`
+      : 'Período: todo o histórico';
+
+  const conteudo = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <h1 style="margin:0;">Funil de Conversão</h1>
+      <a class="btn btn--ghost" href="/admin">← Voltar ao painel</a>
+    </div>
+
+    ${erros.length ? `<div class="aviso-alerta">${erros.map((e) => escapeHtml(e)).join('<br>')}</div>` : ''}
+
+    <form method="GET" action="/admin/dashboard" class="admin-filtros">
+      <label class="filtro">
+        <span>De</span>
+        <input type="date" name="desde" value="${escapeHtml(desde)}">
+      </label>
+      <label class="filtro">
+        <span>Até</span>
+        <input type="date" name="ate" value="${escapeHtml(ate)}">
+      </label>
+      <button type="submit" class="btn">Filtrar</button>
+      ${temFiltro ? '<a class="btn btn--ghost" href="/admin/dashboard">Limpar</a>' : ''}
+    </form>
+
+    ${resumoPeriodo ? `<p class="admin-sub" style="color:var(--cinza);font-size:.85rem;margin:.2rem 0 1.2rem;">${resumoPeriodo}</p>` : ''}
+
+    <section class="rel-sec">
+      <h2>Totais consolidados</h2>
+      <div class="funil">
+        ${temErro ? '<p style="color:var(--cinza);">Corrija as datas acima para ver o funil.</p>' : barras}
+      </div>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Por vaga</h2>
+      <div class="admin-tab-scroll">
+        <table class="admin-tab">
+          <thead>
+            <tr>
+              <th>Vaga</th>
+              <th class="col-num">Acessos</th>
+              <th class="col-num">Aplicações</th>
+              <th class="col-num">Apl/Ace</th>
+              <th class="col-num">Entrevistas</th>
+              <th class="col-num">Ent/Apl</th>
+              <th class="col-num">Pré-aprovados</th>
+              <th class="col-num">Pré/Ent</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhas || `<tr><td colspan="8">${temErro ? 'Corrija as datas para ver os dados.' : 'Nenhuma vaga cadastrada ainda.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+
+  res.send(paginaAdmin({ titulo: 'Funil de Conversão', conteudo }));
 });
 
 // ── Gestao de multiplas vagas (Fase 5) ──
