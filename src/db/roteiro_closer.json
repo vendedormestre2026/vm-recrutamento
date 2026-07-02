@@ -5,7 +5,7 @@
     "Usar sondas BEI quando a resposta for vaga: 'E o que exatamente você fez?', 'Qual foi o resultado em número?', 'O que mudou depois disso?'",
     "Avaliar cada resposta pelo critério STAR: a resposta teve Situação, Tarefa, Ação e Resultado?",
     "Inferir DISC pelo comportamento ao longo da entrevista. Só perguntar diretamente se ainda houver dúvida no final.",
-    "Na simulação: entrar no papel de cliente com objeção ativa. Após a simulação, dar feedback leve (1 ponto positivo + 1 ponto de melhoria) e observar como o candidato recebe."
+    "Na simulação: entrar no papel de cliente com objeção ativa. Após a simulação, agradecer e seguir para a próxima pergunta, SEM comentar o desempenho com o candidato. Observar internamente (para o relatório) como o candidato conduziu, mas nunca verbalizar nada avaliativo."
   ],
   "blocos": [
     {
@@ -89,7 +89,7 @@
       "competencias_alvo": ["tecnica_vendas", "resiliencia", "recepcao_feedback"],
       "pergunta_semente": "Agora vou te pedir uma simulação. Eu vou entrar no papel de um cliente e você vai vender para mim. O cenário: eu sou um empresário que quer crescer o negócio. Você já sabe que eu tenho interesse, mas quando você falar do investimento, eu entro com uma objeção. Pode começar quando quiser.",
       "objecao_padrao": "Está caro. Não vejo valor suficiente nisso agora para justificar esse investimento.",
-      "instrucao_vera": "Entrar no papel de cliente resistente mas não impossível. Usar a objeção padrão de preço. Após a simulação, sair do papel e perguntar: 'Que nota você daria para você nessa simulação, de 0 a 10? E por quê?' Após a autoavaliação do candidato, dar 1 ponto positivo concreto e 1 ponto de melhoria concreto. Registrar no relatório como o candidato recebeu o feedback.",
+      "instrucao_vera": "Entrar no papel de cliente resistente mas não impossível. Usar a objeção padrão de preço. Após a simulação, sair do papel e perguntar: 'Que nota você daria para você nessa simulação, de 0 a 10? E por quê?' Após a autoavaliação do candidato, agradecer de forma neutra e seguir em frente, SEM dar sua própria nota, elogio ou crítica. Observar internamente (para o relatório) como o candidato conduziu a simulação e como fez a própria autoavaliação, sem verbalizar nada avaliativo ao candidato.",
       "o_que_observar": [
         "Amortece a objeção antes de argumentar?",
         "Faz perguntas para entender o cliente ou só defende o produto?",

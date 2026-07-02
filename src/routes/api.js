@@ -799,18 +799,18 @@ router.post('/interview/answer', (req, res) => {
       if (prefixoTransicao) falaVera = `${prefixoTransicao}${falaVera}`;
 
       // Teto de perguntas (rede de seguranca contra entrevista infinita).
-      // Distinguimos o corte pelo TETO do encerramento decidido pelo proprio LLM
-      // (via [ENCERRAR]): so o primeiro precisa trocar a fala (ver abaixo).
       const agentePosNovo = db.contarTurnos(interviewId, 'agente') + 1;
       const cortePorTeto = !encerrar && agentePosNovo >= config.entrevista.maxPerguntas;
       if (cortePorTeto) encerrar = true;
 
-      // Correcao da "verruga": quando o encerramento e forcado pelo TETO de perguntas
-      // (e nao pelo LLM), o LLM acabou de gerar mais UMA pergunta que o candidato nunca
-      // poderia responder — o front redireciona para /finalizacao ao receber encerrar:true.
-      // Em vez de sintetizar/persistir essa pergunta orfa, trocamos por uma fala de
-      // despedida personalizada. O restante do fluxo (TTS, turno, finalizar) segue igual.
-      if (cortePorTeto) falaVera = entrevista.falaDespedida(candidato.nome);
+      // Encerramento SEMPRE usa fala fixa e segura, nunca o texto do LLM. Dois motivos:
+      //  - No corte por TETO, o LLM acabou de gerar mais UMA pergunta orfa (o front
+      //    redireciona para /finalizacao ao receber encerrar:true), que nao pode ir ao ar.
+      //  - No encerramento decidido pelo proprio LLM (via [ENCERRAR]), a fala autorada
+      //    corria o risco de VAZAR avaliacao/feedback ao candidato (a rubrica ainda estava
+      //    no contexto). Agora ignoramos esse texto e despedimos com fala neutra e fixa.
+      // O resto do fluxo (TTS, turno, finalizar) segue igual para ambos os casos.
+      if (encerrar) falaVera = entrevista.falaDespedida(candidato.nome);
 
       // 3) TTS — sintetiza a fala da Vera e salva o MP3.
       const ordemAgente = db.contarTurnos(interviewId) + 1;

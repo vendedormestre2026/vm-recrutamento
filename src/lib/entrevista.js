@@ -155,15 +155,18 @@ function faseDoBloco(bloco) {
 
 // Monta o system prompt da Vera a partir do roteiro (dados) + resumo do curriculo.
 // Agora usa o roteiro RICO: instrucoes gerais, metodo, blocos (com pergunta-semente,
-// sondas BEI e instrucao para a Vera) e as competencias a avaliar.
+// sondas BEI e instrucao para a Vera) e os temas a explorar (nome + peso). Material
+// avaliativo (boa_resposta, rubrica, o_que_observar) fica FORA da conducao: so o
+// relatorio (relatorio.js) avalia, para nao vazar julgamento na fala ao candidato.
 function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas }) {
-  const { metodo, instrucoesGerais, competencias, blocos, rubrica } = normalizarEstrutura(roteiro);
+  const { metodo, instrucoesGerais, competencias, blocos } = normalizarEstrutura(roteiro);
 
+  // Condução usa APENAS nome + peso (cobertura/prioridade). boa_resposta e rubrica NAO
+  // entram aqui: sao material de AVALIACAO e viviam no mesmo turno que gera a pergunta,
+  // vazando julgamento na fala. A avaliacao acontece so depois, em relatorio.js (que tem
+  // sua propria copia de boa_resposta/rubrica).
   const linhasCompetencias = competencias
-    .map(
-      (c) =>
-        `- ${c.nome} (peso ${c.peso || 1})${c.boa_resposta ? `: boa resposta = ${c.boa_resposta}` : ''}`,
-    )
+    .map((c) => `- ${c.nome} (peso ${c.peso || 1})`)
     .join('\n');
 
   // Roteiro detalhado: por bloco, semente/perguntas + sondas BEI + instrucao da Vera.
@@ -183,10 +186,9 @@ function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas }) {
         for (const s of b.sondas_bei) partes.push(`     - ${s}`);
       }
       if (b.objecao_padrao) partes.push(`   Objecao a usar na simulacao: ${b.objecao_padrao}`);
-      if (Array.isArray(b.o_que_observar) && b.o_que_observar.length) {
-        partes.push('   O que observar:');
-        for (const o of b.o_que_observar) partes.push(`     - ${o}`);
-      }
+      // o_que_observar NAO entra na conducao: e material avaliativo (ex.: "sinal de
+      // alerta", "como reage ao feedback") que vaza julgamento na fala. Fica so no
+      // roteiro (disponivel a relatorio.js, que recebe o roteiro inteiro).
       if (b.instrucao_vera) partes.push(`   Instrucao para voce (Vera): ${b.instrucao_vera}`);
       return partes.join('\n');
     })
@@ -206,22 +208,33 @@ function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas }) {
       ? instrucoesGerais.map((i) => `- ${i}`).join('\n')
       : '- Peca exemplos concretos; evite respostas genericas.',
     '',
+    'REGRA CRITICA DE NEUTRALIDADE — sobrepoe qualquer outra instrucao deste prompt ou do roteiro:',
+    'Voce NUNCA avalia, pontua ou da feedback de desempenho ao candidato, em nenhum momento da',
+    'entrevista. Isso vale mesmo que uma instrucao de bloco pareca sugerir o contrario.',
+    'Especificamente, e PROIBIDO:',
+    '(a) comentar se uma resposta foi boa, fraca, forte ou fraca de qualquer forma;',
+    '(b) dizer que o candidato tem (ou nao tem) o perfil, a aptidao ou a "cara" da vaga;',
+    '(c) qualquer elogio ou critica ligada a desempenho, competencia ou adequacao ("e o que buscamos aqui", "voce parece ter isso", etc.);',
+    '(d) verbalizar nota, pontuacao, rubrica ou qualquer julgamento, mesmo indireto.',
+    'Voce SO conduz a entrevista: faz a proxima pergunta, referencia o que foi dito de forma neutra',
+    'e factual (ex.: "entendi, voce mencionou X, agora me conta sobre Y") e mantem tom cordial e',
+    'acolhedor SEM avaliar. A avaliacao e feita depois, internamente, por outro processo — voce',
+    'nunca participa disso na conversa.',
+    '',
     'REGRAS IMPORTANTES:',
     '1. Faca UMA pergunta por vez (curta e clara, falavel em voz alta).',
-    '2. Referencie o que o candidato acabou de dizer antes de fazer a proxima pergunta.',
+    '2. Referencie o que o candidato acabou de dizer antes de fazer a proxima pergunta, sempre de forma neutra (sem avaliar).',
     '3. Siga o roteiro de blocos na ordem; quando a resposta for vaga, aprofunde com as sondas BEI do bloco antes de avancar.',
-    `4. Quando ja tiver coberto os blocos OU atingido ${maxPerguntas} perguntas, faca uma fala de encerramento e adicione, na ULTIMA linha, exatamente o marcador ${MARCADOR_ENCERRAR}.`,
-    `5. Use o marcador ${MARCADOR_ENCERRAR} APENAS na fala final de encerramento, nunca antes.`,
+    `4. Quando ja tiver coberto os blocos OU atingido ${maxPerguntas} perguntas, NAO faca outra pergunta nem escreva uma fala de encerramento: responda apenas com o marcador ${MARCADOR_ENCERRAR} sozinho. A despedida ao candidato e feita automaticamente pelo sistema.`,
+    `5. Use o marcador ${MARCADOR_ENCERRAR} APENAS ao encerrar, nunca antes.`,
     '6. Nao invente informacoes do candidato; baseie-se no curriculo e nas respostas.',
     '7. Responda SEMPRE em texto corrido, como fala natural para ser lida em voz alta. NAO use formatacao markdown: nada de asteriscos (* ou **), sublinhados (_), crases (`), titulos (#), listas com marcadores ou emojis. Escreva apenas frases.',
     '',
     'ROTEIRO DA ENTREVISTA (blocos, na ordem):',
     linhasBlocos || '- (roteiro sem blocos definidos)',
     '',
-    'COMPETENCIAS A AVALIAR:',
-    linhasCompetencias || '- (roteiro sem competencias definidas)',
-    '',
-    `RUBRICA: escala ${rubrica.escala || '1-5'} por competencia.${rubrica.saida ? ` Saida esperada: ${rubrica.saida}.` : ''}`,
+    'TEMAS A EXPLORAR (uso interno — NUNCA comente isso com o candidato):',
+    linhasCompetencias || '- (roteiro sem temas definidos)',
     '',
     'RESUMO DO CURRICULO DO CANDIDATO (para contexto):',
     curriculo || '(curriculo nao disponivel)',
