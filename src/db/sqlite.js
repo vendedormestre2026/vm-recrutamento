@@ -517,6 +517,123 @@ function contarEntrevistasConcluidas() {
     .get().n;
 }
 
+// Funil de conversao por vaga (Func. 3): Acessos -> Aplicacoes -> Entrevistas realizadas
+// -> Pre-aprovados pela IA. Consolida 4 fontes (vaga_acessos, applications, interviews,
+// reports.recomendacao). opcoes.desde/ate (datas 'YYYY-MM-DD') recortam o periodo por
+// tabela, cada uma pelo seu timestamp mais adequado; sem opcoes, retorna o historico total.
+//
+// Estrategia anti-fan-out: NAO usamos um unico JOIN das 4 tabelas (o produto cartesiano
+// inflaria as contagens). Rodamos 4 agregacoes independentes com GROUP BY job_id (poucas
+// queries, sem N+1) e casamos os resultados em memoria pela chave job_id.
+function obterFunilConversao(opcoes = {}) {
+  const db = getDb();
+  const { desde, ate } = opcoes;
+
+  // Condicoes de periodo (inclusivas) para uma coluna de data; vazio quando sem filtro.
+  const condsPeriodo = (coluna) => {
+    const conds = [];
+    const params = [];
+    if (desde) {
+      conds.push(`date(${coluna}) >= date(?)`);
+      params.push(desde);
+    }
+    if (ate) {
+      conds.push(`date(${coluna}) <= date(?)`);
+      params.push(ate);
+    }
+    return { conds, params };
+  };
+  const montarWhere = (base, extra) => {
+    const todas = [...base, ...extra.conds];
+    return todas.length ? `WHERE ${todas.join(' AND ')}` : '';
+  };
+
+  // Cada agregacao -> Map job_id -> contagem.
+  const paraMapa = (linhas) => {
+    const m = new Map();
+    for (const l of linhas) m.set(l.job_id, l.n);
+    return m;
+  };
+
+  // 1) Acessos: vaga_acessos por job_id (periodo por vaga_acessos.criado_em).
+  const fAcessos = condsPeriodo('criado_em');
+  const acessos = paraMapa(
+    db
+      .prepare(
+        `SELECT job_id, COUNT(*) AS n FROM vaga_acessos ${montarWhere([], fAcessos)} GROUP BY job_id`,
+      )
+      .all(...fAcessos.params),
+  );
+
+  // 2) Aplicacoes: applications por job_id (periodo por applications.criado_em).
+  const fApp = condsPeriodo('criado_em');
+  const aplicacoes = paraMapa(
+    db
+      .prepare(
+        `SELECT job_id, COUNT(*) AS n FROM applications ${montarWhere([], fApp)} GROUP BY job_id`,
+      )
+      .all(...fApp.params),
+  );
+
+  // 3) Entrevistas realizadas: interviews concluidas, por job_id (via application_id).
+  //    Periodo por interviews.finalizado_em (quando a entrevista de fato concluiu).
+  const fEntr = condsPeriodo('i.finalizado_em');
+  const entrevistas = paraMapa(
+    db
+      .prepare(
+        `SELECT a.job_id AS job_id, COUNT(*) AS n
+           FROM interviews i
+           JOIN applications a ON a.id = i.application_id
+           ${montarWhere(["i.status = 'concluido'"], fEntr)}
+          GROUP BY a.job_id`,
+      )
+      .all(...fEntr.params),
+  );
+
+  // 4) Pre-aprovados pela IA: reports com recomendacao='avancar', por job_id, seguindo a
+  //    cadeia report -> interview -> application -> job. COUNT(DISTINCT interview_id) evita
+  //    contar 2x se uma entrevista tiver mais de um report 'avancar' (regeracao).
+  //    Periodo por reports.enviado_em.
+  const fPre = condsPeriodo('r.enviado_em');
+  const preAprovados = paraMapa(
+    db
+      .prepare(
+        `SELECT a.job_id AS job_id, COUNT(DISTINCT r.interview_id) AS n
+           FROM reports r
+           JOIN interviews i ON i.id = r.interview_id
+           JOIN applications a ON a.id = i.application_id
+           ${montarWhere(["r.recomendacao = 'avancar'"], fPre)}
+          GROUP BY a.job_id`,
+      )
+      .all(...fPre.params),
+  );
+
+  // Todas as vagas (mesmo as sem nenhum acesso/aplicacao aparecem, com zeros).
+  const vagas = db.prepare('SELECT id, titulo, slug FROM jobs ORDER BY criado_em DESC, id DESC').all();
+
+  const linhas = vagas.map((v) => ({
+    job_id: v.id,
+    titulo: v.titulo,
+    slug: v.slug,
+    acessos: acessos.get(v.id) || 0,
+    aplicacoes: aplicacoes.get(v.id) || 0,
+    entrevistas_realizadas: entrevistas.get(v.id) || 0,
+    pre_aprovados: preAprovados.get(v.id) || 0,
+  }));
+
+  const totais = linhas.reduce(
+    (acc, l) => ({
+      acessos: acc.acessos + l.acessos,
+      aplicacoes: acc.aplicacoes + l.aplicacoes,
+      entrevistas_realizadas: acc.entrevistas_realizadas + l.entrevistas_realizadas,
+      pre_aprovados: acc.pre_aprovados + l.pre_aprovados,
+    }),
+    { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 },
+  );
+
+  return { vagas: linhas, totais };
+}
+
 // ──────────────────────────────────────────────────────────────
 // Uso/custo das chamadas ao LLM (monitoramento de custos)
 // ──────────────────────────────────────────────────────────────
@@ -659,6 +776,7 @@ module.exports = {
   registrarAcessoVaga,
   contarAplicacoes,
   contarEntrevistasConcluidas,
+  obterFunilConversao,
   // uso/custo de API (monitoramento de custos)
   registrarUsoApi,
   resumoUsoApi,

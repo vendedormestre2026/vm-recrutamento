@@ -37,6 +37,14 @@ function destinoSeguro(redirect) {
   return /^\/admin(\/|\?|$)/.test(r) ? r : '/admin';
 }
 
+// Valida uma data no formato estrito YYYY-MM-DD E que seja um dia real (rejeita
+// 2026-02-31, mes 13 etc.). Usado pelo filtro de periodo do endpoint do funil.
+function dataIsoValida(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 // ── Middleware de acesso ao painel ──
 // Sem sessao valida (cookie vm_admin assinado == ADMIN_PASSWORD) -> manda para a
 // tela de login, preservando em ?redirect o destino que o usuario tentou abrir.
@@ -490,6 +498,29 @@ router.get('/relatorio/:interviewId', (req, res) => {
     <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>`;
 
   res.send(paginaAdmin({ titulo: `Relatório — ${nomeCand}`, conteudo }));
+});
+
+// ── GET /admin/api/funil ── endpoint JSON do funil de conversao (Func. 3, sub-commit 2) ──
+// Retorna, por vaga e no total, os 4 numeros do funil (acessos, aplicacoes, entrevistas
+// realizadas, pre-aprovados). Consumido pela futura pagina /admin/dashboard (sub-commit 3).
+// Querystring opcional ?desde=YYYY-MM-DD&ate=YYYY-MM-DD; datas malformadas -> 400 (nao crash).
+router.get('/api/funil', (req, res) => {
+  const desde = req.query.desde != null ? String(req.query.desde).trim() : '';
+  const ate = req.query.ate != null ? String(req.query.ate).trim() : '';
+
+  if (desde && !dataIsoValida(desde)) {
+    return res
+      .status(400)
+      .json({ ok: false, erro: 'Parâmetro "desde" inválido. Use o formato YYYY-MM-DD.' });
+  }
+  if (ate && !dataIsoValida(ate)) {
+    return res
+      .status(400)
+      .json({ ok: false, erro: 'Parâmetro "ate" inválido. Use o formato YYYY-MM-DD.' });
+  }
+
+  const funil = db.obterFunilConversao({ desde: desde || undefined, ate: ate || undefined });
+  return res.json({ ok: true, filtro: { desde: desde || null, ate: ate || null }, ...funil });
 });
 
 // ── Gestao de multiplas vagas (Fase 5) ──

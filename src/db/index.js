@@ -62,6 +62,7 @@ module.exports = {
   registrarAcessoVaga: driver.registrarAcessoVaga,
   contarAplicacoes: driver.contarAplicacoes,
   contarEntrevistasConcluidas: driver.contarEntrevistasConcluidas,
+  obterFunilConversao: driver.obterFunilConversao,
 
   // uso/custo de API (monitoramento de custos)
   registrarUsoApi: driver.registrarUsoApi,
