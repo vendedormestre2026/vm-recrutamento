@@ -111,9 +111,18 @@ router.use(adminAuth);
 
 // CSS do painel (tema escuro), embutido para nao tocar no pipeline de CSS do candidato.
 const ESTILO_ADMIN = `
-  :root { --preto:#0D0B0A; --laranja:#FF5500; --offwhite:#F4F3F1; --campo:#1a1816; --linha:#2a2724; --cinza:#b8b2ac; }
+  :root {
+    --preto:#0D0B0A;        /* agora: cor de TEXTO principal */
+    --laranja:#FF5500;      /* CTA/detalhe (inalterado) */
+    --offwhite:#F4F3F1;     /* agora: cor de FUNDO do body */
+    --branco:#FFFFFF;       /* novo: fundo de inputs/superfícies (incrementos 4-5) */
+    --campo:#FFFFFF;        /* era #1a1816 (escuro) → agora branco p/ inputs */
+    --linha:#DAD7D2;        /* era #2a2724 (escuro) → agora borda clara */
+    --cinza:#4A4845;        /* era #b8b2ac → tom mais escuro, legível no claro */
+    --cinza-suave:#EDEBE7;  /* novo: chips neutros, linha selecionada, botão off */
+  }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--preto); color:var(--offwhite); font-family:'Barlow',system-ui,sans-serif; }
+  body { margin:0; background:var(--offwhite); color:var(--preto); font-family:'Barlow',system-ui,sans-serif; }
   .admin-wrap { max-width:1100px; margin:0 auto; padding:2rem 1.25rem 4rem; }
   .admin-cab { border-bottom:1px solid var(--linha); padding-bottom:1rem; margin-bottom:1.5rem; }
   .admin-logo { font-family:'Barlow Condensed',sans-serif; font-weight:900; text-transform:uppercase; color:var(--laranja); font-size:2rem; letter-spacing:.04em; margin:0; }
@@ -131,8 +140,10 @@ const ESTILO_ADMIN = `
   .badge--entrevista { background:var(--laranja); color:var(--preto); }
   .badge--concluido { background:transparent; color:var(--offwhite); border:1px solid var(--offwhite); }
   .btn { display:inline-block; padding:.4rem .8rem; border-radius:6px; text-decoration:none; font-weight:600; font-size:.85rem; background:var(--laranja); color:var(--preto); border:none; cursor:pointer; }
-  .btn--off { background:var(--linha); color:var(--cinza); pointer-events:none; }
-  .btn--ghost { background:transparent; color:var(--offwhite); border:1px solid var(--linha); }
+  .btn:not(.btn--ghost):not(.btn--off):hover { filter:brightness(0.92); }
+  .btn--off { background:var(--cinza-suave); color:var(--cinza); pointer-events:none; cursor:not-allowed; }
+  .btn--ghost { background:transparent; color:var(--preto); border:1px solid var(--linha); }
+  .btn--ghost:hover { border-color:var(--laranja); color:var(--laranja); }
   .admin-rodape { margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--linha); color:var(--cinza); font-size:.9rem; }
   .admin-filtros { display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:1.25rem; }
   .admin-filtros .filtro { display:flex; flex-direction:column; gap:.25rem; }
