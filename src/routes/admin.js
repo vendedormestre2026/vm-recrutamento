@@ -136,14 +136,15 @@ const ESTILO_ADMIN = `
   table.admin-tab th, table.admin-tab td { text-align:left; padding:.6rem .7rem; border-bottom:1px solid var(--linha); white-space:nowrap; }
   table.admin-tab th { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; color:var(--cinza); font-weight:700; }
   .badge { display:inline-block; padding:.15rem .55rem; border-radius:999px; font-size:.8rem; font-weight:600; }
-  .badge--aplicado { background:var(--linha); color:var(--cinza); }
+  .badge--aplicado { background:var(--cinza-suave); color:var(--cinza); }
   .badge--entrevista { background:var(--laranja); color:var(--preto); }
-  .badge--concluido { background:transparent; color:var(--offwhite); border:1px solid var(--offwhite); }
+  .badge--concluido { background:transparent; color:var(--preto); border:1px solid var(--preto); }
   .btn { display:inline-block; padding:.4rem .8rem; border-radius:6px; text-decoration:none; font-weight:600; font-size:.85rem; background:var(--laranja); color:var(--preto); border:none; cursor:pointer; }
   .btn:not(.btn--ghost):not(.btn--off):hover { filter:brightness(0.92); }
   .btn--off { background:var(--cinza-suave); color:var(--cinza); pointer-events:none; cursor:not-allowed; }
   .btn--ghost { background:transparent; color:var(--preto); border:1px solid var(--linha); }
   .btn--ghost:hover { border-color:var(--laranja); color:var(--laranja); }
+  .btn:disabled, .btn[disabled] { background:var(--cinza-suave); color:var(--cinza); cursor:not-allowed; filter:none; }
   .admin-rodape { margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--linha); color:var(--cinza); font-size:.9rem; }
   .admin-filtros { display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:1.25rem; }
   .admin-filtros .filtro { display:flex; flex-direction:column; gap:.25rem; }
@@ -159,7 +160,7 @@ const ESTILO_ADMIN = `
   .comp-cab { display:flex; justify-content:space-between; align-items:center; gap:1rem; }
   .comp-nota { font-family:'Barlow Condensed',sans-serif; font-weight:900; font-size:1.6rem; color:var(--laranja); }
   .comp-nota small { color:var(--cinza); font-size:.9rem; }
-  .tag-off { display:inline-block; font-size:.75rem; color:var(--preto); background:var(--cinza); padding:.1rem .45rem; border-radius:4px; margin-left:.5rem; }
+  .tag-off { display:inline-block; font-size:.75rem; color:var(--cinza); background:var(--cinza-suave); padding:.1rem .45rem; border-radius:4px; margin-left:.5rem; }
   .lista { margin:.3rem 0 0; padding-left:1.2rem; }
   .transc { font-size:.85rem; }
   .turno { padding:.5rem .8rem; border-radius:6px; margin-bottom:.4rem; background:var(--campo); }
@@ -173,7 +174,7 @@ const ESTILO_ADMIN = `
   .aviso-ok { background:var(--linha); border-left:3px solid var(--laranja); padding:.6rem .9rem; border-radius:4px; margin-bottom:1rem; }
   .aviso-alerta { background:var(--campo); border:1px solid var(--laranja); border-left:4px solid var(--laranja); color:var(--offwhite); padding:.6rem .9rem; border-radius:4px; margin-bottom:1rem; font-size:.92rem; }
   .badge--ativa { background:var(--laranja); color:var(--preto); }
-  .badge--encerrada { background:var(--linha); color:var(--cinza); }
+  .badge--encerrada { background:var(--cinza-suave); color:var(--cinza); }
   .tag-aviso { display:inline-block; font-size:.72rem; font-weight:700; color:var(--laranja); border:1px solid var(--laranja); padding:.05rem .4rem; border-radius:4px; margin-left:.4rem; white-space:nowrap; }
   .acoes-linha { display:flex; gap:.4rem; align-items:center; }
   .acoes-linha form { margin:0; display:inline; }
