@@ -341,6 +341,7 @@ router.get('/', (req, res) => {
         : '—';
       return `
         <tr>
+          <td><input type="checkbox" name="ids" value="${c.id}" aria-label="Selecionar ${escapeHtml(nomeCompleto(c))}"></td>
           <td><a href="/admin/candidato/${c.id}">${escapeHtml(nomeCompleto(c))}</a></td>
           <td>${escapeHtml(c.email || '—')}</td>
           <td>${escapeHtml(c.telefone || '—')}</td>
@@ -394,13 +395,19 @@ router.get('/', (req, res) => {
       ${temFiltro ? '<a class="btn btn--ghost" href="/admin">Limpar</a>' : ''}
     </form>`;
 
-  // Aviso pos-acao (arquivar/restaurar), sinalizado por query string apos o redirect.
+  // Aviso pos-acao (arquivar individual/lote, restaurar, selecao vazia), sinalizado por
+  // query string apos o redirect.
+  const nArquivados = Number(req.query.arquivados);
   const flashLista =
-    req.query.arquivado === '1'
-      ? '<div class="aviso-ok">Lead arquivado. Ele saiu da listagem, mas o histórico foi preservado.</div>'
-      : req.query.restaurado === '1'
-        ? '<div class="aviso-ok">Lead restaurado.</div>'
-        : '';
+    req.query.sem_selecao === '1'
+      ? '<div class="aviso-alerta">Nenhum lead válido selecionado.</div>'
+      : req.query.arquivados != null && Number.isInteger(nArquivados) && nArquivados >= 0
+        ? `<div class="aviso-ok">${nArquivados} lead(s) arquivado(s). Eles saíram da listagem, mas o histórico foi preservado.</div>`
+        : req.query.arquivado === '1'
+          ? '<div class="aviso-ok">Lead arquivado. Ele saiu da listagem, mas o histórico foi preservado.</div>'
+          : req.query.restaurado === '1'
+            ? '<div class="aviso-ok">Lead restaurado.</div>'
+            : '';
 
   const conteudo = `
     ${flashLista}
@@ -415,23 +422,60 @@ router.get('/', (req, res) => {
       </div>
     </div>
     ${filtros}
-    <div class="admin-tab-scroll">
-      <table class="admin-tab">
-        <thead>
-          <tr>
-            <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Vaga</th>
-            <th>Status</th><th>Criado em</th><th>Vídeo</th><th>Ação</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${linhas || `<tr><td colspan="8">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
-        </tbody>
-      </table>
-    </div>
+    <form id="form-lote" method="POST" action="/admin/candidatos/arquivar-lote">
+      <input type="hidden" name="status" value="${escapeHtml(status)}">
+      <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
+      <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
+      <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
+      <div style="margin:0 0 .75rem;">
+        <button type="submit" class="btn" data-arquivar-lote disabled>Arquivar selecionados</button>
+      </div>
+      <div class="admin-tab-scroll">
+        <table class="admin-tab">
+          <thead>
+            <tr>
+              <th><input type="checkbox" data-selecionar-todos aria-label="Selecionar todos"></th>
+              <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Vaga</th>
+              <th>Status</th><th>Criado em</th><th>Vídeo</th><th>Ação</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhas || `<tr><td colspan="9">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </form>
     <p class="admin-rodape">
       Total de candidatos: <b>${totalCandidatos}</b> ·
       Entrevistas concluídas: <b>${totalConcluidas}</b>
-    </p>`;
+    </p>
+    <script>
+    (function () {
+      var form = document.getElementById('form-lote');
+      if (!form) return;
+      var todos = form.querySelector('[data-selecionar-todos]');
+      var botao = form.querySelector('[data-arquivar-lote]');
+      var base = 'Arquivar selecionados';
+      function itens() { return Array.prototype.slice.call(form.querySelectorAll('input[name="ids"]')); }
+      function marcados() { return itens().filter(function (c) { return c.checked; }); }
+      function atualizar() {
+        var n = marcados().length;
+        botao.disabled = n === 0;
+        botao.textContent = n > 0 ? base + ' (' + n + ')' : base;
+        if (todos) { todos.checked = n > 0 && n === itens().length; }
+      }
+      form.addEventListener('change', function (e) {
+        if (e.target === todos) { itens().forEach(function (c) { c.checked = todos.checked; }); }
+        atualizar();
+      });
+      form.addEventListener('submit', function (e) {
+        var n = marcados().length;
+        if (n === 0) { e.preventDefault(); return; }
+        if (!confirm('Arquivar ' + n + ' lead(s)? Eles saem da listagem, mas o histórico é preservado.')) { e.preventDefault(); }
+      });
+      atualizar();
+    })();
+    </script>`;
 
   res.send(paginaAdmin({ titulo: 'Candidatos', conteudo }));
 });
@@ -738,6 +782,45 @@ router.post('/candidato/:id/restaurar', (req, res) => {
   }
   db.restaurarAplicacao(id);
   return res.redirect(`/admin/candidato/${id}?ok=restaurado`);
+});
+
+// Reconstroi a query string dos filtros da listagem (status/de/ate/vaga), saneada, para
+// preservar o contexto ao redirecionar. Serve tanto para req.query quanto para req.body.
+function paramsFiltros(src = {}) {
+  const p = new URLSearchParams();
+  if (['aplicado', 'em_entrevista', 'concluido'].includes(src.status)) p.set('status', src.status);
+  const ehData = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  if (ehData(src.de)) p.set('de', String(src.de));
+  if (ehData(src.ate)) p.set('ate', String(src.ate));
+  const vn = Number(src.vaga);
+  if (Number.isInteger(vn) && vn > 0) p.set('vaga', String(vn));
+  return p;
+}
+
+// ── POST /admin/candidatos/arquivar-lote ── soft-delete em lote a partir da selecao ──
+// Recebe ids (array; um checkbox por lead). Saneia para inteiros positivos unicos,
+// ignorando invalidos em silencio. Reaproveita arquivarAplicacao (nao duplica a logica
+// de soft-delete). Preserva os filtros de origem no redirect. Defensivo: leads ja
+// arquivados retornam 0 alteracoes e nao sao recontados.
+router.post('/candidatos/arquivar-lote', (req, res) => {
+  const brutos = req.body && req.body.ids;
+  const lista = Array.isArray(brutos) ? brutos : brutos != null ? [brutos] : [];
+  const ids = [];
+  for (const v of lista) {
+    const n = Number(v);
+    if (Number.isInteger(n) && n > 0 && !ids.includes(n)) ids.push(n);
+  }
+
+  const params = paramsFiltros(req.body);
+  if (!ids.length) {
+    params.set('sem_selecao', '1');
+    return res.redirect(`/admin?${params.toString()}`);
+  }
+
+  let arquivados = 0;
+  for (const id of ids) arquivados += db.arquivarAplicacao(id); // 0 se ja arquivado / inexistente
+  params.set('arquivados', String(arquivados));
+  return res.redirect(`/admin?${params.toString()}`);
 });
 
 // ── GET /admin/relatorio/:interviewId ── relatorio individual ──
