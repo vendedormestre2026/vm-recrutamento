@@ -126,7 +126,7 @@ const ESTILO_ADMIN = `
   .admin-wrap { max-width:1100px; margin:0 auto; padding:2rem 1.25rem 4rem; }
   .admin-cab { border-bottom:1px solid var(--linha); padding-bottom:1rem; margin-bottom:1.5rem; }
   .admin-logo { font-family:'Barlow Condensed',sans-serif; font-weight:900; text-transform:uppercase; color:var(--laranja); font-size:2rem; letter-spacing:.04em; margin:0; }
-  .admin-sub { color:var(--offwhite); margin:.15rem 0 0; font-size:1.05rem; }
+  .admin-sub { color:var(--cinza); margin:.15rem 0 0; font-size:1.05rem; }
   .admin-sair { color:var(--cinza); font-size:.85rem; text-decoration:none; white-space:nowrap; }
   .admin-sair:hover { color:var(--laranja); }
   h1,h2,h3 { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.03em; }
@@ -149,7 +149,7 @@ const ESTILO_ADMIN = `
   .admin-filtros { display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:1.25rem; }
   .admin-filtros .filtro { display:flex; flex-direction:column; gap:.25rem; }
   .admin-filtros .filtro > span { color:var(--cinza); font-size:.8rem; text-transform:uppercase; }
-  .admin-filtros select, .admin-filtros input[type=date] { background:var(--campo); color:var(--offwhite); border:1px solid var(--linha); border-radius:6px; padding:.5rem .6rem; font:inherit; }
+  .admin-filtros select, .admin-filtros input[type=date] { background:var(--campo); color:var(--preto); border:1px solid var(--linha); border-radius:6px; padding:.5rem .6rem; font:inherit; }
   .admin-filtros select:focus, .admin-filtros input[type=date]:focus { outline:none; border-color:var(--laranja); }
   .rel-sec { margin:1.5rem 0; }
   .rel-id { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:.5rem 1.5rem; }
@@ -163,38 +163,40 @@ const ESTILO_ADMIN = `
   .tag-off { display:inline-block; font-size:.75rem; color:var(--cinza); background:var(--cinza-suave); padding:.1rem .45rem; border-radius:4px; margin-left:.5rem; }
   .lista { margin:.3rem 0 0; padding-left:1.2rem; }
   .transc { font-size:.85rem; }
-  .turno { padding:.5rem .8rem; border-radius:6px; margin-bottom:.4rem; background:var(--campo); }
+  .turno { padding:.5rem .8rem; border-radius:6px; margin-bottom:.4rem; background:var(--branco); border:1px solid var(--linha); }
   .turno-autor { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; color:var(--laranja); font-weight:700; font-size:.8rem; }
-  .turno--cand .turno-autor { color:var(--offwhite); }
+  .turno--cand .turno-autor { color:var(--preto); }
   .campo { display:block; margin-bottom:1rem; }
   .campo > span { display:block; color:var(--cinza); font-size:.85rem; text-transform:uppercase; margin-bottom:.3rem; }
-  .campo input[type=text], .campo input[type=password], .campo select, .campo textarea { width:100%; background:var(--campo); color:var(--offwhite); border:1px solid var(--linha); border-radius:6px; padding:.6rem .7rem; font:inherit; }
+  .campo input[type=text], .campo input[type=password], .campo select, .campo textarea { width:100%; background:var(--campo); color:var(--preto); border:1px solid var(--linha); border-radius:6px; padding:.6rem .7rem; font:inherit; }
   .campo input[type=text]:focus, .campo input[type=password]:focus, .campo select:focus, .campo textarea:focus { outline:none; border-color:var(--laranja); }
   .campo-check { display:flex; align-items:center; gap:.5rem; margin-bottom:1.2rem; }
-  .aviso-ok { background:var(--linha); border-left:3px solid var(--laranja); padding:.6rem .9rem; border-radius:4px; margin-bottom:1rem; }
-  .aviso-alerta { background:var(--campo); border:1px solid var(--laranja); border-left:4px solid var(--laranja); color:var(--offwhite); padding:.6rem .9rem; border-radius:4px; margin-bottom:1rem; font-size:.92rem; }
+  .aviso-ok { background:var(--branco); border:1px solid var(--laranja); border-left:3px solid var(--laranja); color:var(--preto); padding:.6rem .9rem; border-radius:4px; margin-bottom:1rem; }
+  .aviso-alerta { background:var(--branco); border:1px solid var(--laranja); border-left:4px solid var(--laranja); color:var(--preto); padding:.6rem .9rem; border-radius:4px; margin-bottom:1rem; font-size:.92rem; }
   .badge--ativa { background:var(--laranja); color:var(--preto); }
   .badge--encerrada { background:var(--cinza-suave); color:var(--cinza); }
   .tag-aviso { display:inline-block; font-size:.72rem; font-weight:700; color:var(--laranja); border:1px solid var(--laranja); padding:.05rem .4rem; border-radius:4px; margin-left:.4rem; white-space:nowrap; }
   .acoes-linha { display:flex; gap:.4rem; align-items:center; }
   .acoes-linha form { margin:0; display:inline; }
-  .campo input[type=number] { width:6rem; background:var(--campo); color:var(--offwhite); border:1px solid var(--linha); border-radius:6px; padding:.6rem .7rem; font:inherit; }
+  .campo input[type=number] { width:6rem; background:var(--campo); color:var(--preto); border:1px solid var(--linha); border-radius:6px; padding:.6rem .7rem; font:inherit; }
   .campo input[type=number]:focus { outline:none; border-color:var(--laranja); }
   .bloco-card { border:1px solid var(--linha); border-radius:8px; padding:.2rem 1rem; margin-bottom:.7rem; }
-  .bloco-card > summary { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.03em; cursor:pointer; padding:.7rem 0; color:var(--offwhite); font-weight:700; }
+  .bloco-card > summary { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.03em; cursor:pointer; padding:.7rem 0; color:var(--preto); font-weight:700; }
   .bloco-card[open] > summary { border-bottom:1px solid var(--linha); margin-bottom:.8rem; }
   /* Funil de conversao (dashboard) — barras em CSS puro, sem lib de grafico. */
   .funil { margin:.4rem 0 0; }
   .funil-etapa { margin-bottom:1.1rem; }
   .funil-topo { display:flex; justify-content:space-between; align-items:baseline; gap:1rem; margin-bottom:.3rem; }
-  .funil-rotulo { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.03em; color:var(--offwhite); font-weight:700; font-size:1.05rem; }
+  .funil-rotulo { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.03em; color:var(--preto); font-weight:700; font-size:1.05rem; }
   .funil-num { font-family:'Barlow Condensed',sans-serif; font-weight:900; font-size:1.9rem; color:var(--laranja); line-height:1; }
-  .funil-trilho { background:var(--campo); border:1px solid var(--linha); border-radius:6px; height:1.4rem; overflow:hidden; }
+  .funil-trilho { background:var(--cinza-suave); border:1px solid var(--linha); border-radius:6px; height:1.4rem; overflow:hidden; }
   .funil-barra { height:100%; background:var(--laranja); border-radius:5px 0 0 5px; min-width:0; }
   .funil-taxa { color:var(--cinza); font-size:.78rem; margin-top:.28rem; text-transform:uppercase; letter-spacing:.02em; }
-  .funil-taxa b { color:var(--offwhite); font-weight:700; }
+  .funil-taxa b { color:var(--preto); font-weight:700; }
   tr.linha-zero { opacity:.5; }
   td.col-num, th.col-num { text-align:right; font-variant-numeric:tabular-nums; }
+  table.admin-tab tbody tr:hover { background:var(--cinza-suave); }
+  table.admin-tab tbody tr.linha-selecionada { background:var(--cinza-suave); border-left:3px solid var(--laranja); }
 `;
 
 // Shell HTML do painel (sem o header/funil/app.js do candidato).
@@ -475,6 +477,10 @@ router.get('/', (req, res) => {
         botao.disabled = n === 0;
         botao.textContent = n > 0 ? base + ' (' + n + ')' : base;
         if (todos) { todos.checked = n > 0 && n === itens().length; }
+        itens().forEach(function (c) {
+          var tr = c.closest('tr');
+          if (tr) { tr.classList.toggle('linha-selecionada', c.checked); }
+        });
       }
       form.addEventListener('change', function (e) {
         if (e.target === todos) { itens().forEach(function (c) { c.checked = todos.checked; }); }
@@ -1332,12 +1338,12 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
 
     <label class="campo-check">
       <input type="checkbox" name="ativo" value="1"${vaga.ativo ? ' checked' : ''}>
-      <span style="color:var(--offwhite);text-transform:none;">Vaga ativa</span>
+      <span style="color:var(--preto);text-transform:none;">Vaga ativa</span>
     </label>
 
     <label class="campo-check">
       <input type="checkbox" name="entrevista_ativa" value="1"${vaga.entrevista_ativa !== 0 ? ' checked' : ''}>
-      <span style="color:var(--offwhite);text-transform:none;">Entrevista automática (modo Completo)</span>
+      <span style="color:var(--preto);text-transform:none;">Entrevista automática (modo Completo)</span>
     </label>
     <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
       Marcada: o candidato passa pela entrevista com a Vera (fluxo completo). Desmarcada:
@@ -1368,7 +1374,7 @@ function blocoLinksEtapa(vaga) {
         <div style="color:var(--cinza);font-size:.78rem;text-transform:uppercase;margin-bottom:.25rem;">${escapeHtml(rotulo)}</div>
         <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
           <input type="text" readonly value="${escapeHtml(url)}" onfocus="this.select()"
-            style="flex:1;min-width:18rem;background:var(--campo);color:var(--offwhite);border:1px solid var(--linha);border-radius:6px;padding:.5rem .6rem;font:inherit;">
+            style="flex:1;min-width:18rem;background:var(--campo);color:var(--preto);border:1px solid var(--linha);border-radius:6px;padding:.5rem .6rem;font:inherit;">
           <button type="button" class="btn" data-copiar="${escapeHtml(url)}">Copiar</button>
         </div>
         <p style="color:var(--cinza);font-size:.78rem;margin:.25rem 0 0;">${escapeHtml(desc)}</p>
@@ -1479,7 +1485,7 @@ function blocoImportBriefing(erroImport) {
       <form method="POST" action="/admin/vagas/importar" data-form-import>
         <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
           <input type="url" name="briefing_url" required placeholder="https://docs.google.com/document/d/.../edit"
-            style="flex:1;min-width:18rem;background:var(--campo);color:var(--offwhite);border:1px solid var(--linha);border-radius:6px;padding:.6rem .7rem;font:inherit;">
+            style="flex:1;min-width:18rem;background:var(--campo);color:var(--preto);border:1px solid var(--linha);border-radius:6px;padding:.6rem .7rem;font:inherit;">
           <button type="submit" class="btn" data-btn-import>Importar</button>
         </div>
         <p style="color:var(--cinza);font-size:.8rem;margin:.5rem 0 0;">
@@ -1774,7 +1780,7 @@ router.get('/roteiro', (req, res) => {
         <summary>${escapeHtml(b.nome || b.id || `Bloco ${i + 1}`)}</summary>
         <label class="campo-check">
           <input type="checkbox" name="bloco_${i}_obrigatorio" value="1"${b.obrigatorio !== false ? ' checked' : ''}>
-          <span style="color:var(--offwhite);text-transform:none;">Bloco obrigatório</span>
+          <span style="color:var(--preto);text-transform:none;">Bloco obrigatório</span>
         </label>
         ${semente}${instrucao}${sondas}
       </details>`;
