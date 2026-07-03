@@ -43,6 +43,7 @@ module.exports = {
   criarInterview: driver.criarInterview,
   obterInterview: driver.obterInterview,
   obterInterviewEmAndamentoPorAplicacao: driver.obterInterviewEmAndamentoPorAplicacao,
+  obterUltimaInterviewPorAplicacao: driver.obterUltimaInterviewPorAplicacao,
   definirUltimoRespId: driver.definirUltimoRespId,
   finalizarInterview: driver.finalizarInterview,
   definirVideoUrl: driver.definirVideoUrl,

@@ -10,6 +10,7 @@
 // ADMIN_PASSWORD. Sem ADMIN_USER/ADMIN_PASSWORD definidos, o login nunca autentica.
 
 const express = require('express');
+const fs = require('node:fs');
 const { config } = require('../config');
 const db = require('../db');
 const drive = require('../providers/drive');
@@ -331,7 +332,7 @@ router.get('/', (req, res) => {
         : '—';
       return `
         <tr>
-          <td>${escapeHtml(nomeCompleto(c))}</td>
+          <td><a href="/admin/candidato/${c.id}">${escapeHtml(nomeCompleto(c))}</a></td>
           <td>${escapeHtml(c.email || '—')}</td>
           <td>${escapeHtml(c.telefone || '—')}</td>
           <td>${escapeHtml(c.vaga_titulo || '—')}</td>
@@ -402,6 +403,166 @@ router.get('/', (req, res) => {
     </p>`;
 
   res.send(paginaAdmin({ titulo: 'Candidatos', conteudo }));
+});
+
+// Renderiza campos_extras (legado): objeto -> lista chave/valor; string -> tenta JSON,
+// senao texto cru; vazio/nulo -> travessao. Nunca imprime [object Object]/undefined.
+function camposExtrasHtml(valor) {
+  let obj = valor;
+  if (typeof valor === 'string') {
+    const cru = valor.trim();
+    if (!cru) return '<p>—</p>';
+    try {
+      obj = JSON.parse(cru);
+    } catch {
+      return `<p>${escapeHtml(cru)}</p>`; // nao era JSON: mostra o texto cru
+    }
+  }
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    const chaves = Object.keys(obj);
+    if (!chaves.length) return '<p>—</p>';
+    const itens = chaves
+      .map((k) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(obj[k]))}</dd></div>`)
+      .join('');
+    return `<dl class="rel-id">${itens}</dl>`;
+  }
+  if (obj == null || obj === '') return '<p>—</p>';
+  return `<p>${escapeHtml(String(obj))}</p>`;
+}
+
+// Nome de arquivo seguro para o download do curriculo (sem acentos, so [a-zA-Z0-9._-]).
+function sanitizarNomeArquivo(base) {
+  const limpo = String(base || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // remove acentos (diacriticos)
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+  return limpo || 'curriculo';
+}
+
+// Card de aviso padrao (reusa o shell admin) para os 404 amigaveis desta area.
+function avisoAdmin(res, codigo, { titulo, descricao }) {
+  return res.status(codigo).send(
+    paginaAdmin({
+      titulo,
+      conteudo: `
+        <section class="rel-sec">
+          <h1>${escapeHtml(titulo)}</h1>
+          <p>${escapeHtml(descricao)}</p>
+          <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
+        </section>`,
+    }),
+  );
+}
+
+// ── GET /admin/candidato/:id ── tela de detalhe do candidato (por application_id) ──
+router.get('/candidato/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Candidato não encontrado',
+      descricao: 'Não há candidatura com este identificador.',
+    });
+  }
+
+  const vaga = cand.job_id ? db.obterVaga(cand.job_id) : null;
+  const ultimaInterview = db.obterUltimaInterviewPorAplicacao(cand.id);
+  const interviewId = ultimaInterview ? ultimaInterview.id : null;
+  const report = interviewId ? db.obterReportPorInterview(interviewId) : null;
+  const videoUrl = ultimaInterview ? ultimaInterview.video_url : null;
+
+  // Mesmo criterio da lista: relatorio so quando a entrevista concluiu e ha report.
+  const podeVerRelatorio = cand.status === 'concluido' && interviewId != null && report != null;
+  const botaoRelatorio = podeVerRelatorio
+    ? `<a class="btn" href="/admin/relatorio/${interviewId}">Ver relatório</a>`
+    : `<span class="btn btn--off">Ver relatório</span>`;
+
+  const temCurriculo = Boolean(cand.curriculo_path);
+  const botaoCurriculo = temCurriculo
+    ? `<a class="btn" href="/admin/candidato/${cand.id}/curriculo">Baixar currículo (PDF)</a>`
+    : `<span class="btn btn--off">Baixar currículo (PDF)</span>`;
+
+  const botaoVideo = videoUrl
+    ? `<a class="btn btn--ghost" href="${escapeHtml(videoUrl)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`
+    : `<span class="btn btn--off">Abrir vídeo</span>`;
+
+  const linkedin = cand.linkedin_url
+    ? `<a href="${escapeHtml(cand.linkedin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cand.linkedin_url)}</a>`
+    : '—';
+
+  const conteudo = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <h1 style="margin:0;">${escapeHtml(nomeCompleto(cand))}</h1>
+      <a class="btn btn--ghost" href="/admin">← Voltar ao painel</a>
+    </div>
+
+    <section class="rel-sec">
+      <h2>Dados pessoais</h2>
+      <dl class="rel-id">
+        <div><dt>Nome</dt><dd>${escapeHtml(cand.nome || '—')}</dd></div>
+        <div><dt>Sobrenome</dt><dd>${escapeHtml(cand.sobrenome || '—')}</dd></div>
+        <div><dt>E-mail</dt><dd>${escapeHtml(cand.email || '—')}</dd></div>
+        <div><dt>Telefone</dt><dd>${escapeHtml(cand.telefone || '—')}</dd></div>
+        <div><dt>LinkedIn</dt><dd>${linkedin}</dd></div>
+        ${cand.cidade ? `<div><dt>Cidade</dt><dd>${escapeHtml(cand.cidade)}</dd></div>` : ''}
+        <div><dt>Vaga</dt><dd>${escapeHtml((vaga && vaga.titulo) || cand.vaga_titulo || '—')}</dd></div>
+        <div><dt>Status</dt><dd>${badgeStatus(cand.status)}</dd></div>
+        <div><dt>Aplicou em</dt><dd>${escapeHtml(formatarDataHora(cand.criado_em))}</dd></div>
+      </dl>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Consentimentos (LGPD)</h2>
+      <dl class="rel-id">
+        <div><dt>Aceite de coleta/uso</dt><dd>${escapeHtml(formatarDataHora(cand.consent_at))}</dd></div>
+        <div><dt>Aceite de gravação</dt><dd>${escapeHtml(formatarDataHora(cand.consent_gravacao_at))}</dd></div>
+      </dl>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Campos extras</h2>
+      ${camposExtrasHtml(cand.campos_extras)}
+    </section>
+
+    <section class="rel-sec">
+      <h2>Ações</h2>
+      <div class="acoes-linha" style="flex-wrap:wrap;gap:.6rem;">
+        ${botaoCurriculo}
+        ${botaoRelatorio}
+        ${botaoVideo}
+      </div>
+    </section>`;
+
+  res.send(paginaAdmin({ titulo: `Candidato — ${nomeCompleto(cand)}`, conteudo }));
+});
+
+// ── GET /admin/candidato/:id/curriculo ── download do PDF do curriculo ──
+// Seguranca: o caminho vem do DB (curriculo_path absoluto), NUNCA de req.params —
+// evita path traversal. 404 amigavel se a app/coluna/arquivo nao existir.
+router.get('/candidato/:id/curriculo', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand || !cand.curriculo_path) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Currículo não disponível',
+      descricao: 'Este candidato não possui currículo anexado.',
+    });
+  }
+
+  const caminho = cand.curriculo_path; // caminho absoluto do banco (nao montado de req)
+  if (!fs.existsSync(caminho)) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Arquivo não encontrado',
+      descricao: 'O arquivo do currículo não foi localizado no armazenamento.',
+    });
+  }
+
+  const nomeArquivo = `${sanitizarNomeArquivo(`curriculo_${cand.nome || ''}_${cand.sobrenome || ''}`)}.pdf`;
+  res.type('application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
+  return res.sendFile(caminho);
 });
 
 // ── GET /admin/relatorio/:interviewId ── relatorio individual ──

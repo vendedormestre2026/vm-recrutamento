@@ -324,6 +324,16 @@ function obterInterviewEmAndamentoPorAplicacao(applicationId) {
   );
 }
 
+// Ultima entrevista de uma application em QUALQUER status (para a tela de detalhe do
+// candidato). Difere de obterInterviewEmAndamentoPorAplicacao, que exclui as concluidas.
+function obterUltimaInterviewPorAplicacao(applicationId) {
+  return (
+    getDb()
+      .prepare('SELECT * FROM interviews WHERE application_id = ? ORDER BY id DESC LIMIT 1')
+      .get(applicationId) || null
+  );
+}
+
 // Guarda o id da ultima resposta processada (idempotencia: retry com o mesmo id
 // nao cria turnos duplicados).
 function definirUltimoRespId(interviewId, respId) {
@@ -804,6 +814,7 @@ module.exports = {
   criarInterview,
   obterInterview,
   obterInterviewEmAndamentoPorAplicacao,
+  obterUltimaInterviewPorAplicacao,
   definirUltimoRespId,
   finalizarInterview,
   definirVideoUrl,
