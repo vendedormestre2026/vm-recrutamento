@@ -273,6 +273,48 @@ function atualizarStatusAplicacao(id, status) {
   getDb().prepare('UPDATE applications SET status = ? WHERE id = ?').run(status, id);
 }
 
+// Edita SOMENTE os campos de contato do candidato. NUNCA toca em id/job_id/token/status/
+// curriculo_path/timestamps. Vazio ('' apos trim) vira NULL. Tudo parametrizado (?).
+function atualizarAplicacao(id, campos = {}) {
+  const norm = (v) => {
+    const s = v == null ? '' : String(v).trim();
+    return s === '' ? null : s;
+  };
+  const info = getDb()
+    .prepare(
+      `UPDATE applications
+          SET nome = ?, sobrenome = ?, email = ?, telefone = ?, linkedin_url = ?, cidade = ?
+        WHERE id = ?`,
+    )
+    .run(
+      norm(campos.nome),
+      norm(campos.sobrenome),
+      norm(campos.email),
+      norm(campos.telefone),
+      norm(campos.linkedin_url),
+      norm(campos.cidade),
+      id,
+    );
+  return info.changes;
+}
+
+// Soft-delete: arquiva o lead (deleted_at = agora) apenas se ainda estiver ativo.
+// Retorna nº de linhas afetadas (0 se ja estava arquivado / id inexistente).
+function arquivarAplicacao(id) {
+  const info = getDb()
+    .prepare("UPDATE applications SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL")
+    .run(id);
+  return info.changes;
+}
+
+// Reversao do soft-delete: volta o lead para ativo (deleted_at = NULL).
+function restaurarAplicacao(id) {
+  const info = getDb()
+    .prepare('UPDATE applications SET deleted_at = NULL WHERE id = ?')
+    .run(id);
+  return info.changes;
+}
+
 // Registra o consentimento de gravacao (LGPD) no momento em que o candidato avanca do
 // teste de microfone. Idempotente: so grava se ainda nao houver aceite (preserva o
 // 1o aceite mesmo que o candidato volte/recarregue). Retorna o nº de linhas afetadas.
@@ -460,9 +502,17 @@ function obterReportEnviadoPorInterview(interviewId) {
 // Ordena por criado_em DESC. Filtros opcionais (Fase 5, inc 5):
 //   status -> filtra a.status (so um dos valores validos; ignorado caso contrario)
 //   dataDe / dataAte -> intervalo INCLUSIVO sobre a data (YYYY-MM-DD) de a.criado_em
-function listarAplicacoesComContexto({ status, dataDe, dataAte } = {}) {
+function listarAplicacoesComContexto({ status, dataDe, dataAte, incluirArquivados = false } = {}) {
   const where = [];
   const params = [];
+
+  // Soft-delete: por padrao esconde os arquivados (deleted_at != NULL). Isto afeta SO
+  // esta lista do painel; o funil (obterFunilConversao) tem query propria e mantem os
+  // arquivados nas metricas historicas. O parametro permite reincluir se algum dia
+  // precisarmos de uma visao "com arquivados".
+  if (!incluirArquivados) {
+    where.push('a.deleted_at IS NULL');
+  }
 
   if (status === 'aplicado' || status === 'em_entrevista' || status === 'concluido') {
     where.push('a.status = ?');
@@ -808,6 +858,9 @@ module.exports = {
   obterAplicacao,
   obterAplicacaoPorToken,
   atualizarStatusAplicacao,
+  atualizarAplicacao,
+  arquivarAplicacao,
+  restaurarAplicacao,
   registrarConsentGravacao,
   marcarRetomadaEnviada,
   // entrevistas

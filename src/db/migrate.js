@@ -80,6 +80,11 @@ function migrar() {
   // link de retomada (ISO/UTC). Usado para nao reenviar dentro de 30 min. Idempotente.
   adicionarColunaSeFaltar('applications', 'enviado_retomada_em', 'TEXT');
 
+  // Painel do recrutador - soft-delete de lead: momento do arquivamento (ISO/UTC).
+  // NULL = ativo. Aditiva (sem default/CHECK/DROP). Arquivados saem da listagem do
+  // painel, mas o historico e preservado; reversivel via restaurarAplicacao.
+  adicionarColunaSeFaltar('applications', 'deleted_at', 'TEXT');
+
   // Indices de reports ficam aqui (e nao no schema.sql) porque dependem das
   // colunas acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

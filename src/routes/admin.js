@@ -372,7 +372,16 @@ router.get('/', (req, res) => {
       ${temFiltro ? '<a class="btn btn--ghost" href="/admin">Limpar</a>' : ''}
     </form>`;
 
+  // Aviso pos-acao (arquivar/restaurar), sinalizado por query string apos o redirect.
+  const flashLista =
+    req.query.arquivado === '1'
+      ? '<div class="aviso-ok">Lead arquivado. Ele saiu da listagem, mas o histórico foi preservado.</div>'
+      : req.query.restaurado === '1'
+        ? '<div class="aviso-ok">Lead restaurado.</div>'
+        : '';
+
   const conteudo = `
+    ${flashLista}
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
       <h1 style="margin:0;">Candidatos</h1>
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
@@ -492,11 +501,40 @@ router.get('/candidato/:id', (req, res) => {
     ? `<a href="${escapeHtml(cand.linkedin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cand.linkedin_url)}</a>`
     : '—';
 
+  const arquivado = Boolean(cand.deleted_at);
+
+  // Aviso pos-acao (edicao/restauracao), sinalizado por query string apos o redirect.
+  const flash =
+    req.query.ok === 'editado'
+      ? '<div class="aviso-ok">Dados do candidato atualizados.</div>'
+      : req.query.ok === 'restaurado'
+        ? '<div class="aviso-ok">Lead restaurado.</div>'
+        : '';
+
+  const avisoArquivado = arquivado
+    ? `<div class="aviso-alerta">Lead arquivado em ${escapeHtml(formatarDataHora(cand.deleted_at))}. Ele não aparece na listagem, mas o histórico foi preservado.</div>`
+    : '';
+
+  const botaoEditar = `<a class="btn" href="/admin/candidato/${cand.id}/editar">Editar</a>`;
+
+  // Arquivar (com confirm) ou Restaurar, conforme o estado. Ambos via POST (nunca GET,
+  // para nao disparar por link acidental / prefetch).
+  const botaoArquivarRestaurar = arquivado
+    ? `<form method="POST" action="/admin/candidato/${cand.id}/restaurar" style="margin:0;display:inline;">
+         <button type="submit" class="btn btn--ghost">Restaurar lead</button>
+       </form>`
+    : `<form method="POST" action="/admin/candidato/${cand.id}/arquivar" style="margin:0;display:inline;"
+             onsubmit="return confirm('Arquivar este lead? Ele sai da listagem, mas o histórico é preservado.')">
+         <button type="submit" class="btn btn--ghost">Arquivar lead</button>
+       </form>`;
+
   const conteudo = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
       <h1 style="margin:0;">${escapeHtml(nomeCompleto(cand))}</h1>
       <a class="btn btn--ghost" href="/admin">← Voltar ao painel</a>
     </div>
+    ${flash}
+    ${avisoArquivado}
 
     <section class="rel-sec">
       <h2>Dados pessoais</h2>
@@ -529,9 +567,11 @@ router.get('/candidato/:id', (req, res) => {
     <section class="rel-sec">
       <h2>Ações</h2>
       <div class="acoes-linha" style="flex-wrap:wrap;gap:.6rem;">
+        ${botaoEditar}
         ${botaoCurriculo}
         ${botaoRelatorio}
         ${botaoVideo}
+        ${botaoArquivarRestaurar}
       </div>
     </section>`;
 
@@ -563,6 +603,119 @@ router.get('/candidato/:id/curriculo', (req, res) => {
   res.type('application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
   return res.sendFile(caminho);
+});
+
+// Validacao simples de e-mail (formato basico local@dominio.tld). Vazio e tratado
+// como "sem e-mail" por quem chama (nao passa por aqui).
+function emailValido(s) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || ''));
+}
+
+// Formulario de edicao do candidato (campos de contato). `valores` permite re-render
+// preservando o que o recrutador digitou quando a validacao falha.
+function formEditar(cand, { erro = '', valores = null } = {}) {
+  const v = valores || cand;
+  const val = (x) => escapeHtml(x == null ? '' : String(x));
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <h1 style="margin:0;">Editar candidato</h1>
+      <a class="btn btn--ghost" href="/admin/candidato/${cand.id}">← Cancelar</a>
+    </div>
+    ${erro ? `<div class="aviso-alerta">${escapeHtml(erro)}</div>` : ''}
+    <form method="POST" action="/admin/candidato/${cand.id}/editar">
+      <label class="campo"><span>Nome</span><input type="text" name="nome" value="${val(v.nome)}"></label>
+      <label class="campo"><span>Sobrenome</span><input type="text" name="sobrenome" value="${val(v.sobrenome)}"></label>
+      <label class="campo"><span>E-mail</span><input type="text" name="email" value="${val(v.email)}"></label>
+      <label class="campo"><span>Telefone</span><input type="text" name="telefone" value="${val(v.telefone)}"></label>
+      <label class="campo"><span>LinkedIn (URL)</span><input type="text" name="linkedin_url" value="${val(v.linkedin_url)}"></label>
+      <label class="campo"><span>Cidade</span><input type="text" name="cidade" value="${val(v.cidade)}"></label>
+      <div class="acoes-linha" style="gap:.6rem;">
+        <button type="submit" class="btn">Salvar</button>
+        <a class="btn btn--ghost" href="/admin/candidato/${cand.id}">Cancelar</a>
+      </div>
+    </form>`;
+}
+
+// ── GET /admin/candidato/:id/editar ── formulario de edicao dos dados de contato ──
+router.get('/candidato/:id/editar', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Candidato não encontrado',
+      descricao: 'Não há candidatura com este identificador.',
+    });
+  }
+  return res.send(
+    paginaAdmin({ titulo: `Editar — ${nomeCompleto(cand)}`, conteudo: formEditar(cand) }),
+  );
+});
+
+// ── POST /admin/candidato/:id/editar ── salva os dados de contato ──
+router.post('/candidato/:id/editar', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Candidato não encontrado',
+      descricao: 'Não há candidatura com este identificador.',
+    });
+  }
+
+  const b = req.body || {};
+  const trim = (x) => String(x == null ? '' : x).trim();
+  const valores = {
+    nome: trim(b.nome),
+    sobrenome: trim(b.sobrenome),
+    email: trim(b.email),
+    telefone: trim(b.telefone),
+    linkedin_url: trim(b.linkedin_url),
+    cidade: trim(b.cidade),
+  };
+
+  // E-mail e opcional, mas se informado precisa ter formato valido. LinkedIn e livre.
+  if (valores.email && !emailValido(valores.email)) {
+    return res.status(400).send(
+      paginaAdmin({
+        titulo: `Editar — ${nomeCompleto(cand)}`,
+        conteudo: formEditar(cand, {
+          erro: 'E-mail inválido. Verifique o formato (ex.: nome@dominio.com).',
+          valores,
+        }),
+      }),
+    );
+  }
+
+  db.atualizarAplicacao(id, valores);
+  return res.redirect(`/admin/candidato/${id}?ok=editado`);
+});
+
+// ── POST /admin/candidato/:id/arquivar ── soft-delete (sai da listagem) ──
+router.post('/candidato/:id/arquivar', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Candidato não encontrado',
+      descricao: 'Não há candidatura com este identificador.',
+    });
+  }
+  db.arquivarAplicacao(id);
+  return res.redirect('/admin?arquivado=1');
+});
+
+// ── POST /admin/candidato/:id/restaurar ── reverte o soft-delete ──
+router.post('/candidato/:id/restaurar', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Candidato não encontrado',
+      descricao: 'Não há candidatura com este identificador.',
+    });
+  }
+  db.restaurarAplicacao(id);
+  return res.redirect(`/admin/candidato/${id}?ok=restaurado`);
 });
 
 // ── GET /admin/relatorio/:interviewId ── relatorio individual ──
