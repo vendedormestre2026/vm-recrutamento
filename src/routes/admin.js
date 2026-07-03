@@ -318,8 +318,17 @@ router.get('/', (req, res) => {
   const ehData = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   const dataDe = ehData(q.de) ? q.de : '';
   const dataAte = ehData(q.ate) ? q.ate : '';
+  // Vaga: id inteiro positivo; vazio = todas. O <select> so oferece ids existentes.
+  const vagaIdNum = Number(q.vaga);
+  const vagaId = Number.isInteger(vagaIdNum) && vagaIdNum > 0 ? vagaIdNum : '';
 
-  const candidatos = db.listarAplicacoesComContexto({ status, dataDe, dataAte });
+  const vagas = db.listarVagas();
+  const candidatos = db.listarAplicacoesComContexto({
+    status,
+    dataDe,
+    dataAte,
+    jobId: vagaId || undefined,
+  });
 
   const linhas = candidatos
     .map((c) => {
@@ -348,9 +357,22 @@ router.get('/', (req, res) => {
   const totalConcluidas = db.contarEntrevistasConcluidas();
 
   const sel = (v) => (status === v ? ' selected' : '');
-  const temFiltro = status || dataDe || dataAte;
+  const temFiltro = status || dataDe || dataAte || vagaId;
+  const opcoesVaga = vagas
+    .map(
+      (v) =>
+        `<option value="${v.id}"${String(vagaId) === String(v.id) ? ' selected' : ''}>${escapeHtml(v.titulo || `Vaga ${v.id}`)}</option>`,
+    )
+    .join('');
   const filtros = `
     <form method="GET" action="/admin" class="admin-filtros">
+      <label class="filtro">
+        <span>Vaga</span>
+        <select name="vaga">
+          <option value=""${vagaId ? '' : ' selected'}>Todas</option>
+          ${opcoesVaga}
+        </select>
+      </label>
       <label class="filtro">
         <span>Status</span>
         <select name="status">

@@ -502,7 +502,8 @@ function obterReportEnviadoPorInterview(interviewId) {
 // Ordena por criado_em DESC. Filtros opcionais (Fase 5, inc 5):
 //   status -> filtra a.status (so um dos valores validos; ignorado caso contrario)
 //   dataDe / dataAte -> intervalo INCLUSIVO sobre a data (YYYY-MM-DD) de a.criado_em
-function listarAplicacoesComContexto({ status, dataDe, dataAte, incluirArquivados = false } = {}) {
+//   jobId -> filtra a.job_id (id da vaga; ignorado se ausente)
+function listarAplicacoesComContexto({ status, dataDe, dataAte, jobId, incluirArquivados = false } = {}) {
   const where = [];
   const params = [];
 
@@ -517,6 +518,10 @@ function listarAplicacoesComContexto({ status, dataDe, dataAte, incluirArquivado
   if (status === 'aplicado' || status === 'em_entrevista' || status === 'concluido') {
     where.push('a.status = ?');
     params.push(status);
+  }
+  if (jobId) {
+    where.push('a.job_id = ?');
+    params.push(jobId);
   }
   if (dataDe) {
     where.push('date(a.criado_em) >= date(?)');
