@@ -79,9 +79,9 @@ const config = {
     // (STT/LLM/TTS) nao estao ligados, o mock e o unico caminho funcional.
     // Em producao real, defina INTERVIEW_MOCK=false (exige chaves de API).
     mock: bool(process.env.INTERVIEW_MOCK, true),
-    maxDuracaoMin: num(process.env.MAX_DURACAO_MIN, 20),
+    maxDuracaoMin: num(process.env.MAX_DURACAO_MIN, 40),
     // Modo real (INTERVIEW_MOCK=false):
-    maxPerguntas: num(process.env.MAX_PERGUNTAS, 12), // teto de perguntas da Vera
+    maxPerguntas: num(process.env.MAX_PERGUNTAS, 24), // teto de perguntas da Vera
     historicoRecentes: num(process.env.HISTORICO_TURNS_RECENTES, 6), // turns completos enviados ao LLM
     timeoutMs: num(process.env.PROVIDER_TIMEOUT_MS, 30000), // timeout por chamada externa
     relatorioTimeoutMs: num(process.env.RELATORIO_TIMEOUT_MS, 120000), // timeout dedicado p/ a geração do relatório (maior que o teto global)
