@@ -393,14 +393,21 @@ function finalizarEntrevista(interviewId, deps = {}) {
   db.finalizarInterview(interviewId);
   db.atualizarStatusAplicacao(entrevistaRow.application_id, 'concluido');
 
+  // Status da IA — estado inicial da maquina de estados. CONDICIONAL (so grava se
+  // ainda NULL): em reentrada, nao regride um terminal ja definido para 'processando'.
+  db.definirStatusIaSeVazio(entrevistaRow.application_id, 'processando');
+
   // require tardio: relatorio.js requer este modulo (truncar/comTimeout); o require no
   // topo criaria um ciclo. Lazy aqui quebra o ciclo sem mudar o contrato.
   const { gerarRelatorio } = require('./relatorio');
-  return gerarRelatorio(interviewId, deps).catch((err) =>
+  return gerarRelatorio(interviewId, deps).catch((err) => {
     console.error(
       `[entrevista] falha ao gerar relatorio da entrevista ${interviewId}: ${err.message}`,
-    ),
-  );
+    );
+    // Falha na geracao do relatorio -> veredito terminal 'erro' (a application ja esta
+    // 'concluido'; o status_ia so sai de 'processando' aqui ou no terminal do relatorio).
+    db.definirStatusIa(entrevistaRow.application_id, 'erro');
+  });
 }
 
 module.exports = {

@@ -416,6 +416,13 @@ async function gerarRelatorio(interviewId, deps = {}) {
     recomendacao: avaliacao.recomendacao || null,
   });
 
+  // Status da IA terminal — derivado do MESMO valor que reports.recomendacao (ponto de
+  // escrita unico p/ as duas fontes nunca divergirem). Mapa: 'avancar'|'talvez'|
+  // 'descartar' -> mesmo valor; null/ausente -> 'indefinido'. applicationId vem da
+  // interview ja carregada acima (entrevista.application_id).
+  const statusIaTerminal = avaliacao.recomendacao || 'indefinido';
+  db.definirStatusIa(entrevista.application_id, statusIaTerminal);
+
   // ── Envio ao recrutador (status 'enviado' em sucesso, 'erro' em falha) ──
   const destinatario = config.recrutador.email;
   try {

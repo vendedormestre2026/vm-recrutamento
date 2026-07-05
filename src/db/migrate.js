@@ -85,6 +85,18 @@ function migrar() {
   // painel, mas o historico e preservado; reversivel via restaurarAplicacao.
   adicionarColunaSeFaltar('applications', 'deleted_at', 'TEXT');
 
+  // status_ia: veredito automatico da IA. Escrito SOMENTE pelo fluxo de
+  //   avaliacao (finalizarEntrevista + gerarRelatorio). Maquina de estados:
+  //   NULL (nunca finalizado) -> 'processando' -> terminal:
+  //   'avancar'|'talvez'|'descartar'|'indefinido'|'erro'.
+  // Sem CHECK (segue o padrao de reports.recomendacao, validado no app, para
+  // nao travar bancos legados).
+  adicionarColunaSeFaltar('applications', 'status_ia', 'TEXT');
+  // status_recrutador: decisao HUMANA do recrutador (item 3 do backlog).
+  //   Criada aqui vazia; nenhuma logica a escreve/le ainda neste incremento.
+  //   Nasce NULL e permanece NULL ate o item 3.
+  adicionarColunaSeFaltar('applications', 'status_recrutador', 'TEXT');
+
   // Indices de reports ficam aqui (e nao no schema.sql) porque dependem das
   // colunas acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

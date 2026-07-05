@@ -273,6 +273,33 @@ function atualizarStatusAplicacao(id, status) {
   getDb().prepare('UPDATE applications SET status = ? WHERE id = ?').run(status, id);
 }
 
+// Status da IA (veredito automatico). Escrita incondicional: sobrescreve o valor
+// atual. A guarda de transicao (nao regredir/nao pisar em terminal) fica na camada
+// de negocio (entrevista.js/relatorio.js); esta funcao so faz o UPDATE.
+function definirStatusIa(applicationId, novoStatus) {
+  getDb()
+    .prepare('UPDATE applications SET status_ia = ? WHERE id = ?')
+    .run(novoStatus != null ? String(novoStatus) : null, applicationId);
+}
+
+// Escrita CONDICIONAL do status_ia: so grava se ainda estiver NULL. Usada para o
+// estado inicial 'processando' — reentradas/idempotencia nao pisam num estado ja
+// definido (ex.: um terminal ja gravado por uma finalizacao anterior).
+function definirStatusIaSeVazio(applicationId, novoStatus) {
+  getDb()
+    .prepare('UPDATE applications SET status_ia = ? WHERE id = ? AND status_ia IS NULL')
+    .run(novoStatus != null ? String(novoStatus) : null, applicationId);
+}
+
+// Leitura do status_ia (para os itens 4/5 consumirem depois). Devolve a string
+// do status, ou null quando ausente/application inexistente.
+function obterStatusIaPorApplication(applicationId) {
+  const linha = getDb()
+    .prepare('SELECT status_ia FROM applications WHERE id = ?')
+    .get(applicationId);
+  return linha ? linha.status_ia : null;
+}
+
 // Edita SOMENTE os campos de contato do candidato. NUNCA toca em id/job_id/token/status/
 // curriculo_path/timestamps. Vazio ('' apos trim) vira NULL. Tudo parametrizado (?).
 function atualizarAplicacao(id, campos = {}) {
@@ -863,6 +890,9 @@ module.exports = {
   obterAplicacao,
   obterAplicacaoPorToken,
   atualizarStatusAplicacao,
+  definirStatusIa,
+  definirStatusIaSeVazio,
+  obterStatusIaPorApplication,
   atualizarAplicacao,
   arquivarAplicacao,
   restaurarAplicacao,
