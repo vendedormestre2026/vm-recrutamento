@@ -32,6 +32,24 @@ function migrarRoteiroCloser() {
 
   let idFinal = roteiroId;
   if (existente) {
+    // TRAVA DE SEGURANCA (mesma do item 7.2): como o motor le o conteudo do roteiro
+    // FRESCO por id a cada turno, sobrescrever a linha no meio de uma entrevista
+    // dessincronizaria essa entrevista. Aborta se houver interview em andamento.
+    const emAndamento = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM interviews WHERE roteiro_id = ? AND status != 'concluido'",
+      )
+      .get(roteiroId).n;
+    if (emAndamento > 0) {
+      console.error(
+        `[migracao-roteiro] ABORTADO: existem ${emAndamento} entrevista(s) em andamento ` +
+          `referenciando o roteiro id=${roteiroId}. Sobrescrever agora dessincronizaria essas ` +
+          `entrevistas (o motor le o conteudo do roteiro fresco por id a cada turno). ` +
+          `Aguarde elas concluirem antes de migrar.`,
+      );
+      process.exit(1);
+    }
+
     db.prepare(
       `UPDATE roteiros
          SET nome = ?, perfil = 'CLOSER', versao = 2, estrutura = ?, atualizado_em = datetime('now')

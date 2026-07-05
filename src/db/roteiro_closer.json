@@ -118,6 +118,27 @@
       "instrucao_vera": "Usar este bloco SOMENTE se ainda houver dúvida sobre o perfil DISC após todos os blocos anteriores. Não é obrigatório."
     },
     {
+      "id": "principios",
+      "nome": "Princípios",
+      "obrigatorio": true,
+      "pergunta_semente": "Toda empresa tem rotinas e valores próprios — pode ser uma reunião diária, uma forma específica de tratar cliente, um ritual do time. Se [nome da empresa] tivesse uma rotina dessas que não é comum em outros lugares, como você reagiria a ela no dia a dia?",
+      "competencias_alvo": ["principios"]
+    },
+    {
+      "id": "postura_alto_padrao",
+      "nome": "Postura para Alto Padrão",
+      "obrigatorio": true,
+      "pergunta_semente": "Como você se prepara antes de uma ligação ou reunião importante de vendas — o que você faz para chegar afiado?",
+      "competencias_alvo": ["postura_alto_padrao"]
+    },
+    {
+      "id": "fome",
+      "nome": "Fome",
+      "obrigatorio": true,
+      "pergunta_semente": "O que faz você continuar buscando bater a meta mesmo num dia em que já bateu o mínimo esperado?",
+      "competencias_alvo": ["fome"]
+    },
+    {
       "id": "fechamento",
       "nome": "Fechamento",
       "obrigatorio": true,
@@ -166,6 +187,24 @@
       "nome": "Perfil DISC",
       "peso": 1,
       "boa_resposta": "D alto: decisivo, age, metas grandes, reage bem à pressão. I como secundário é positivo (carismático). S ou C alto como dominante é risco para closer. Ideal: D dominante com I secundário."
+    },
+    {
+      "id": "principios",
+      "nome": "Princípios",
+      "peso": 1,
+      "boa_resposta": "Demonstra flexibilidade e respeito a normas e culturas diferentes da sua, sem soar servil; expressa que adaptaria o comportamento mantendo a integridade pessoal, sem rejeitar a rotina só por ser incomum."
+    },
+    {
+      "id": "postura_alto_padrao",
+      "nome": "Postura para Alto Padrão",
+      "peso": 1,
+      "boa_resposta": "Descreve um ritual concreto de preparação (estudo do lead/empresa, ensaio de abordagem, organização de material), não apenas 'me preparo mentalmente'; demonstra disciplina e cuidado com a imagem profissional."
+    },
+    {
+      "id": "fome",
+      "nome": "Fome",
+      "peso": 1,
+      "boa_resposta": "Expressa motivação intrínseca além da meta mínima — menciona buscar superação pessoal ou recordes, não apenas cumprir tabela por obrigação."
     }
   ],
   "rubrica": {

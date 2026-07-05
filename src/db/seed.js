@@ -59,6 +59,45 @@ const ROTEIRO_SDR = {
         competencias_alvo: ['organizacao_crm'],
       },
       {
+        id: 'responsabilidade',
+        nome: 'Responsabilidade',
+        obrigatorio: true,
+        pergunta_semente:
+          'Me conta sobre a maior venda ou oportunidade que você perdeu. O que você acha que causou a perda?',
+        competencias_alvo: ['responsabilidade'],
+      },
+      {
+        id: 'ambicao',
+        nome: 'Ambição',
+        obrigatorio: true,
+        pergunta_semente: 'Quais são suas metas de vida para os próximos 1, 3 e 10 anos?',
+        competencias_alvo: ['ambicao'],
+      },
+      {
+        id: 'principios',
+        nome: 'Princípios',
+        obrigatorio: true,
+        pergunta_semente:
+          'Toda empresa tem rotinas e valores próprios — pode ser uma reunião diária, uma forma específica de tratar cliente, um ritual do time. Se [nome da empresa] tivesse uma rotina dessas que não é comum em outros lugares, como você reagiria a ela no dia a dia?',
+        competencias_alvo: ['principios'],
+      },
+      {
+        id: 'postura_alto_padrao',
+        nome: 'Postura para Alto Padrão',
+        obrigatorio: true,
+        pergunta_semente:
+          'Como você se prepara antes de uma ligação ou reunião importante de vendas — o que você faz para chegar afiado?',
+        competencias_alvo: ['postura_alto_padrao'],
+      },
+      {
+        id: 'fome',
+        nome: 'Fome',
+        obrigatorio: true,
+        pergunta_semente:
+          'O que faz você continuar buscando bater a meta mesmo num dia em que já bateu o mínimo esperado?',
+        competencias_alvo: ['fome'],
+      },
+      {
         id: 'fechamento',
         nome: 'Fechamento',
         obrigatorio: true,
@@ -96,6 +135,41 @@ const ROTEIRO_SDR = {
         nome: 'Organização/CRM',
         peso: 1,
         boa_resposta: 'Tem rotina, cadência e usa CRM/ferramentas de forma disciplinada.',
+      },
+      {
+        id: 'responsabilidade',
+        nome: 'Responsabilidade',
+        peso: 2,
+        boa_resposta:
+          'Assume proporção de responsabilidade própria na perda, sem terceirizar toda a culpa para o cliente ou fatores externos; demonstra aprendizado concreto extraído do episódio.',
+      },
+      {
+        id: 'ambicao',
+        nome: 'Ambição',
+        peso: 1,
+        boa_resposta:
+          'Verbaliza metas concretas e crescentes, conectadas a crescimento profissional/financeiro; demonstra visão de médio-longo prazo.',
+      },
+      {
+        id: 'principios',
+        nome: 'Princípios',
+        peso: 1,
+        boa_resposta:
+          'Demonstra flexibilidade e respeito a normas e culturas diferentes da sua, sem soar servil; expressa que adaptaria o comportamento mantendo a integridade pessoal, sem rejeitar a rotina só por ser incomum.',
+      },
+      {
+        id: 'postura_alto_padrao',
+        nome: 'Postura para Alto Padrão',
+        peso: 1,
+        boa_resposta:
+          'Descreve um ritual concreto de preparação (estudo do lead/empresa, ensaio de abordagem, organização de material), não apenas "me preparo mentalmente"; demonstra disciplina e cuidado com a imagem profissional.',
+      },
+      {
+        id: 'fome',
+        nome: 'Fome',
+        peso: 1,
+        boa_resposta:
+          'Expressa motivação intrínseca além da meta mínima — menciona buscar superação pessoal ou recordes, não apenas cumprir tabela por obrigação.',
       },
     ],
     rubrica: {

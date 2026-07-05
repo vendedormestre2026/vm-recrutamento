@@ -247,10 +247,11 @@ test('GET /relatorio/:token — quatro cenarios', async (t) => {
       assert.match(html, /Fulano de Teste/);
       assert.match(html, /Resiliência\/volume/); // acentuacao na tela
       assert.match(html, /Não abordada nesta entrevista/); // badge da competencia coberta=false
-      // Score ponderado (Fase 5): mock = notas 4 (cobertas) e 2 (ultima nao coberta);
-      // pesos do seed = 2,1,2,1 -> (4*2+4*1+4*2+2*1)/6 = 3.7 (≠ media simples 3.5).
+      // Score ponderado (Fase 5): mock = notas 4 (cobertas) e 2 (ultima nao coberta).
+      // Item 7.3: SDR ganhou 5 pilares -> agora 9 competencias, pesos 2,1,2,1,2,1,1,1,1;
+      // a ULTIMA (Fome, peso 1) e a nao coberta (nota 2). (4*11 + 2*1)/12 = 3.8.
       assert.match(html, /Pontuação geral/);
-      assert.match(html, /3\.7/);
+      assert.match(html, /3\.8/);
     });
 
     await t.test('pendente -> 200 "sendo processado"', async () => {
