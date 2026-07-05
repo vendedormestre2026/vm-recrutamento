@@ -427,6 +427,14 @@ function definirUltimoRespId(interviewId, respId) {
     .run(respId || null, interviewId);
 }
 
+// Item 7.5 - persiste o ponteiro de progresso (indice do bloco + trocas no bloco atual).
+// Usado SO no modo real; o mock nunca escreve aqui (mantem avanco por contagem de turnos).
+function atualizarProgressoInterview(interviewId, indice, trocas) {
+  getDb()
+    .prepare('UPDATE interviews SET progresso_indice = ?, progresso_trocas = ? WHERE id = ?')
+    .run(Number(indice) || 0, Number(trocas) || 0, interviewId);
+}
+
 function finalizarInterview(id) {
   getDb()
     .prepare("UPDATE interviews SET status = 'concluido', finalizado_em = datetime('now') WHERE id = ?")
@@ -932,6 +940,7 @@ module.exports = {
   obterInterviewEmAndamentoPorAplicacao,
   obterUltimaInterviewPorAplicacao,
   definirUltimoRespId,
+  atualizarProgressoInterview,
   finalizarInterview,
   definirVideoUrl,
   criarTurno,

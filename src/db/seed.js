@@ -98,6 +98,25 @@ const ROTEIRO_SDR = {
         competencias_alvo: ['fome'],
       },
       {
+        id: 'simulacao_qualificacao',
+        nome: 'Simulação de qualificação',
+        obrigatorio: true,
+        max_trocas: 3,
+        pergunta_semente:
+          'Agora vou te pedir uma simulação. Vou entrar no papel de um lead que você acabou de ligar do zero. O cenário: sou dono de um pequeno negócio e nunca ouvi falar da sua empresa. Você tem 30 segundos para me engajar antes que eu desligue. Pode começar quando quiser.',
+        objecao_padrao:
+          'Olha, agora não é um bom momento e eu já uso outro fornecedor para isso.',
+        instrucao_vera:
+          'Entrar no papel de um lead ocupado e cético, mas não hostil. Usar a objeção padrão de tempo/fornecedor já existente. Após a simulação, sair do papel e perguntar: "Que nota você daria para você nessa simulação, de 0 a 10? E por quê?" Após a autoavaliação do candidato, agradecer de forma neutra e seguir em frente, SEM dar sua própria nota, elogio ou crítica. Observar internamente (para o relatório) como o candidato conduziu a qualificação e a própria autoavaliação, sem verbalizar nada avaliativo ao candidato.',
+        o_que_observar: [
+          'Consegue prender a atenção nos primeiros segundos?',
+          'Faz perguntas para qualificar ou só recita um discurso decorado?',
+          'Como reage à objeção: contorna com uma pergunta ou insiste sem ouvir?',
+          'Como reage ao feedback: aceita, defende ou ignora?',
+        ],
+        competencias_alvo: ['qualificacao'],
+      },
+      {
         id: 'fechamento',
         nome: 'Fechamento',
         obrigatorio: true,

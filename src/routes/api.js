@@ -433,7 +433,11 @@ function payloadEstadoAtual(interviewRow) {
   const agentes = turns.filter((t) => t.autor === 'agente');
   const ultimoAgente = agentes[agentes.length - 1] || null;
   // Posicao (0-based) da ultima pergunta feita pela Vera -> chips/progresso.
-  const indice = Math.max(0, agentes.length - 1);
+  // Modo REAL (item 7.5): usa o ponteiro persistido (respeita o orcamento de trocas do
+  // roleplay). Modo MOCK: mantem o avanco linear por contagem bruta de turnos (inalterado).
+  const indice = config.entrevista.mock
+    ? Math.max(0, agentes.length - 1)
+    : Number(interviewRow.progresso_indice) || 0;
 
   // Audio: mock = arquivo estatico; real = MP3 ja salvo na ordem do turno do agente.
   let audioUrl = entrevista.AUDIO_MOCK;
@@ -839,12 +843,24 @@ router.post('/interview/answer', (req, res) => {
         });
       }
 
+      // Progresso com ORCAMENTO DE TROCAS (item 7.5 — SO modo real): avanca o ponteiro
+      // do bloco respeitando max_trocas. Os chips passam a usar ESTE indice persistido
+      // (nao a contagem bruta de turnos), evitando dessincronizar quando a Vera sustenta
+      // um roleplay por varias trocas. MAX_PERGUNTAS (cortePorTeto acima) continua vindo
+      // da contagem bruta de turnos — rede de seguranca independente deste ponteiro.
+      const prog = entrevista.avancarProgresso({
+        indiceAtual: entrevistaRow.progresso_indice || 0,
+        trocasAtual: entrevistaRow.progresso_trocas || 0,
+        perguntas,
+      });
+      db.atualizarProgressoInterview(interviewId, prog.indice, prog.trocas);
+
       if (tentativaId) db.definirUltimoRespId(interviewId, tentativaId);
       return res.json(
         entrevista.montarPayload({
           interviewId,
           perguntas,
-          indice: proximoIndice,
+          indice: prog.indice,
           texto: falaVera,
           audioUrl,
           encerrar: false,

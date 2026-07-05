@@ -65,6 +65,15 @@ function migrar() {
   // Fase 5 - gravacao de video: link compartilhavel do Google Drive por entrevista.
   adicionarColunaSeFaltar('interviews', 'video_url', 'TEXT');
 
+  // Item 7.5 - roleplay estruturado: ponteiro de progresso persistido (SO modo real),
+  // com orcamento de trocas por bloco. progresso_indice = posicao no array de perguntas
+  // (substitui o calculo por contagem bruta de turnos, evitando dessincronizar os chips
+  // quando a Vera sustenta um roleplay por varias trocas). progresso_trocas = quantas
+  // trocas ja ocorreram dentro do bloco atual, contra max_trocas do bloco (default 1 =
+  // avanca imediatamente, igual ao comportamento anterior). Default 0/0.
+  adicionarColunaSeFaltar('interviews', 'progresso_indice', 'INTEGER DEFAULT 0');
+  adicionarColunaSeFaltar('interviews', 'progresso_trocas', 'INTEGER DEFAULT 0');
+
   // Item 7.4 - cultura/rotinas do dia a dia da empresa (ex.: "reuniao diaria as 8h com
   // oracao", "atendimento sempre formal com o cliente"). Usado para contextualizar a
   // pergunta de Principios na entrevista (system prompt da conducao). Diferente de

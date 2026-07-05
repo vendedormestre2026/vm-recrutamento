@@ -86,6 +86,7 @@
       "id": "simulacao_vendas",
       "nome": "Simulação de vendas",
       "obrigatorio": true,
+      "max_trocas": 3,
       "competencias_alvo": ["tecnica_vendas", "resiliencia", "recepcao_feedback"],
       "pergunta_semente": "Agora vou te pedir uma simulação. Eu vou entrar no papel de um cliente e você vai vender para mim. O cenário: eu sou um empresário que quer crescer o negócio. Você já sabe que eu tenho interesse, mas quando você falar do investimento, eu entro com uma objeção. Pode começar quando quiser.",
       "objecao_padrao": "Está caro. Não vejo valor suficiente nisso agora para justificar esse investimento.",

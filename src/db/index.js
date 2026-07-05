@@ -53,6 +53,7 @@ module.exports = {
   obterInterviewEmAndamentoPorAplicacao: driver.obterInterviewEmAndamentoPorAplicacao,
   obterUltimaInterviewPorAplicacao: driver.obterUltimaInterviewPorAplicacao,
   definirUltimoRespId: driver.definirUltimoRespId,
+  atualizarProgressoInterview: driver.atualizarProgressoInterview,
   finalizarInterview: driver.finalizarInterview,
   definirVideoUrl: driver.definirVideoUrl,
   criarTurno: driver.criarTurno,

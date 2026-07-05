@@ -345,14 +345,17 @@ function montarPerguntas(roteiro) {
 
   for (const bloco of blocos) {
     const fase = faseDoBloco(bloco);
+    // Item 7.5: orcamento de trocas do bloco (roleplay). Default 1 = avanca imediatamente
+    // (comportamento anterior). Propagado por pergunta achatada para o motor de progresso.
+    const maxTrocas = Number(bloco.max_trocas) > 0 ? Number(bloco.max_trocas) : 1;
     for (const texto of perguntasDoBloco(bloco)) {
-      perguntas.push({ fase, topico: bloco.nome, texto });
+      perguntas.push({ fase, topico: bloco.nome, texto, maxTrocas });
     }
   }
 
   // Fallback minimo caso o roteiro venha vazio.
   if (!perguntas.length) {
-    perguntas.push({ fase: 'abertura', topico: 'Abertura', texto: 'Conte sobre sua experiencia em vendas.' });
+    perguntas.push({ fase: 'abertura', topico: 'Abertura', texto: 'Conte sobre sua experiencia em vendas.', maxTrocas: 1 });
   }
 
   // Item 6: pergunta obrigatoria SEMPRE como 1a pergunta, precedendo a abertura
@@ -366,9 +369,31 @@ function montarPerguntas(roteiro) {
     fase: aberturaRef.fase,
     topico: aberturaRef.topico,
     texto: PERGUNTA_ABERTURA_OBRIGATORIA,
+    maxTrocas: 1, // pergunta obrigatoria = 1 troca (nunca roleplay)
   });
 
   return perguntas;
+}
+
+// ── Motor de progresso com orcamento de trocas (item 7.5) — funcao PURA e testavel ──
+// Avanca o ponteiro de bloco respeitando o orcamento de trocas (max_trocas) do bloco
+// atual. Cada chamada representa UMA troca concluida (uma resposta do candidato + fala
+// da Vera). Enquanto o orcamento nao se esgota, o indice NAO avanca (a Vera segue no
+// mesmo bloco, ex.: um roleplay multi-turno) e so o contador de trocas sobe. Ao atingir
+// o orcamento, avanca uma posicao e zera as trocas. O indice nunca ultrapassa o fim do
+// array (clamp). Usada SO no modo real (o mock mantem o avanco linear por contagem bruta).
+function avancarProgresso({ indiceAtual, trocasAtual, perguntas }) {
+  const idx = Number(indiceAtual) || 0;
+  const trocas = Number(trocasAtual) || 0;
+  const lista = Array.isArray(perguntas) ? perguntas : [];
+  const pergunta = lista[idx];
+  const maxTrocas = pergunta && Number(pergunta.maxTrocas) > 0 ? Number(pergunta.maxTrocas) : 1;
+  const novasTrocas = trocas + 1;
+  if (novasTrocas >= maxTrocas) {
+    const novoIndice = Math.min(idx + 1, Math.max(0, lista.length - 1));
+    return { indice: novoIndice, trocas: 0 };
+  }
+  return { indice: idx, trocas: novasTrocas };
 }
 
 // Lista ordenada de topicos unicos (para os chips de progresso).
@@ -468,6 +493,7 @@ module.exports = {
   montarPerguntas,
   topicosUnicos,
   estadoTopicos,
+  avancarProgresso,
   payloadPergunta,
   montarPayload,
   truncar,
