@@ -37,6 +37,15 @@ function migrar() {
   // sem CHECK para nao travar bancos antigos. Reports antigos ficam com NULL (= sem
   // recomendacao) e nao quebram nada.
   adicionarColunaSeFaltar('reports', 'recomendacao', 'TEXT');
+
+  // Item 7.6 - formato Victoria. jobs.requisitos_obrigatorios: JSON array de strings,
+  // requisitos "must-have" da vaga (ex.: "Experiencia em vendas", "Perfil SDR"),
+  // DISTINTOS de skills/requisitos (desejaveis/informativos). reports.requisitos: JSON
+  // array do veredito da IA por requisito — [{ requisito, veredito:
+  // 'atende'|'parcial'|'nao_atende', evidencia: <trecho da transcricao validado>|null }].
+  // Ambos nullable; relatorios/vagas antigos ficam NULL e nao quebram.
+  adicionarColunaSeFaltar('jobs', 'requisitos_obrigatorios', 'TEXT');
+  adicionarColunaSeFaltar('reports', 'requisitos', 'TEXT');
   // Fase 5 - edicao da vaga pelo painel: garante que os campos editaveis existam em
   // bancos antigos (no-op se ja existem; nunca faz DROP/recriacao). 'titulo' nao entra
   // aqui porque ja faz parte do schema original (NOT NULL) e sempre existe.

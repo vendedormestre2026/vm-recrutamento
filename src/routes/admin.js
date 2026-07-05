@@ -1314,6 +1314,8 @@ function lerCamposRicos(b) {
     horario: String(b.horario || '').trim(),
     // Item 7.4 — cultura/rotinas da empresa (contexto da pergunta de Principios).
     cultura_empresa: String(b.cultura_empresa || '').trim(),
+    // Item 7.6 — requisitos obrigatorios (must-have) da vaga, um por linha.
+    requisitos_obrigatorios: arrayDeLinhas(b.requisitos_obrigatorios),
     skills: arrayDeLinhas(b.skills),
     beneficios: arrayDeLinhas(b.beneficios),
     atividades: arrayDeLinhas(b.atividades),
@@ -1415,6 +1417,15 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
       <span>Competências / skills (um item por linha)</span>
       <textarea name="skills" rows="5">${escapeHtml(linhasDeArray(vaga.skills))}</textarea>
     </label>
+
+    <label class="campo">
+      <span>Requisitos obrigatórios (opcional, um por linha)</span>
+      <textarea name="requisitos_obrigatorios" rows="5">${escapeHtml(linhasDeArray(vaga.requisitos_obrigatorios))}</textarea>
+    </label>
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+      Requisitos que descartam o candidato se não atendidos — diferente de skills
+      desejáveis. A IA avalia cada um (atende / parcial / não atende) com evidência da
+      entrevista.</p>
 
     <label class="campo">
       <span>Seções extras (opcional)</span>

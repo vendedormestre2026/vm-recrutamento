@@ -27,6 +27,14 @@ const { escapeHtml } = require('../views');
 // qualquer outro valor (ausente/invalido) vira null no parse, sem travar o relatorio.
 const RECOMENDACOES_VALIDAS = ['avancar', 'talvez', 'descartar'];
 
+// Item 7.6 (formato Victoria) — enums validados no app (nao no banco). nivel substitui a
+// nota 1-5 numerica por Alta/Media/Baixa; veredito e o resultado por requisito obrigatorio.
+const NIVEIS_VALIDOS = ['alta', 'media', 'baixa'];
+const VEREDITOS_VALIDOS = ['atende', 'parcial', 'nao_atende'];
+// Mapeamento nivel -> numero, usado SO por calcularPontuacaoGeral para manter uma
+// "pontuacao geral" ponderada derivada dos niveis (alta=5, media=3, baixa=1).
+const NIVEL_PARA_NOTA = { alta: 5, media: 3, baixa: 1 };
+
 // Rotulo + cores da identidade visual por recomendacao. Regra da marca: laranja para o
 // caso positivo, neutro para o intermediario e um tom SOBRIO (escuro) para o negativo —
 // NUNCA vermelho puro. Cores usadas inline (e-mail e paginas) para render identico.
@@ -84,49 +92,79 @@ function montarMensagensAvaliacao({ roteiro, vaga, candidato, turns, agente }) {
   const tituloVaga = (vaga && vaga.titulo) || 'vaga';
   const perfil = (vaga && vaga.perfil) || (roteiro && roteiro.perfil) || 'vendedor';
 
+  // Item 7.6 — requisitos obrigatorios declarados na vaga (must-have). So entram no prompt
+  // quando existirem; caso contrario a secao inteira e omitida.
+  const requisitosDeclarados = Array.isArray(vaga && vaga.requisitos_obrigatorios)
+    ? vaga.requisitos_obrigatorios.filter((r) => String(r || '').trim())
+    : [];
+  const temRequisitos = requisitosDeclarados.length > 0;
+
   // Teto de seguranca contra resposta anomala do STT (nao e budget de tokens: esta
   // e uma chamada unica pos-entrevista, sem o reenvio de historico do motor ao vivo).
+  // Item 7.6 — cada turno e prefixado com [T<indice>] para a IA poder citar a evidencia.
   const transcricao = (turns || [])
-    .map((t) => `${t.autor === 'agente' ? agente || 'Vera' : 'Candidato'}: ${truncar(t.texto, 4000)}`)
+    .map(
+      (t, i) =>
+        `[T${i}] ${t.autor === 'agente' ? agente || 'Vera' : 'Candidato'}: ${truncar(t.texto, 4000)}`,
+    )
     .join('\n');
 
   const system = [
     'Voce e um avaliador senior de recrutamento de vendedores, em portugues do Brasil.',
     'Avalie a entrevista com OBJETIVIDADE, baseando-se SOMENTE no que o candidato disse.',
-    'Nao invente fatos; se algo nao foi abordado, pontue com cautela e diga isso na justificativa.',
+    'Nao invente fatos; se algo nao foi abordado, avalie com cautela e diga isso na justificativa.',
     '',
     `VAGA: ${tituloVaga} (perfil ${perfil}).`,
     `CANDIDATO: ${nomeCandidato}.`,
     '',
-    'COMPETENCIAS A PONTUAR (com peso e o que caracteriza uma boa resposta):',
+    'COMPETENCIAS A AVALIAR (com peso e o que caracteriza uma boa resposta):',
     competencias || '- (roteiro sem competencias definidas)',
     '',
-    `ESCALA: ${rubrica.escala || '1-5'} por competencia (1 = muito fraco, 5 = excelente). ` +
-      'Use a "boa resposta" como referencia do que seria nota alta.',
+    'NIVEL por competencia: classifique cada uma como "alta", "media" ou "baixa" aderencia ' +
+      'a "boa resposta" de referencia (alta = forte evidencia; baixa = fraca/ausente).',
+    temRequisitos
+      ? 'REQUISITOS OBRIGATORIOS DA VAGA (must-have; distintos das competencias comportamentais):\n' +
+        requisitosDeclarados.map((r) => `- ${r}`).join('\n') +
+        '\nPara cada requisito, retorne um veredito: "atende" (evidencia clara na transcricao), ' +
+        '"parcial" (evidencia parcial/ambigua) ou "nao_atende" (sem evidencia ou evidencia ' +
+        'contraria). Cite o numero do turno como evidencia (ex.: "T5") APENAS se a informacao ' +
+        'realmente aparecer la; NUNCA invente uma citacao. Se nao houver evidencia, deixe ' +
+        'evidencia_turno como null.'
+      : null,
     '',
     'FORMATO DE SAIDA — responda SOMENTE com um JSON valido, sem markdown, sem cercas ``` e sem',
     'texto antes ou depois. Use EXATAMENTE este formato:',
     '{',
     '  "resumo": "2 a 4 frases com a avaliacao geral do candidato",',
     '  "pontuacoes": [',
-    '    { "competencia": "<nome exato da competencia>", "nota": <inteiro 1-5>, "justificativa": "1 a 2 frases", "coberta": <true|false> }',
+    '    { "competencia": "<nome exato da competencia>", "nivel": "alta"|"media"|"baixa", "justificativa": "1 a 2 frases", "coberta": <true|false> }',
     '  ],',
+    temRequisitos
+      ? '  "requisitos": [\n' +
+        '    { "requisito": "<texto exato do requisito>", "veredito": "atende"|"parcial"|"nao_atende", "evidencia_turno": "<T5>"|null }\n' +
+        '  ],'
+      : null,
     '  "pontos_fortes": ["item curto", "..."],',
-    '  "pontos_atencao": ["item curto", "..."],',
+    '  "pontos_atencao": [',
+    '    { "risco": "descricao curta do risco", "mitigacao": "sugestao curta de como mitigar ou o que investigar na proxima etapa" }',
+    '  ],',
     '  "recomendacao": "avancar" | "talvez" | "descartar"',
     '}',
+    'Use EXATAMENTE uma dessas tres strings para "nivel", em minusculas e sem acento: alta, media, baixa.',
     'No campo "coberta": use false quando a competencia NAO foi efetivamente abordada na ' +
       'transcricao (a pergunta nao chegou a ser feita, ou a resposta nao tocou no tema); ' +
-      'use true nos demais casos. Mesmo com coberta=false, atribua uma nota cautelosa e ' +
+      'use true nos demais casos. Mesmo com coberta=false, atribua um nivel cauteloso e ' +
       'explique na justificativa que o tema nao foi coberto.',
     'No campo "recomendacao": emita UMA decisao geral de encaminhamento do candidato para a ' +
-      'vaga, com base na aderencia GERAL as competencias-chave (nao e a media das notas):',
+      'vaga, com base na aderencia GERAL as competencias-chave (nao e a media dos niveis):',
     '  - "avancar": forte aderencia as competencias-chave; candidato claramente alinhado ao perfil.',
     '  - "talvez": aderencia parcial, sinais mistos ou duvidas relevantes que pedem uma segunda olhada.',
     '  - "descartar": baixa aderencia ou sinais claros de desalinhamento com o perfil da vaga.',
     'Use EXATAMENTE uma dessas tres strings, em minusculas e sem acento.',
     'Inclua TODAS as competencias listadas em "pontuacoes", usando o nome EXATO. Nao adicione campos extras.',
-  ].join('\n');
+  ]
+    .filter((l) => l !== null)
+    .join('\n');
 
   const user = [
     'TRANSCRICAO DA ENTREVISTA (turno a turno, em ordem):',
@@ -149,6 +187,7 @@ function nomeDoCandidato(candidato) {
 // Avaliacao deterministica usada no modo mock (custo zero, sem LLM).
 function avaliacaoMock(roteiro) {
   const { competencias } = normalizarEstrutura(roteiro);
+  // Item 7.6 — formato Victoria: nivel (alta/baixa) no lugar de nota numerica.
   const pontuacoes = competencias.length
     ? competencias.map((c, i) => {
         // Deterministico: a ULTIMA competencia simula uma NAO coberta (coberta=false),
@@ -156,25 +195,42 @@ function avaliacaoMock(roteiro) {
         const coberta = i < competencias.length - 1;
         return {
           competencia: c.nome,
-          nota: coberta ? 4 : 2,
+          nivel: coberta ? 'alta' : 'baixa',
           justificativa: coberta
             ? '(mock) resposta consistente com o esperado para a competencia.'
-            : '(mock) competencia nao abordada na entrevista; nota cautelosa.',
+            : '(mock) competencia nao abordada na entrevista; nivel cauteloso.',
           coberta,
         };
       })
-    : [{ competencia: 'Geral', nota: 4, justificativa: '(mock) avaliacao simulada.', coberta: true }];
+    : [{ competencia: 'Geral', nivel: 'alta', justificativa: '(mock) avaliacao simulada.', coberta: true }];
   return {
     resumo: '(mock) Candidato com bom alinhamento ao perfil; avaliacao simulada sem chamada ao LLM.',
     pontuacoes,
+    // Sem vaga/requisitos no mock deterministico: requisitos vazio (a chave existe sempre).
+    requisitos: [],
     pontos_fortes: ['(mock) comunicacao clara', '(mock) postura resiliente'],
-    pontos_atencao: ['(mock) aprofundar metricas de resultado'],
+    // Item 7.6 — gaps com mitigacao (objeto { risco, mitigacao }).
+    pontos_atencao: [
+      {
+        risco: '(mock) aprofundar metricas de resultado',
+        mitigacao: '(mock) pedir numeros concretos de meta e atingimento na proxima etapa.',
+      },
+    ],
     recomendacao: 'avancar', // deterministico: coerente com o resumo "bom alinhamento"
   };
 }
 
+// Extrai o indice numerico de uma citacao de turno ("T5" -> 5). null se nao casar.
+function indiceDoTurnoCitado(evidenciaTurno) {
+  const m = String(evidenciaTurno == null ? '' : evidenciaTurno).match(/T\s*(\d+)/i);
+  return m ? Number(m[1]) : null;
+}
+
 // Parsing seguro do JSON do LLM. Remove cercas de markdown se vierem e valida o shape minimo.
-function parseAvaliacao(texto) {
+// opts.turns: os turns REAIS da entrevista, usados para VALIDAR a evidencia citada nos
+// requisitos (nunca exibir citacao inventada — se o turno nao existir, evidencia vira null).
+function parseAvaliacao(texto, opts = {}) {
+  const turns = Array.isArray(opts.turns) ? opts.turns : [];
   let cru = String(texto || '').trim();
   // Remove cercas ```json ... ``` caso o modelo desobedeca a instrucao de "sem markdown".
   const fence = cru.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -206,9 +262,32 @@ function parseAvaliacao(texto) {
     );
   }
 
+  // Requisitos obrigatorios (item 7.6): valida a evidencia citada contra os turns REAIS.
+  // Citacao de turno inexistente -> evidencia null (nunca exibe citacao inventada).
+  const requisitos = Array.isArray(obj.requisitos)
+    ? obj.requisitos
+        .filter((r) => r && r.requisito)
+        .map((r) => {
+          const vRaw = typeof r.veredito === 'string' ? r.veredito.trim().toLowerCase() : '';
+          const veredito = VEREDITOS_VALIDOS.includes(vRaw) ? vRaw : null;
+          const idx = indiceDoTurnoCitado(r.evidencia_turno);
+          let evidencia = null;
+          if (idx != null && idx >= 0 && idx < turns.length && turns[idx]) {
+            // Evidencia = o trecho REAL do turno citado (truncado), nao a string "T5".
+            evidencia = truncar(String(turns[idx].texto || ''), 240);
+          } else if (r.evidencia_turno != null) {
+            console.warn(
+              `[relatorio] evidencia de requisito cita turno inexistente/invalido (${JSON.stringify(r.evidencia_turno)}); descartada.`,
+            );
+          }
+          return { requisito: String(r.requisito), veredito, evidencia };
+        })
+    : [];
+
   return {
     resumo: typeof obj.resumo === 'string' ? obj.resumo : '',
     recomendacao,
+    requisitos,
     pontuacoes: obj.pontuacoes
       .filter((p) => p && p.competencia)
       .map((p) => {
@@ -222,15 +301,32 @@ function parseAvaliacao(texto) {
             `[relatorio] item de pontuacoes sem "coberta" booleano (competencia="${p.competencia}"); assumindo coberta=true.`,
           );
         }
+        // Item 7.6: nivel (alta/media/baixa). Mantem nota (numerica) quando vier — legado/
+        // retrocompat: relatorios/entradas antigas com nota continuam sendo lidos.
+        const nivelRaw = typeof p.nivel === 'string' ? p.nivel.trim().toLowerCase() : '';
+        const nivel = NIVEIS_VALIDOS.includes(nivelRaw) ? nivelRaw : null;
+        const nota = Number.isFinite(Number(p.nota)) ? Number(p.nota) : null;
         return {
           competencia: String(p.competencia),
-          nota: Number.isFinite(Number(p.nota)) ? Number(p.nota) : null,
+          nivel,
+          nota,
           justificativa: typeof p.justificativa === 'string' ? p.justificativa : '',
           coberta,
         };
       }),
     pontos_fortes: Array.isArray(obj.pontos_fortes) ? obj.pontos_fortes.map(String) : [],
-    pontos_atencao: Array.isArray(obj.pontos_atencao) ? obj.pontos_atencao.map(String) : [],
+    // Item 7.6: gaps como { risco, mitigacao }. Retrocompat: string vira { risco, mitigacao:'' }.
+    pontos_atencao: Array.isArray(obj.pontos_atencao)
+      ? obj.pontos_atencao
+          .filter((g) => g != null)
+          .map((g) => {
+            if (typeof g === 'string') return { risco: g, mitigacao: '' };
+            return {
+              risco: typeof g.risco === 'string' ? g.risco : '',
+              mitigacao: typeof g.mitigacao === 'string' ? g.mitigacao : '',
+            };
+          })
+      : [],
   };
 }
 
@@ -268,8 +364,11 @@ function calcularPontuacaoGeral(pontuacoes, roteiro) {
   let somaPeso = 0;
   let consideradas = 0;
   for (const item of lista) {
-    const nota = Number(item && item.nota);
-    if (!Number.isFinite(nota)) continue; // sem nota numerica: nao entra na media
+    // Item 7.6: prioriza o nivel (alta/media/baixa -> 5/3/1); se ausente, usa a nota
+    // numerica legada. Assim relatorios antigos (nota) e novos (nivel) somam na mesma media.
+    const nivel = item && typeof item.nivel === 'string' ? item.nivel.trim().toLowerCase() : '';
+    const nota = NIVEL_PARA_NOTA[nivel] != null ? NIVEL_PARA_NOTA[nivel] : Number(item && item.nota);
+    if (!Number.isFinite(nota)) continue; // sem nivel valido nem nota numerica: nao entra
     const chave = String((item && item.competencia) || '').trim().toLowerCase();
     const peso = pesos[chave] != null ? pesos[chave] : 1; // competencia fora do roteiro => 1
     somaPesoNota += nota * peso;
@@ -400,7 +499,8 @@ async function gerarRelatorio(interviewId, deps = {}) {
       console.error('[custos] erro ao registrar uso (relatorio):', e);
     }
 
-    avaliacao = parseAvaliacao(resp && resp.texto);
+    // Passa os turns REAIS para validar a evidencia citada nos requisitos (item 7.6).
+    avaliacao = parseAvaliacao(resp && resp.texto, { turns });
   }
 
   // ── Persiste o report (gera token, status 'gerado') ──
@@ -414,6 +514,7 @@ async function gerarRelatorio(interviewId, deps = {}) {
     destaque_pontos_fortes: avaliacao.pontos_fortes,
     destaque_atencao: avaliacao.pontos_atencao,
     recomendacao: avaliacao.recomendacao || null,
+    requisitos: avaliacao.requisitos || [], // item 7.6 — veredito por requisito obrigatorio
   });
 
   // Status da IA terminal — derivado do MESMO valor que reports.recomendacao (ponto de

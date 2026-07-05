@@ -55,6 +55,7 @@ function jobDeLinha(linha) {
     beneficios: lerJson(linha.beneficios, []),
     atividades: lerJson(linha.atividades, []),
     requisitos: lerJson(linha.requisitos, []),
+    requisitos_obrigatorios: lerJson(linha.requisitos_obrigatorios, []),
     secoes_extras: lerJson(linha.secoes_extras, []),
     ativo: Boolean(linha.ativo),
   };
@@ -100,12 +101,12 @@ function criarVaga(vaga) {
   const stmt = getDb().prepare(`
     INSERT INTO jobs
       (slug, titulo, perfil, faixa_pagamento, potencial_ganhos, skills,
-       beneficios, atividades, requisitos, secoes_extras,
+       beneficios, atividades, requisitos, requisitos_obrigatorios, secoes_extras,
        endereco, modalidade, regime, horario,
        descricao, sobre_empresa, cultura_empresa, roteiro_id, ativo, entrevista_ativa)
     VALUES
       (@slug, @titulo, @perfil, @faixa_pagamento, @potencial_ganhos, @skills,
-       @beneficios, @atividades, @requisitos, @secoes_extras,
+       @beneficios, @atividades, @requisitos, @requisitos_obrigatorios, @secoes_extras,
        @endereco, @modalidade, @regime, @horario,
        @descricao, @sobre_empresa, @cultura_empresa, @roteiro_id, @ativo, @entrevista_ativa)
   `);
@@ -123,6 +124,7 @@ function criarVaga(vaga) {
     beneficios: JSON.stringify(vaga.beneficios || []),
     atividades: JSON.stringify(vaga.atividades || []),
     requisitos: JSON.stringify(vaga.requisitos || []),
+    requisitos_obrigatorios: JSON.stringify(vaga.requisitos_obrigatorios || []),
     secoes_extras: JSON.stringify(vaga.secoes_extras || []),
     descricao: vaga.descricao || null,
     sobre_empresa: vaga.sobre_empresa || null,
@@ -149,6 +151,7 @@ function atualizarVaga(id, campos) {
          beneficios       = @beneficios,
          atividades       = @atividades,
          requisitos       = @requisitos,
+         requisitos_obrigatorios = @requisitos_obrigatorios,
          secoes_extras    = @secoes_extras,
          endereco         = @endereco,
          modalidade       = @modalidade,
@@ -174,6 +177,7 @@ function atualizarVaga(id, campos) {
       beneficios: JSON.stringify(campos.beneficios || []),
       atividades: JSON.stringify(campos.atividades || []),
       requisitos: JSON.stringify(campos.requisitos || []),
+      requisitos_obrigatorios: JSON.stringify(campos.requisitos_obrigatorios || []),
       secoes_extras: JSON.stringify(campos.secoes_extras || []),
       descricao: campos.descricao || null,
       sobre_empresa: campos.sobre_empresa || null,
@@ -492,15 +496,16 @@ function reportDeLinha(linha) {
     pontuacoes: lerJson(linha.pontuacoes, []),
     destaque_pontos_fortes: lerJson(linha.destaque_pontos_fortes, []),
     destaque_atencao: lerJson(linha.destaque_atencao, []),
+    requisitos: lerJson(linha.requisitos, []),
   };
 }
 
 function criarReport(report) {
   const info = getDb().prepare(`
     INSERT INTO reports
-      (interview_id, token, status, resumo, pontuacoes, destaque_pontos_fortes, destaque_atencao, recomendacao)
+      (interview_id, token, status, resumo, pontuacoes, destaque_pontos_fortes, destaque_atencao, recomendacao, requisitos)
     VALUES
-      (@interview_id, @token, @status, @resumo, @pontuacoes, @destaque_pontos_fortes, @destaque_atencao, @recomendacao)
+      (@interview_id, @token, @status, @resumo, @pontuacoes, @destaque_pontos_fortes, @destaque_atencao, @recomendacao, @requisitos)
   `).run({
     interview_id: report.interview_id,
     token: report.token,
@@ -511,6 +516,7 @@ function criarReport(report) {
       report.destaque_pontos_fortes != null ? JSON.stringify(report.destaque_pontos_fortes) : null,
     destaque_atencao: report.destaque_atencao != null ? JSON.stringify(report.destaque_atencao) : null,
     recomendacao: report.recomendacao != null ? String(report.recomendacao) : null,
+    requisitos: report.requisitos != null ? JSON.stringify(report.requisitos) : null,
   });
   return Number(info.lastInsertRowid);
 }

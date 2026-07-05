@@ -139,9 +139,10 @@ test('gerarRelatorio (mock): avaliacao deterministica, campo coberta, sem tocar 
     comps.map((_, i) => i < comps.length - 1),
   );
   assert.equal(reportCompleto.pontuacoes.at(-1).coberta, false);
-  // A nao coberta recebe nota cautelosa (mock = 2); as cobertas, 4.
-  assert.equal(reportCompleto.pontuacoes.at(-1).nota, 2);
-  assert.equal(reportCompleto.pontuacoes[0].nota, 4);
+  // Item 7.6 (formato Victoria): mock usa NIVEL (alta/baixa) no lugar de nota numerica —
+  // 'alta' para as cobertas, 'baixa' para a ultima (nao coberta).
+  assert.equal(reportCompleto.pontuacoes.at(-1).nivel, 'baixa');
+  assert.equal(reportCompleto.pontuacoes[0].nivel, 'alta');
 });
 
 test('gerarRelatorio: idempotente — segunda chamada nao gera novo report', async () => {
@@ -248,10 +249,10 @@ test('GET /relatorio/:token — quatro cenarios', async (t) => {
       assert.match(html, /Resiliência\/volume/); // acentuacao na tela
       assert.match(html, /Não abordada nesta entrevista/); // badge da competencia coberta=false
       // Score ponderado (Fase 5): mock = notas 4 (cobertas) e 2 (ultima nao coberta).
-      // Item 7.3: SDR ganhou 5 pilares -> agora 9 competencias, pesos 2,1,2,1,2,1,1,1,1;
-      // a ULTIMA (Fome, peso 1) e a nao coberta (nota 2). (4*11 + 2*1)/12 = 3.8.
+      // Item 7.6: mock usa nivel, mapeado no calculo (alta=5, baixa=1). SDR 9 competencias,
+      // pesos 2,1,2,1,2,1,1,1,1; a ULTIMA (Fome, peso 1) e 'baixa'. (5*11 + 1*1)/12 = 4.7.
       assert.match(html, /Pontuação geral/);
-      assert.match(html, /3\.8/);
+      assert.match(html, /4\.7/);
     });
 
     await t.test('pendente -> 200 "sendo processado"', async () => {
