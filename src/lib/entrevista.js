@@ -36,6 +36,11 @@ function falaDespedida(nome) {
   );
 }
 
+// Pergunta obrigatoria de abertura (Item 6): PRIMEIRA pergunta de TODA entrevista
+// (SDR e Closer), injetada no codigo (nao nos dados) para valer tambem em roteiros
+// futuros sem exigir que cada um a declare. Nao tem placeholder [nome].
+const PERGUNTA_ABERTURA_OBRIGATORIA = 'Por que essa empresa é relevante para você?';
+
 // Marcador que o LLM adiciona ao FINAL da fala quando decide encerrar.
 const MARCADOR_ENCERRAR = '[ENCERRAR]';
 
@@ -324,6 +329,20 @@ function montarPerguntas(roteiro) {
   if (!perguntas.length) {
     perguntas.push({ fase: 'abertura', topico: 'Abertura', texto: 'Conte sobre sua experiencia em vendas.' });
   }
+
+  // Item 6: pergunta obrigatoria SEMPRE como 1a pergunta, precedendo a abertura
+  // original de cada perfil (que passa a ser a 2a, na mesma ordem). Ponto UNICO de
+  // convergencia dos dois formatos de roteiro (novo/antigo) e dos dois perfis — sem
+  // duplicar logica por branch. Reusa fase/topico da abertura ja existente
+  // (perguntas[0], sempre presente apos o fallback) para cair sob o MESMO chip de
+  // progresso, sem criar um topico isolado.
+  const aberturaRef = perguntas[0];
+  perguntas.unshift({
+    fase: aberturaRef.fase,
+    topico: aberturaRef.topico,
+    texto: PERGUNTA_ABERTURA_OBRIGATORIA,
+  });
+
   return perguntas;
 }
 
@@ -414,6 +433,7 @@ module.exports = {
   AUDIO_MOCK,
   FALA_FECHAMENTO,
   falaDespedida,
+  PERGUNTA_ABERTURA_OBRIGATORIA,
   MARCADOR_ENCERRAR,
   FRASE_NAO_OUVI,
   FALA_TRANSICAO,
