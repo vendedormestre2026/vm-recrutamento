@@ -290,6 +290,10 @@ function badgeStatus(status) {
   return `<span class="badge ${classe}">${escapeHtml(rotulo)}</span>`;
 }
 
+// Allowlist dos vereditos da IA (mesma lista interna da query em sqlite.js). Usada para
+// sanear o filtro ?status_ia= e para o <select> do painel. Enum do item 2.
+const STATUS_IA_VALIDOS = ['avancar', 'talvez', 'descartar', 'processando', 'indefinido', 'erro'];
+
 // Chip do Status IA (veredito automatico). Reusa a classe base .badge e os modificadores
 // existentes: laranja (positivo), contorno preto (negativo/sobrio), cinza (neutro/transitorio).
 // Os rotulos dizem "pela IA" para nunca confundir com a decisao humana do recrutador.
@@ -357,6 +361,8 @@ router.get('/', (req, res) => {
   // Saneamento: status so vale se for um dos valores conhecidos; datas no formato YYYY-MM-DD.
   const STATUS_VALIDOS = ['aplicado', 'em_entrevista', 'concluido'];
   const status = STATUS_VALIDOS.includes(q.status) ? q.status : '';
+  // Status IA: mesma allowlist da query (sqlite.js). Vazio/invalido = todos.
+  const statusIa = STATUS_IA_VALIDOS.includes(q.status_ia) ? q.status_ia : '';
   const ehData = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   const dataDe = ehData(q.de) ? q.de : '';
   const dataAte = ehData(q.ate) ? q.ate : '';
@@ -367,6 +373,7 @@ router.get('/', (req, res) => {
   const vagas = db.listarVagas();
   const candidatos = db.listarAplicacoesComContexto({
     status,
+    statusIa,
     dataDe,
     dataAte,
     jobId: vagaId || undefined,
@@ -402,7 +409,8 @@ router.get('/', (req, res) => {
   const totalConcluidas = db.contarEntrevistasConcluidas();
 
   const sel = (v) => (status === v ? ' selected' : '');
-  const temFiltro = status || dataDe || dataAte || vagaId;
+  const selIa = (v) => (statusIa === v ? ' selected' : '');
+  const temFiltro = status || statusIa || dataDe || dataAte || vagaId;
   const opcoesVaga = vagas
     .map(
       (v) =>
@@ -425,6 +433,18 @@ router.get('/', (req, res) => {
           <option value="aplicado"${sel('aplicado')}>Aplicado</option>
           <option value="em_entrevista"${sel('em_entrevista')}>Em entrevista</option>
           <option value="concluido"${sel('concluido')}>Concluído</option>
+        </select>
+      </label>
+      <label class="filtro">
+        <span>Status IA</span>
+        <select name="status_ia">
+          <option value=""${statusIa ? '' : ' selected'}>Todos</option>
+          <option value="avancar"${selIa('avancar')}>Aprovados pela IA</option>
+          <option value="descartar"${selIa('descartar')}>Descartados pela IA</option>
+          <option value="talvez"${selIa('talvez')}>Em dúvida (IA)</option>
+          <option value="processando"${selIa('processando')}>Avaliando…</option>
+          <option value="indefinido"${selIa('indefinido')}>Sem veredito</option>
+          <option value="erro"${selIa('erro')}>Erro na avaliação</option>
         </select>
       </label>
       <label class="filtro">
@@ -458,6 +478,7 @@ router.get('/', (req, res) => {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
       <h1 style="margin:0;">Candidatos</h1>
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+        <a class="btn btn--ghost" href="/admin?status_ia=avancar">Ver aprovados pela IA</a>
         <a class="btn btn--ghost" href="/admin/dashboard">Funil de Conversão</a>
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
         <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
@@ -468,6 +489,7 @@ router.get('/', (req, res) => {
     ${filtros}
     <form id="form-lote" method="POST" action="/admin/candidatos/arquivar-lote">
       <input type="hidden" name="status" value="${escapeHtml(status)}">
+      <input type="hidden" name="status_ia" value="${escapeHtml(statusIa)}">
       <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
       <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
       <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
@@ -875,6 +897,7 @@ router.post('/candidato/:id/restaurar', (req, res) => {
 function paramsFiltros(src = {}) {
   const p = new URLSearchParams();
   if (['aplicado', 'em_entrevista', 'concluido'].includes(src.status)) p.set('status', src.status);
+  if (STATUS_IA_VALIDOS.includes(src.status_ia)) p.set('status_ia', src.status_ia);
   const ehData = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   if (ehData(src.de)) p.set('de', String(src.de));
   if (ehData(src.ate)) p.set('ate', String(src.ate));

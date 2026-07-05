@@ -541,9 +541,14 @@ function obterReportEnviadoPorInterview(interviewId) {
 // do ultimo relatorio gerado (para habilitar/linkar o botao "Ver relatorio").
 // Ordena por criado_em DESC. Filtros opcionais (Fase 5, inc 5):
 //   status -> filtra a.status (so um dos valores validos; ignorado caso contrario)
+//   statusIa -> filtra a.status_ia (veredito da IA; enum abaixo; ignorado caso contrario)
 //   dataDe / dataAte -> intervalo INCLUSIVO sobre a data (YYYY-MM-DD) de a.criado_em
 //   jobId -> filtra a.job_id (id da vaga; ignorado se ausente)
-function listarAplicacoesComContexto({ status, dataDe, dataAte, jobId, incluirArquivados = false } = {}) {
+// Enum dos vereditos da IA (espelha a maquina de estados do item 2 e badgeStatusIa do
+// painel). Interno a esta query; o handler /admin mantem a MESMA allowlist ao sanear a
+// query string (mesmo padrao ja usado para o enum de status).
+const STATUS_IA_VALIDOS = ['avancar', 'talvez', 'descartar', 'processando', 'indefinido', 'erro'];
+function listarAplicacoesComContexto({ status, statusIa, dataDe, dataAte, jobId, incluirArquivados = false } = {}) {
   const where = [];
   const params = [];
 
@@ -558,6 +563,10 @@ function listarAplicacoesComContexto({ status, dataDe, dataAte, jobId, incluirAr
   if (status === 'aplicado' || status === 'em_entrevista' || status === 'concluido') {
     where.push('a.status = ?');
     params.push(status);
+  }
+  if (STATUS_IA_VALIDOS.includes(statusIa)) {
+    where.push('a.status_ia = ?');
+    params.push(statusIa);
   }
   if (jobId) {
     where.push('a.job_id = ?');
