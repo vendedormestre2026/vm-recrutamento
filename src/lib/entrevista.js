@@ -158,13 +158,31 @@ function faseDoBloco(bloco) {
   return 'competencia';
 }
 
+// Nome da empresa para resolver o placeholder [nome da empresa] na pergunta de Principios
+// (item 7.4). jobs NAO tem campo dedicado de nome de empresa (titulo = cargo, ex.:
+// "SDR / Pré-vendas", que soaria errado na frase). Usamos fallback neutro "a empresa" —
+// nunca vaza o placeholder literal e a frase fica gramaticalmente correta ("Se a empresa
+// tivesse uma rotina dessas..."). Se um dia houver um campo dedicado, resolve-lo aqui.
+function nomeEmpresaDaVaga(vaga) {
+  const dedicado = vaga && vaga.empresa_nome ? String(vaga.empresa_nome).trim() : '';
+  return dedicado || 'a empresa';
+}
+
+// Substitui [nome da empresa] (case-insensitive) pelo nome resolvido. NUNCA deixa o
+// placeholder literal chegar ao candidato/LLM.
+function interpolarEmpresa(texto, vaga) {
+  return String(texto || '').replace(/\[nome da empresa\]/gi, nomeEmpresaDaVaga(vaga));
+}
+
 // Monta o system prompt da Vera a partir do roteiro (dados) + resumo do curriculo.
 // Agora usa o roteiro RICO: instrucoes gerais, metodo, blocos (com pergunta-semente,
 // sondas BEI e instrucao para a Vera) e os temas a explorar (nome + peso). Material
 // avaliativo (boa_resposta, rubrica, o_que_observar) fica FORA da conducao: so o
 // relatorio (relatorio.js) avalia, para nao vazar julgamento na fala ao candidato.
-function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas }) {
+function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas, vaga }) {
   const { metodo, instrucoesGerais, competencias, blocos } = normalizarEstrutura(roteiro);
+  // Item 7.4 — cultura/rotinas da vaga (contexto situacional p/ a pergunta de Principios).
+  const culturaEmpresa = vaga && vaga.cultura_empresa ? String(vaga.cultura_empresa).trim() : '';
 
   // Condução usa APENAS nome + peso (cobertura/prioridade). boa_resposta e rubrica NAO
   // entram aqui: sao material de AVALIACAO e viviam no mesmo turno que gera a pergunta,
@@ -236,8 +254,15 @@ function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas }) {
     '7. Responda SEMPRE em texto corrido, como fala natural para ser lida em voz alta. NAO use formatacao markdown: nada de asteriscos (* ou **), sublinhados (_), crases (`), titulos (#), listas com marcadores ou emojis. Escreva apenas frases.',
     '',
     'ROTEIRO DA ENTREVISTA (blocos, na ordem):',
-    linhasBlocos || '- (roteiro sem blocos definidos)',
+    interpolarEmpresa(linhasBlocos, vaga) || '- (roteiro sem blocos definidos)',
     '',
+    // Contexto situacional da empresa: so entra se a vaga tiver cultura_empresa preenchida
+    // (senao a secao inteira e omitida — null e filtrado abaixo).
+    culturaEmpresa
+      ? 'CONTEXTO DA EMPRESA (use apenas se relevante ao explorar a pergunta sobre rotinas/cultura da empresa):\n' +
+        culturaEmpresa
+      : null,
+    culturaEmpresa ? '' : null,
     'TEMAS A EXPLORAR (uso interno — NUNCA comente isso com o candidato):',
     linhasCompetencias || '- (roteiro sem temas definidos)',
     '',
@@ -448,6 +473,8 @@ module.exports = {
   truncar,
   comTimeout,
   montarSystemPrompt,
+  nomeEmpresaDaVaga,
+  interpolarEmpresa,
   montarMensagensLLM,
   removerMarkdown,
   extrairEncerrar,

@@ -1312,6 +1312,8 @@ function lerCamposRicos(b) {
     modalidade,
     regime,
     horario: String(b.horario || '').trim(),
+    // Item 7.4 — cultura/rotinas da empresa (contexto da pergunta de Principios).
+    cultura_empresa: String(b.cultura_empresa || '').trim(),
     skills: arrayDeLinhas(b.skills),
     beneficios: arrayDeLinhas(b.beneficios),
     atividades: arrayDeLinhas(b.atividades),
@@ -1426,6 +1428,14 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
       <span>Sobre a empresa</span>
       <textarea name="sobre_empresa" rows="4">${escapeHtml(vaga.sobre_empresa || '')}</textarea>
     </label>
+
+    <label class="campo">
+      <span>Cultura e rotinas da empresa (opcional)</span>
+      <textarea name="cultura_empresa" rows="4">${escapeHtml(vaga.cultura_empresa || '')}</textarea>
+    </label>
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+      Rotinas do dia a dia que a Vera usa como contexto na pergunta de Princípios (ex.:
+      reunião diária às 8h com oração, dress code formal). Não aparece na página pública.</p>
 
     <label class="campo-check">
       <input type="checkbox" name="ativo" value="1"${vaga.ativo ? ' checked' : ''}>

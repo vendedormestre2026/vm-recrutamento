@@ -372,20 +372,22 @@ function roteiroDaVaga(vaga) {
   return vaga && vaga.roteiro_id ? db.obterRoteiro(vaga.roteiro_id) : null;
 }
 
-// Interpola placeholders do roteiro com dados reais do candidato. Hoje so [nome]
-// (case-insensitive) -> primeiro nome do candidato; novos placeholders entram aqui.
-function interpolarTexto(texto, candidato) {
+// Interpola placeholders do roteiro com dados reais: [nome] (case-insensitive) -> primeiro
+// nome do candidato; [nome da empresa] -> nome resolvido da empresa da vaga (item 7.4;
+// fallback neutro "a empresa"). Novos placeholders entram aqui.
+function interpolarTexto(texto, candidato, vaga) {
   const nome = String((candidato && candidato.nome) || '').trim();
-  return String(texto || '').replace(/\[nome\]/gi, nome);
+  return entrevista.interpolarEmpresa(String(texto || ''), vaga).replace(/\[nome\]/gi, nome);
 }
 
-// Perguntas do roteiro com os placeholders ja interpolados (ex.: [nome]). Usado em
-// vez de entrevista.montarPerguntas direto, para que a abertura e as demais perguntas
-// roteirizadas saiam com o nome real do candidato (gravadas, faladas e exibidas).
-function perguntasInterpoladas(roteiro, candidato) {
+// Perguntas do roteiro com os placeholders ja interpolados ([nome], [nome da empresa]).
+// Usado em vez de entrevista.montarPerguntas direto, para que a abertura e as demais
+// perguntas roteirizadas saiam com o nome real do candidato e da empresa (gravadas,
+// faladas e exibidas).
+function perguntasInterpoladas(roteiro, candidato, vaga) {
   return entrevista.montarPerguntas(roteiro).map((p) => ({
     ...p,
-    texto: interpolarTexto(p.texto, candidato),
+    texto: interpolarTexto(p.texto, candidato, vaga),
   }));
 }
 
@@ -506,7 +508,7 @@ router.post('/interview/start', async (req, res) => {
 
     const vaga = db.obterVaga(candidato.job_id);
     const roteiro = roteiroDaVaga(vaga);
-    const perguntas = perguntasInterpoladas(roteiro, candidato);
+    const perguntas = perguntasInterpoladas(roteiro, candidato, vaga);
 
     const interviewId = db.criarInterview({
       application_id: candidato.id,
@@ -602,7 +604,8 @@ router.post('/interview/answer', (req, res) => {
     const forcarAvancar = String(req.body.forcar_avancar || '') === '1';
 
     const roteiro = entrevistaRow.roteiro_id ? db.obterRoteiro(entrevistaRow.roteiro_id) : null;
-    const perguntas = perguntasInterpoladas(roteiro, candidato);
+    const vaga = db.obterVaga(candidato.job_id);
+    const perguntas = perguntasInterpoladas(roteiro, candidato, vaga);
 
     // Quantas perguntas a Vera ja fez -> proxima e o indice seguinte (0-based).
     const proximoIndice = db.contarTurnos(interviewId, 'agente');
@@ -766,6 +769,7 @@ router.post('/interview/answer', (req, res) => {
         curriculoTexto: candidato.curriculo_texto,
         agente: config.agente.nome,
         maxPerguntas: config.entrevista.maxPerguntas,
+        vaga,
       });
       const mensagens = entrevista.montarMensagensLLM({
         systemPrompt,

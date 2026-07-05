@@ -65,6 +65,12 @@ function migrar() {
   // Fase 5 - gravacao de video: link compartilhavel do Google Drive por entrevista.
   adicionarColunaSeFaltar('interviews', 'video_url', 'TEXT');
 
+  // Item 7.4 - cultura/rotinas do dia a dia da empresa (ex.: "reuniao diaria as 8h com
+  // oracao", "atendimento sempre formal com o cliente"). Usado para contextualizar a
+  // pergunta de Principios na entrevista (system prompt da conducao). Diferente de
+  // sobre_empresa (institucional, voltado ao candidato na pagina da vaga). Opcional/NULL.
+  adicionarColunaSeFaltar('jobs', 'cultura_empresa', 'TEXT');
+
   // Func. 2 - toggle por-vaga do modo do funil: 1 = Completo (entrevista automatica,
   // comportamento atual), 0 = Simples (so confirmacao + WhatsApp). Default 1 preserva
   // o comportamento de todas as vagas existentes. So vale quando o toggle GERAL esta ON.

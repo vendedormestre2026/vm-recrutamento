@@ -102,12 +102,12 @@ function criarVaga(vaga) {
       (slug, titulo, perfil, faixa_pagamento, potencial_ganhos, skills,
        beneficios, atividades, requisitos, secoes_extras,
        endereco, modalidade, regime, horario,
-       descricao, sobre_empresa, roteiro_id, ativo, entrevista_ativa)
+       descricao, sobre_empresa, cultura_empresa, roteiro_id, ativo, entrevista_ativa)
     VALUES
       (@slug, @titulo, @perfil, @faixa_pagamento, @potencial_ganhos, @skills,
        @beneficios, @atividades, @requisitos, @secoes_extras,
        @endereco, @modalidade, @regime, @horario,
-       @descricao, @sobre_empresa, @roteiro_id, @ativo, @entrevista_ativa)
+       @descricao, @sobre_empresa, @cultura_empresa, @roteiro_id, @ativo, @entrevista_ativa)
   `);
   const info = stmt.run({
     slug: vaga.slug,
@@ -126,6 +126,7 @@ function criarVaga(vaga) {
     secoes_extras: JSON.stringify(vaga.secoes_extras || []),
     descricao: vaga.descricao || null,
     sobre_empresa: vaga.sobre_empresa || null,
+    cultura_empresa: vaga.cultura_empresa || null,
     roteiro_id: vaga.roteiro_id || null,
     ativo: vaga.ativo === false ? 0 : 1,
     // Default 1 (Completo). So vira 0 (Simples) quando explicitamente desmarcado.
@@ -155,6 +156,7 @@ function atualizarVaga(id, campos) {
          horario          = @horario,
          descricao        = @descricao,
          sobre_empresa    = @sobre_empresa,
+         cultura_empresa  = @cultura_empresa,
          ativo            = @ativo,
          entrevista_ativa = @entrevista_ativa
        WHERE id = @id`,
@@ -175,6 +177,7 @@ function atualizarVaga(id, campos) {
       secoes_extras: JSON.stringify(campos.secoes_extras || []),
       descricao: campos.descricao || null,
       sobre_empresa: campos.sobre_empresa || null,
+      cultura_empresa: campos.cultura_empresa || null,
       ativo: campos.ativo === false ? 0 : 1,
       entrevista_ativa: campos.entrevista_ativa === false ? 0 : 1,
     });
