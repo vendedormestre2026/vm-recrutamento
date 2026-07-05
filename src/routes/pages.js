@@ -352,12 +352,14 @@ function paginaPreparacao(req) {
       <p class="vm-lead">Você está a um passo de avançar para a vaga ${escapeHtml(tituloVaga)}.</p>
     </section>
 
+    <p class="vm-aviso">Esta entrevista é conduzida pela Vera, nossa entrevistadora de inteligência artificial. Ela pergunta por voz, ouve suas respostas e adapta a conversa ao que você diz — não é uma pessoa, é uma IA. Responda com naturalidade, como faria com qualquer recrutador.</p>
+
     <section class="vm-secao">
       <h2 class="vm-h2">O que esperar</h2>
       <div class="vm-card">
         <dl class="vm-info">
           <dt>Formato</dt>
-          <dd>Entrevista por áudio e vídeo com a Vera, nossa agente de recrutamento. Você interage pelo botão “toque para falar”.</dd>
+          <dd>Entrevista por áudio e vídeo com a Vera, nossa agente de recrutamento com inteligência artificial. Você interage pelo botão “toque para falar”.</dd>
           <dt>Duração estimada</dt>
           <dd>~${min}–${max} minutos.</dd>
           <dt>Áreas de foco</dt>
