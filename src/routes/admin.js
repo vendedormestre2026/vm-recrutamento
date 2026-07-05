@@ -132,7 +132,7 @@ const ESTILO_ADMIN = `
   h1,h2,h3 { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; letter-spacing:.03em; }
   a { color:var(--laranja); }
   .admin-tab-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  table.admin-tab { width:100%; border-collapse:collapse; font-size:.95rem; min-width:760px; }
+  table.admin-tab { width:100%; border-collapse:collapse; font-size:.95rem; min-width:960px; }
   table.admin-tab th, table.admin-tab td { text-align:left; padding:.6rem .7rem; border-bottom:1px solid var(--linha); white-space:nowrap; }
   table.admin-tab th { font-family:'Barlow Condensed',sans-serif; text-transform:uppercase; color:var(--cinza); font-weight:700; }
   .badge { display:inline-block; padding:.15rem .55rem; border-radius:999px; font-size:.8rem; font-weight:600; }
@@ -290,6 +290,34 @@ function badgeStatus(status) {
   return `<span class="badge ${classe}">${escapeHtml(rotulo)}</span>`;
 }
 
+// Chip do Status IA (veredito automatico). Reusa a classe base .badge e os modificadores
+// existentes: laranja (positivo), contorno preto (negativo/sobrio), cinza (neutro/transitorio).
+// Os rotulos dizem "pela IA" para nunca confundir com a decisao humana do recrutador.
+function badgeStatusIa(statusIa) {
+  const mapa = {
+    avancar: ['Aprovado pela IA', 'badge--entrevista'], // laranja
+    descartar: ['Descartado pela IA', 'badge--concluido'], // contorno preto
+    talvez: ['Em dúvida (IA)', 'badge--aplicado'], // cinza
+    processando: ['Avaliando…', 'badge--aplicado'], // cinza
+    indefinido: ['Sem veredito', 'badge--aplicado'], // cinza
+    erro: ['Erro na avaliação', 'badge--aplicado'], // cinza
+  };
+  const [rotulo, classe] = mapa[statusIa] || ['—', 'badge--aplicado'];
+  return `<span class="badge ${classe}">${escapeHtml(rotulo)}</span>`;
+}
+
+// Chip do Status Recrutador (decisao humana). null/desconhecido -> "Sem decisao" (cinza).
+// Rotulos dizem "pelo recrutador" para diferenciar do veredito da IA (mesmas cores).
+function badgeStatusRecrutador(statusRecrutador) {
+  const mapa = {
+    aprovado: ['Aprovado pelo recrutador', 'badge--entrevista'], // laranja
+    reprovado: ['Reprovado pelo recrutador', 'badge--concluido'], // contorno preto
+    em_analise: ['Em análise', 'badge--aplicado'], // cinza
+  };
+  const [rotulo, classe] = mapa[statusRecrutador] || ['Sem decisão', 'badge--aplicado'];
+  return `<span class="badge ${classe}">${escapeHtml(rotulo)}</span>`;
+}
+
 function nomeCompleto(linha) {
   const nome = [linha.nome, linha.sobrenome].filter(Boolean).join(' ').trim();
   return nome || linha.email || '—';
@@ -361,6 +389,8 @@ router.get('/', (req, res) => {
           <td>${escapeHtml(c.telefone || '—')}</td>
           <td>${escapeHtml(c.vaga_titulo || '—')}</td>
           <td>${badgeStatus(c.status)}</td>
+          <td>${badgeStatusIa(c.status_ia)}</td>
+          <td>${badgeStatusRecrutador(c.status_recrutador)}</td>
           <td>${escapeHtml(formatarDataHora(c.criado_em))}</td>
           <td>${video}</td>
           <td>${acao}</td>
@@ -450,11 +480,11 @@ router.get('/', (req, res) => {
             <tr>
               <th><input type="checkbox" data-selecionar-todos aria-label="Selecionar todos"></th>
               <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Vaga</th>
-              <th>Status</th><th>Criado em</th><th>Vídeo</th><th>Ação</th>
+              <th>Status</th><th>Status IA</th><th>Status Recrutador</th><th>Criado em</th><th>Vídeo</th><th>Ação</th>
             </tr>
           </thead>
           <tbody>
-            ${linhas || `<tr><td colspan="9">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
+            ${linhas || `<tr><td colspan="11">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -593,7 +623,9 @@ router.get('/candidato/:id', (req, res) => {
       ? '<div class="aviso-ok">Dados do candidato atualizados.</div>'
       : req.query.ok === 'restaurado'
         ? '<div class="aviso-ok">Lead restaurado.</div>'
-        : '';
+        : req.query.ok === 'status_recrutador'
+          ? '<div class="aviso-ok">Decisão do recrutador registrada.</div>'
+          : '';
 
   const avisoArquivado = arquivado
     ? `<div class="aviso-alerta">Lead arquivado em ${escapeHtml(formatarDataHora(cand.deleted_at))}. Ele não aparece na listagem, mas o histórico foi preservado.</div>`
@@ -631,8 +663,26 @@ router.get('/candidato/:id', (req, res) => {
         ${cand.cidade ? `<div><dt>Cidade</dt><dd>${escapeHtml(cand.cidade)}</dd></div>` : ''}
         <div><dt>Vaga</dt><dd>${escapeHtml((vaga && vaga.titulo) || cand.vaga_titulo || '—')}</dd></div>
         <div><dt>Status</dt><dd>${badgeStatus(cand.status)}</dd></div>
+        <div><dt>Status IA</dt><dd>${badgeStatusIa(cand.status_ia)}</dd></div>
+        <div><dt>Status Recrutador</dt><dd>${badgeStatusRecrutador(cand.status_recrutador)}</dd></div>
         <div><dt>Aplicou em</dt><dd>${escapeHtml(formatarDataHora(cand.criado_em))}</dd></div>
       </dl>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Decisão do recrutador</h2>
+      <form method="POST" action="/admin/candidato/${cand.id}/status-recrutador">
+        <label class="campo" style="max-width:320px;">
+          <span>Status Recrutador</span>
+          <select name="status_recrutador">
+            <option value=""${!cand.status_recrutador ? ' selected' : ''}>Sem decisão</option>
+            <option value="em_analise"${cand.status_recrutador === 'em_analise' ? ' selected' : ''}>Em análise</option>
+            <option value="aprovado"${cand.status_recrutador === 'aprovado' ? ' selected' : ''}>Aprovado</option>
+            <option value="reprovado"${cand.status_recrutador === 'reprovado' ? ' selected' : ''}>Reprovado</option>
+          </select>
+        </label>
+        <button type="submit" class="btn">Salvar decisão</button>
+      </form>
     </section>
 
     <section class="rel-sec">
@@ -786,6 +836,24 @@ router.post('/candidato/:id/arquivar', (req, res) => {
   }
   db.arquivarAplicacao(id);
   return res.redirect('/admin?arquivado=1');
+});
+
+// ── POST /admin/candidato/:id/status-recrutador ── registra a decisao humana ──
+// Enum validado na camada de dados (definirStatusRecrutador): valor fora do enum
+// (incluindo '' = "Sem decisao") grava null. Mesmo padrao de id/404/redirect das
+// rotas vizinhas de mutacao.
+router.post('/candidato/:id/status-recrutador', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Candidato não encontrado',
+      descricao: 'Não há candidatura com este identificador.',
+    });
+  }
+  const valor = (req.body && req.body.status_recrutador) || null;
+  db.definirStatusRecrutador(id, valor);
+  return res.redirect(`/admin/candidato/${id}?ok=status_recrutador`);
 });
 
 // ── POST /admin/candidato/:id/restaurar ── reverte o soft-delete ──

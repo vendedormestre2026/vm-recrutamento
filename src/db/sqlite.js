@@ -300,6 +300,19 @@ function obterStatusIaPorApplication(applicationId) {
   return linha ? linha.status_ia : null;
 }
 
+// Status do RECRUTADOR (decisao humana, Item 3). Enum validado no app (sem CHECK no
+// banco, mesmo padrao de reports.recomendacao). Valor fora do enum -> null ("sem
+// decisao"). Retorna o valor final gravado (para a rota confirmar o que persistiu).
+const STATUS_RECRUTADOR_VALIDOS = ['aprovado', 'reprovado', 'em_analise'];
+function definirStatusRecrutador(applicationId, valor) {
+  const v = valor != null ? String(valor).trim().toLowerCase() : null;
+  const final = STATUS_RECRUTADOR_VALIDOS.includes(v) ? v : null;
+  getDb()
+    .prepare('UPDATE applications SET status_recrutador = ? WHERE id = ?')
+    .run(final, applicationId);
+  return final;
+}
+
 // Edita SOMENTE os campos de contato do candidato. NUNCA toca em id/job_id/token/status/
 // curriculo_path/timestamps. Vazio ('' apos trim) vira NULL. Tudo parametrizado (?).
 function atualizarAplicacao(id, campos = {}) {
@@ -565,6 +578,7 @@ function listarAplicacoesComContexto({ status, dataDe, dataAte, jobId, incluirAr
     .prepare(
       `SELECT
          a.id, a.nome, a.sobrenome, a.email, a.telefone, a.status, a.criado_em,
+         a.status_ia, a.status_recrutador,
          j.titulo AS vaga_titulo,
          (SELECT i.id FROM interviews i
             WHERE i.application_id = a.id ORDER BY i.id DESC LIMIT 1) AS interview_id,
@@ -893,6 +907,8 @@ module.exports = {
   definirStatusIa,
   definirStatusIaSeVazio,
   obterStatusIaPorApplication,
+  definirStatusRecrutador,
+  STATUS_RECRUTADOR_VALIDOS,
   atualizarAplicacao,
   arquivarAplicacao,
   restaurarAplicacao,
