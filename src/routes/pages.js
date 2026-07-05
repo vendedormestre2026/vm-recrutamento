@@ -702,22 +702,100 @@ router.get('/entrevista', exigirCandidato, bloquearSeModoSimples, (req, res) => 
 });
 
 // ── Tela 11: Finalizacao ──
+// Copy CONDICIONAL ao status_ia (Item 5). Funcao pura status_ia -> apresentacao.
+// Regra: SO 'descartar' oculta o WhatsApp; qualquer duvida/falha cai na copy NEUTRA
+// + WhatsApp. 'processando' e transitorio (o client pola /api/interview/status ate um
+// terminal). ATENCAO: estes textos sao ESPELHADOS em public/js/app.js (poll) — ao
+// mudar aqui, mudar la tambem, para o in-place update ficar consistente.
+function apresentacaoFinal(statusIa) {
+  switch (statusIa) {
+    case 'descartar':
+      return {
+        estado: 'descartar',
+        kicker: 'Processo concluído',
+        titulo: 'Processo encerrado',
+        lead:
+          'Agradecemos a sua participação. Desta vez não daremos andamento à sua candidatura, mas seu perfil fica registrado para futuras oportunidades.',
+        mostrarWhatsapp: false,
+      };
+    case 'avancar':
+      return {
+        estado: 'avancar',
+        kicker: 'Boa notícia',
+        titulo: 'Você avançou!',
+        lead:
+          'Parabéns! Você avançou nesta etapa do processo. Nosso recrutador entrará em contato com os próximos passos.',
+        mostrarWhatsapp: true,
+      };
+    case 'processando':
+      return {
+        estado: 'processando',
+        kicker: 'Avaliando',
+        titulo: 'Estamos avaliando suas respostas…',
+        lead: 'Isso leva só alguns instantes. Por favor, não feche esta página.',
+        mostrarWhatsapp: false,
+      };
+    // 'talvez' | 'indefinido' | 'erro' | null | qualquer outro -> NEUTRA (copy atual).
+    default:
+      return {
+        estado: statusIa || 'indefinido',
+        kicker: 'Tudo certo',
+        titulo: 'Entrevista concluída',
+        lead:
+          'Suas respostas foram registradas. A equipe de recrutamento vai analisar sua entrevista e entrar em contato pelos próximos passos.',
+        mostrarWhatsapp: true,
+      };
+  }
+}
+
 // Guardada tambem por modo: candidato de vaga Simples nunca chega aqui pelo fluxo, e
 // se tentar por URL direta e mandado para a confirmacao Simples da sua vaga.
 router.get('/finalizacao', exigirCandidato, bloquearSeModoSimples, (req, res) => {
+  const statusIa = db.obterStatusIaPorApplication(req.candidato.id) || null;
+  const ap = apresentacaoFinal(statusIa);
+
+  // WhatsApp: MESMA fonte da tela Simples (config.recrutador.whatsapp, so digitos) e o
+  // MESMO texto pre-preenchido de antes. O <a> e SEMPRE renderizado quando ha numero;
+  // hidden quando o estado inicial o oculta. O client so alterna 'hidden' (nunca
+  // reconstroi a URL, que depende da env). Sem numero na env: o <a> nao existe.
+  const numero = String(config.recrutador.whatsapp || '').replace(/\D/g, '');
+  const mensagem =
+    'Me candidatei no processo seletivo para área comercial e quero falar com o recrutador';
+  const href = numero ? `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}` : '';
+  let whatsappHtml = '';
+  if (numero) {
+    whatsappHtml = `<a class="vm-btn vm-btn--primario" href="${href}" target="_blank" rel="noopener noreferrer" data-final-whatsapp${
+      ap.mostrarWhatsapp ? '' : ' hidden'
+    }>Falar com recrutador agora</a>`;
+  } else {
+    console.warn('[finalizacao] RECRUITER_WHATSAPP ausente; botão de WhatsApp não renderizado.');
+  }
+
+  // <noscript>: sem JS, o estado 'processando' ficaria travado no "Avaliando…". Entrega
+  // a copy NEUTRA + WhatsApp (degradacao segura: nunca deixa o candidato sem saida).
+  const noscriptHtml =
+    ap.estado === 'processando'
+      ? `<noscript><p class="vm-lead">Suas respostas foram registradas. A equipe de recrutamento vai analisar sua entrevista e entrar em contato pelos próximos passos.</p>${
+          numero
+            ? `<a class="vm-btn vm-btn--primario" href="${href}" target="_blank" rel="noopener noreferrer">Falar com recrutador agora</a>`
+            : ''
+        }</noscript>`
+      : '';
+
+  const pollAttr = ap.estado === 'processando' ? ' data-poll="1"' : '';
+
   const conteudo = `
-    <section class="vm-hero vm-hero--centro vm-final">
+    <section class="vm-hero vm-hero--centro vm-final" data-final-status="${escapeHtml(ap.estado)}"${pollAttr}>
       <div class="vm-orb vm-orb--idle" aria-hidden="true">
         <div class="vm-orb__halo"></div>
         <div class="vm-orb__core"></div>
         <div class="vm-orb__ring"></div>
       </div>
-      <p class="vm-kicker">Tudo certo</p>
-      <h1 class="vm-title">Entrevista concluída</h1>
-      <p class="vm-lead">Suas respostas foram registradas. A equipe de recrutamento vai analisar sua entrevista e entrar em contato pelos próximos passos.</p>
-      <a class="vm-btn vm-btn--primario"
-         href="https://wa.me/553121811220?text=Me%20candidatei%20no%20processo%20seletivo%20para%20%C3%A1rea%20comercial%20e%20quero%20falar%20com%20o%20recrutador"
-         target="_blank" rel="noopener noreferrer">Falar com recrutador agora</a>
+      <p class="vm-kicker" data-final-kicker>${escapeHtml(ap.kicker)}</p>
+      <h1 class="vm-title" data-final-titulo>${escapeHtml(ap.titulo)}</h1>
+      <p class="vm-lead" data-final-lead>${escapeHtml(ap.lead)}</p>
+      ${whatsappHtml}
+      ${noscriptHtml}
     </section>`;
   res.send(pagina({ titulo: 'Entrevista concluida', tema: 'claro', etapa: 4, conteudo }));
 });

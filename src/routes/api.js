@@ -907,6 +907,17 @@ router.post('/interview/finish', async (req, res) => {
   });
 });
 
+// ── GET /api/interview/status ── veredito da IA (status_ia) do candidato logado.
+// Consumido pela tela final (/finalizacao) para POLAR ate sair de 'processando' para
+// um terminal. Auth padrao (candidatoApi -> 401 JSON sem sessao). O status_ia mora na
+// application, entao a sessao ja basta (nao precisa de interview_id no request).
+router.get('/interview/status', (req, res) => {
+  const candidato = candidatoApi(req, res);
+  if (!candidato) return undefined; // candidatoApi ja respondeu 401
+  const status_ia = db.obterStatusIaPorApplication(candidato.id);
+  return res.json({ ok: true, status_ia: status_ia || null });
+});
+
 // ── GET /api/interview/audio/:interviewId/:arquivo ── serve o MP3 da fala da Vera (modo real)
 // Protegido: so o candidato dono da entrevista acessa.
 router.get('/interview/audio/:interviewId/:arquivo', (req, res) => {

@@ -1167,3 +1167,100 @@ const VM_MIDIA = {
   // controles escondidos em qualquer carregamento (inclusive restauracoes inconsistentes).
   restaurarEstadoInicial();
 })();
+
+// ── Tela 11: Finalizacao — poll do status_ia ──
+// Quando o server entrega a tela em 'processando' (data-poll="1"), polamos
+// GET /api/interview/status ate um estado terminal e atualizamos a copy in-place.
+// A tabela de apresentacao ESPELHA apresentacaoFinal() em src/routes/pages.js —
+// manter sincronizada. Regra: SO 'descartar' oculta o WhatsApp; qualquer duvida/
+// falha/timeout cai na NEUTRA (= 'indefinido') + WhatsApp (degradacao segura).
+(function () {
+  const secao = document.querySelector('[data-final-status]');
+  if (!secao) return;
+  // Server ja entregou um estado final (nao-'processando' ou sem data-poll): nada a fazer.
+  if (secao.getAttribute('data-final-status') !== 'processando' || secao.getAttribute('data-poll') !== '1') {
+    return;
+  }
+
+  const APRESENTACAO = {
+    descartar: {
+      kicker: 'Processo concluído',
+      titulo: 'Processo encerrado',
+      lead:
+        'Agradecemos a sua participação. Desta vez não daremos andamento à sua candidatura, mas seu perfil fica registrado para futuras oportunidades.',
+      mostrarWhatsapp: false,
+    },
+    avancar: {
+      kicker: 'Boa notícia',
+      titulo: 'Você avançou!',
+      lead:
+        'Parabéns! Você avançou nesta etapa do processo. Nosso recrutador entrará em contato com os próximos passos.',
+      mostrarWhatsapp: true,
+    },
+    // NEUTRA: 'talvez' | 'indefinido' | 'erro' | timeout/falha caem aqui.
+    indefinido: {
+      kicker: 'Tudo certo',
+      titulo: 'Entrevista concluída',
+      lead:
+        'Suas respostas foram registradas. A equipe de recrutamento vai analisar sua entrevista e entrar em contato pelos próximos passos.',
+      mostrarWhatsapp: true,
+    },
+  };
+
+  function apresentacaoDe(status) {
+    if (status === 'descartar') return { estado: 'descartar', ...APRESENTACAO.descartar };
+    if (status === 'avancar') return { estado: 'avancar', ...APRESENTACAO.avancar };
+    // 'talvez'|'indefinido'|'erro'|qualquer outro terminal -> NEUTRA.
+    return { estado: status || 'indefinido', ...APRESENTACAO.indefinido };
+  }
+
+  const elKicker = secao.querySelector('[data-final-kicker]');
+  const elTitulo = secao.querySelector('[data-final-titulo]');
+  const elLead = secao.querySelector('[data-final-lead]');
+  const elWhatsapp = secao.querySelector('[data-final-whatsapp]'); // pode nao existir (sem env)
+
+  const INTERVALO_MS = 2000;
+  const MAX_TENTATIVAS = 17; // ~34s
+
+  function aplicarTerminal(status) {
+    const ap = apresentacaoDe(status);
+    if (elKicker) elKicker.textContent = ap.kicker;
+    if (elTitulo) elTitulo.textContent = ap.titulo;
+    if (elLead) elLead.textContent = ap.lead;
+    // WhatsApp: o server ja renderizou o <a> com nº/texto da env; so alternamos hidden.
+    if (elWhatsapp) elWhatsapp.hidden = !ap.mostrarWhatsapp;
+    secao.setAttribute('data-final-status', ap.estado);
+    secao.removeAttribute('data-poll');
+  }
+
+  let tentativas = 0;
+  let timer = null;
+
+  async function checar() {
+    tentativas += 1;
+    try {
+      const resp = await fetch('/api/interview/status', { headers: { Accept: 'application/json' } });
+      if (!resp.ok) {
+        // Erro de rede/401: degradacao segura -> NEUTRA + WhatsApp.
+        aplicarTerminal('indefinido');
+        return;
+      }
+      const dados = await resp.json();
+      const s = dados && dados.status_ia;
+      if (s && s !== 'processando') {
+        aplicarTerminal(s); // terminal: para o poll e atualiza a tela.
+        return;
+      }
+      // Ainda 'processando' ou null: continua polando ate o teto.
+      if (tentativas >= MAX_TENTATIVAS) {
+        aplicarTerminal('indefinido'); // timeout: NUNCA deixa preso em "Avaliando…".
+        return;
+      }
+      timer = setTimeout(checar, INTERVALO_MS);
+    } catch (e) {
+      aplicarTerminal('indefinido'); // falha de rede: degradacao segura.
+    }
+  }
+
+  timer = setTimeout(checar, INTERVALO_MS);
+})();
