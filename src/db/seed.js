@@ -7,56 +7,97 @@
 const { migrar } = require('./migrate');
 const db = require('./index');
 
-// Roteiro SDR (estrutura JSON: abertura + competencias + fechamento + rubrica)
+// Roteiro SDR — formato RICO (blocos array + competencias top-level), mesmo shape do
+// Closer. Migrado do formato antigo/aninhado (item 7.2) SEM mudar o conteudo: mesmas
+// perguntas, pesos, boas-respostas e nomes de bloco/competencia (chips e calculo de
+// pontuacao inalterados). Sondas/instrucao_vera/metodo/pilares novos entram no item 7.3.
 const ROTEIRO_SDR = {
   nome: 'SDR - Padrão v1',
   perfil: 'SDR',
   versao: 1,
   estrutura: {
     perfil: 'SDR',
-    blocos: {
-      abertura: [
-        'O que te atrai em trabalhar com vendas?',
-        'Conte rapidamente sua experiência mais recente na área.',
-      ],
-      competencias: [
-        {
-          nome: 'Resiliência/volume',
-          peso: 2,
-          pergunta_semente:
-            'Conte um dia de muitas tentativas e poucos retornos. Como manteve o ritmo?',
-          boa_resposta:
-            'Demonstra constância, método para manter ritmo e não terceiriza a culpa.',
-        },
-        {
-          nome: 'Abordagem/comunicação',
-          peso: 1,
-          pergunta_semente: 'Como aborda um lead frio nos primeiros 30 segundos?',
-          boa_resposta:
-            'Tem abertura clara, gera valor rápido e desperta interesse sem ser invasivo.',
-        },
-        {
-          nome: 'Qualificação',
-          peso: 2,
-          pergunta_semente:
-            'Quando percebeu que um lead não era qualificado? Como concluiu isso?',
-          boa_resposta:
-            'Usa critérios (ex.: BANT/perfil), faz perguntas certas e decide com objetividade.',
-        },
-        {
-          nome: 'Organização/CRM',
-          peso: 1,
-          pergunta_semente:
-            'Como se organiza para não perder follow-ups? Que ferramentas usa?',
-          boa_resposta: 'Tem rotina, cadência e usa CRM/ferramentas de forma disciplinada.',
-        },
-      ],
-      fechamento: [
-        'Disponibilidade de início.',
-        'Expectativa de remuneração/comissão.',
-        'Por que deveríamos te escolher?',
-      ],
-    },
+    blocos: [
+      {
+        id: 'abertura',
+        nome: 'Abertura',
+        obrigatorio: true,
+        perguntas: [
+          'O que te atrai em trabalhar com vendas?',
+          'Conte rapidamente sua experiência mais recente na área.',
+        ],
+      },
+      {
+        id: 'resiliencia_volume',
+        nome: 'Resiliência/volume',
+        obrigatorio: true,
+        pergunta_semente:
+          'Conte um dia de muitas tentativas e poucos retornos. Como manteve o ritmo?',
+        competencias_alvo: ['resiliencia_volume'],
+      },
+      {
+        id: 'abordagem_comunicacao',
+        nome: 'Abordagem/comunicação',
+        obrigatorio: true,
+        pergunta_semente: 'Como aborda um lead frio nos primeiros 30 segundos?',
+        competencias_alvo: ['abordagem_comunicacao'],
+      },
+      {
+        id: 'qualificacao',
+        nome: 'Qualificação',
+        obrigatorio: true,
+        pergunta_semente:
+          'Quando percebeu que um lead não era qualificado? Como concluiu isso?',
+        competencias_alvo: ['qualificacao'],
+      },
+      {
+        id: 'organizacao_crm',
+        nome: 'Organização/CRM',
+        obrigatorio: true,
+        pergunta_semente:
+          'Como se organiza para não perder follow-ups? Que ferramentas usa?',
+        competencias_alvo: ['organizacao_crm'],
+      },
+      {
+        id: 'fechamento',
+        nome: 'Fechamento',
+        obrigatorio: true,
+        perguntas: [
+          'Disponibilidade de início.',
+          'Expectativa de remuneração/comissão.',
+          'Por que deveríamos te escolher?',
+        ],
+      },
+    ],
+    competencias: [
+      {
+        id: 'resiliencia_volume',
+        nome: 'Resiliência/volume',
+        peso: 2,
+        boa_resposta:
+          'Demonstra constância, método para manter ritmo e não terceiriza a culpa.',
+      },
+      {
+        id: 'abordagem_comunicacao',
+        nome: 'Abordagem/comunicação',
+        peso: 1,
+        boa_resposta:
+          'Tem abertura clara, gera valor rápido e desperta interesse sem ser invasivo.',
+      },
+      {
+        id: 'qualificacao',
+        nome: 'Qualificação',
+        peso: 2,
+        boa_resposta:
+          'Usa critérios (ex.: BANT/perfil), faz perguntas certas e decide com objetividade.',
+      },
+      {
+        id: 'organizacao_crm',
+        nome: 'Organização/CRM',
+        peso: 1,
+        boa_resposta: 'Tem rotina, cadência e usa CRM/ferramentas de forma disciplinada.',
+      },
+    ],
     rubrica: {
       escala: '1-5',
       saida: 'nota + justificativa curta por competencia, mais resumo e pontos de atencao',

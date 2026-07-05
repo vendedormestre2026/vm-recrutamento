@@ -122,7 +122,9 @@ test('gerarRelatorio (mock): avaliacao deterministica, campo coberta, sem tocar 
   // RECRUITER_EMAIL definido + mock apenas loga o e-mail -> status final 'enviado'.
   assert.equal(reportCompleto.status, 'enviado');
 
-  const comps = ROTEIRO_SDR.estrutura.blocos.competencias;
+  // Item 7.2: SDR migrado para o formato rico — competencias agora no topo da estrutura
+  // (antes: estrutura.blocos.competencias). Mesmos nomes/pesos/ordem, so relocados.
+  const comps = ROTEIRO_SDR.estrutura.competencias;
   assert.equal(reportCompleto.pontuacoes.length, comps.length);
 
   // Nomes preservam a acentuacao do roteiro (regressao da correcao de acentos).
