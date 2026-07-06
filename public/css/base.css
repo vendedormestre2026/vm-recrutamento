@@ -266,7 +266,12 @@ html.tema-escuro .vm-funil__etapa--concluida .vm-funil__rotulo{ color:var(--vm-w
 .vm-orb__core{
   position:relative; z-index:2;
   width:88px; height:88px; border-radius:50%;
+  /* Avatar da Vera: o core agora e um <img> (retrato SVG) recortado em circulo.
+     object-fit:cover preenche o circulo; o brilho laranja (box-shadow) do halo continua.
+     background permanece so como fallback se o SVG nao carregar (o SVG e opaco, entao
+     nunca aparece em operacao normal). */
   background:var(--vm-orange);
+  object-fit:cover; display:block;
   box-shadow:0 0 28px 4px color-mix(in srgb, var(--vm-orange) 65%, transparent);
 }
 .vm-orb__halo{

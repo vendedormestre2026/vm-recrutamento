@@ -714,7 +714,7 @@ router.get('/entrevista', exigirCandidato, bloquearSeModoSimples, (req, res) => 
 
       <div class="vm-orb vm-orb--idle" data-orbe aria-hidden="true">
         <div class="vm-orb__halo"></div>
-        <div class="vm-orb__core"></div>
+        <img class="vm-orb__core" src="/img/vera-avatar.svg" alt="">
         <div class="vm-orb__ring"></div>
       </div>
       <p class="vm-vera-estado" data-estado-texto aria-live="polite"></p>
@@ -745,7 +745,7 @@ router.get('/entrevista', exigirCandidato, bloquearSeModoSimples, (req, res) => 
       <div class="vm-iniciar" data-iniciar>
         <div class="vm-orb vm-orb--idle" aria-hidden="true">
           <div class="vm-orb__halo"></div>
-          <div class="vm-orb__core"></div>
+          <img class="vm-orb__core" src="/img/vera-avatar.svg" alt="">
           <div class="vm-orb__ring"></div>
         </div>
         <p class="vm-kicker">Agente Vera</p>
@@ -846,7 +846,7 @@ router.get('/finalizacao', exigirCandidato, bloquearSeModoSimples, (req, res) =>
     <section class="vm-hero vm-hero--centro vm-final" data-final-status="${escapeHtml(ap.estado)}"${pollAttr}>
       <div class="vm-orb vm-orb--idle" aria-hidden="true">
         <div class="vm-orb__halo"></div>
-        <div class="vm-orb__core"></div>
+        <img class="vm-orb__core" src="/img/vera-avatar.svg" alt="">
         <div class="vm-orb__ring"></div>
       </div>
       <p class="vm-kicker" data-final-kicker>${escapeHtml(ap.kicker)}</p>
