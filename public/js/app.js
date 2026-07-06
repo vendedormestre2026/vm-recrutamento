@@ -1264,3 +1264,59 @@ const VM_MIDIA = {
 
   timer = setTimeout(checar, INTERVALO_MS);
 })();
+
+// ── Tela de video introdutorio (Item 8): gating "assistir ate o fim" ──
+// Espelha o padrao do consentimento LGPD (botao nasce disabled, habilita por condicao).
+// Aqui a condicao e o fim do video: a IFrame Player API do YouTube chama o callback global
+// onYouTubeIframeAPIReady ao carregar (o <script> do iframe_api so existe nesta tela) e
+// emitimos o "Continuar" quando o player entra no estado ENDED (0). FAIL-OPEN: se a API do
+// YouTube nao puder inicializar (rede/adblock corporativo) ou o video for inembutivel,
+// liberamos o botao — melhor o candidato seguir do que ficar preso por uma falha de infra.
+(function () {
+  const tela = document.querySelector('[data-tela-video-intro]');
+  if (!tela) return;
+  const btnContinuar = tela.querySelector('[data-continuar-video]');
+  if (!btnContinuar) return;
+  const dica = tela.querySelector('[data-video-dica]');
+
+  let liberado = false;
+  function liberar(msg) {
+    if (liberado) return;
+    liberado = true;
+    btnContinuar.disabled = false;
+    btnContinuar.removeAttribute('aria-disabled');
+    if (dica && msg) dica.textContent = msg;
+  }
+
+  btnContinuar.addEventListener('click', () => {
+    if (btnContinuar.disabled) return;
+    window.location = '/permissao-camera';
+  });
+
+  // Fail-open: se a API nunca inicializar (script bloqueado), libera apos 12s. Cancelado
+  // assim que a API fica pronta — dai o gating real (ENDED) assume o controle.
+  const failOpenApi = setTimeout(() => {
+    liberar('Não foi possível verificar o vídeo automaticamente — você pode continuar.');
+  }, 12000);
+
+  window.onYouTubeIframeAPIReady = function () {
+    clearTimeout(failOpenApi);
+    if (!window.YT || !window.YT.Player) {
+      liberar('Não foi possível carregar o vídeo — você pode continuar.');
+      return;
+    }
+    // Vincula ao <iframe> ja existente (id="video-intro-player", com enablejsapi=1).
+    new window.YT.Player('video-intro-player', {
+      events: {
+        onStateChange: (e) => {
+          // 0 = YT.PlayerState.ENDED: fim do video -> libera o "Continuar".
+          if (e && e.data === 0) liberar('Vídeo concluído — pode continuar.');
+        },
+        onError: () => {
+          // Video indisponivel/nao incorporavel: fail-open p/ nao prender o candidato.
+          liberar('O vídeo não pôde ser carregado — você pode continuar.');
+        },
+      },
+    });
+  };
+})();

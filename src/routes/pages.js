@@ -344,6 +344,11 @@ function paginaPreparacao(req) {
   const tituloVaga = vaga ? vaga.titulo : 'em aberto';
   const { min, max } = estimarDuracao(roteiro);
 
+  // Item 8 — se a vaga tem video introdutorio, o "Pode começar" leva primeiro a essa
+  // etapa (que depois segue para /permissao-camera); sem video, vai direto as permissoes.
+  // Evita o hop de redirect no caso comum (com video).
+  const destinoInicio = vaga && vaga.video_intro_ref ? `/video/${vaga.slug}` : '/permissao-camera';
+
   const competencias = entrevista.normalizarEstrutura(roteiro).competencias;
   const chipsTopicos = competencias.length
     ? competencias
@@ -390,7 +395,7 @@ function paginaPreparacao(req) {
 
     <p class="vm-consentimento">Esta entrevista é gravada em áudio e, se você permitir a câmera, também em vídeo (imagem e áudio). As gravações são analisadas pela nossa equipe de recrutamento para fins de avaliação no processo seletivo.</p>
 
-    ${botao('/permissao-camera', 'Pode começar')}`;
+    ${botao(destinoInicio, 'Pode começar')}`;
 
   return pagina({ titulo: 'Preparação para a entrevista', tema: 'claro', etapa: 2, conteudo });
 }
@@ -409,6 +414,53 @@ router.get('/preparacao/:slug', exigirCandidato, bloquearSeModoSimples, (req, re
     return res.redirect(`/preparacao/${vaga.slug}`);
   }
   return res.send(paginaPreparacao(req));
+});
+
+// ── Tela de vídeo introdutório (Item 8) — GET /video/:slug ──
+// Etapa condicional: exibida ANTES das permissões, só quando a vaga tem um vídeo
+// institucional (YouTube não listado) configurado. Sem vídeo, a etapa é PULADA
+// (redirect direto p/ /permissao-camera) — nunca renderiza vazia. A vaga vem SEMPRE da
+// sessão (não da slug da URL); slug divergente redireciona para a correta, igual à
+// /preparacao/:slug. Gating "assistir até o fim" no client (app.js): o botão "Continuar"
+// nasce disabled e só habilita quando o player emite o evento de fim (fail-open se o
+// player do YouTube não puder carregar — nunca prende o candidato). Etapa 2 (Preparação):
+// não adiciona segmento à barra de progresso (as 4 macro-etapas continuam fixas).
+router.get('/video/:slug', exigirCandidato, bloquearSeModoSimples, (req, res) => {
+  const { vaga } = vagaERoteiroDaSessao(req);
+  // Sem vídeo configurado: pula a etapa inteira (não exibe tela vazia).
+  if (!vaga || !vaga.video_intro_ref) {
+    return res.redirect('/permissao-camera');
+  }
+  // A vaga real é a da sessão: se a slug da URL divergir, corrige (não confia na URL).
+  if (vaga.slug && req.params.slug !== vaga.slug) {
+    return res.redirect(`/video/${vaga.slug}`);
+  }
+
+  const videoId = escapeHtml(vaga.video_intro_ref);
+  const conteudo = `
+    <section class="vm-hero vm-hero--centro" data-tela-video-intro>
+      <p class="vm-kicker">Antes de começar</p>
+      <h1 class="vm-title">Conheça a empresa e a oportunidade</h1>
+      <p class="vm-lead">Assista ao vídeo abaixo até o final para liberar o próximo passo. Ele explica a empresa, a rotina e a remuneração da vaga.</p>
+
+      <div style="position:relative;width:100%;max-width:720px;margin:1.25rem auto;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden">
+        <iframe id="video-intro-player"
+          style="position:absolute;inset:0;width:100%;height:100%;border:0"
+          src="https://www.youtube-nocookie.com/embed/${videoId}?enablejsapi=1&rel=0&modestbranding=1"
+          title="Vídeo introdutório da vaga"
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowfullscreen></iframe>
+      </div>
+
+      <p class="vm-rodape-nota" data-video-dica>O botão “Continuar” é liberado quando o vídeo termina.</p>
+
+      <div class="vm-acoes">
+        <button type="button" class="vm-btn vm-btn--primario" data-continuar-video disabled aria-disabled="true">Continuar</button>
+      </div>
+    </section>
+    <script src="https://www.youtube.com/iframe_api"></script>`;
+
+  return res.send(pagina({ titulo: 'Vídeo introdutório', tema: 'claro', etapa: 2, conteudo }));
 });
 
 // Monta a pagina de confirmacao do modo Simples. O botao de WhatsApp e um LINK <a> (o

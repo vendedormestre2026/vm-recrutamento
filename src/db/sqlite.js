@@ -103,12 +103,14 @@ function criarVaga(vaga) {
       (slug, titulo, perfil, faixa_pagamento, potencial_ganhos, skills,
        beneficios, atividades, requisitos, requisitos_obrigatorios, secoes_extras,
        endereco, modalidade, regime, horario,
-       descricao, sobre_empresa, cultura_empresa, roteiro_id, ativo, entrevista_ativa)
+       descricao, sobre_empresa, cultura_empresa, video_intro_tipo, video_intro_ref,
+       roteiro_id, ativo, entrevista_ativa)
     VALUES
       (@slug, @titulo, @perfil, @faixa_pagamento, @potencial_ganhos, @skills,
        @beneficios, @atividades, @requisitos, @requisitos_obrigatorios, @secoes_extras,
        @endereco, @modalidade, @regime, @horario,
-       @descricao, @sobre_empresa, @cultura_empresa, @roteiro_id, @ativo, @entrevista_ativa)
+       @descricao, @sobre_empresa, @cultura_empresa, @video_intro_tipo, @video_intro_ref,
+       @roteiro_id, @ativo, @entrevista_ativa)
   `);
   const info = stmt.run({
     slug: vaga.slug,
@@ -129,6 +131,9 @@ function criarVaga(vaga) {
     descricao: vaga.descricao || null,
     sobre_empresa: vaga.sobre_empresa || null,
     cultura_empresa: vaga.cultura_empresa || null,
+    // Item 8 — video introdutorio (TEXT simples, sem JSON): tipo + ID canonico.
+    video_intro_tipo: vaga.video_intro_tipo || null,
+    video_intro_ref: vaga.video_intro_ref || null,
     roteiro_id: vaga.roteiro_id || null,
     ativo: vaga.ativo === false ? 0 : 1,
     // Default 1 (Completo). So vira 0 (Simples) quando explicitamente desmarcado.
@@ -160,6 +165,8 @@ function atualizarVaga(id, campos) {
          descricao        = @descricao,
          sobre_empresa    = @sobre_empresa,
          cultura_empresa  = @cultura_empresa,
+         video_intro_tipo = @video_intro_tipo,
+         video_intro_ref  = @video_intro_ref,
          ativo            = @ativo,
          entrevista_ativa = @entrevista_ativa
        WHERE id = @id`,
@@ -182,6 +189,9 @@ function atualizarVaga(id, campos) {
       descricao: campos.descricao || null,
       sobre_empresa: campos.sobre_empresa || null,
       cultura_empresa: campos.cultura_empresa || null,
+      // Item 8 — video introdutorio (TEXT simples, sem JSON): tipo + ID canonico.
+      video_intro_tipo: campos.video_intro_tipo || null,
+      video_intro_ref: campos.video_intro_ref || null,
       ativo: campos.ativo === false ? 0 : 1,
       entrevista_ativa: campos.entrevista_ativa === false ? 0 : 1,
     });

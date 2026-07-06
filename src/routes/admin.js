@@ -16,6 +16,7 @@ const db = require('../db');
 const drive = require('../providers/drive');
 const llm = require('../providers/llm');
 const { importarVagaDeBriefing } = require('../lib/importar_vaga');
+const { extrairYoutubeId } = require('../lib/youtube');
 const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
@@ -1344,10 +1345,39 @@ function secoesExtrasParaTexto(secoes) {
     .join('\n\n');
 }
 
+// Item 8 — normaliza o campo de video introdutorio (YouTube) do form da vaga.
+//   - vazio                 -> limpa (tipo/ref = null); remover o video e uma acao valida.
+//   - link/ID valido        -> tipo 'youtube' + ID CANONICO (extraido de URL ou ID puro).
+//   - preenchido mas invalido-> NAO sobrescreve: mantem o valor ANTERIOR da vaga (na edicao)
+//     ou fica null (na criacao, sem valor anterior).
+// LIMITACAO CONHECIDA: o form de vaga nao tem hoje um padrao de erro POR-CAMPO (so o
+// titulo vazio tem mensagem). Entao uma entrada invalida aqui e ignorada sem travar o
+// save dos demais campos; o handler sinaliza isso de forma NAO bloqueante via ?aviso=video
+// (a vaga ainda salva). Ate existir um padrao de erro por-campo no admin, este e o
+// comportamento: preservar o valido anterior e avisar sem bloquear.
+function lerVideoIntro(b, vagaAnterior) {
+  const bruto = String((b && b.video_intro_ref) || '').trim();
+  if (!bruto) return { video_intro_tipo: null, video_intro_ref: null };
+  const id = extrairYoutubeId(bruto);
+  if (id) return { video_intro_tipo: 'youtube', video_intro_ref: id };
+  return {
+    video_intro_tipo: vagaAnterior ? vagaAnterior.video_intro_tipo || null : null,
+    video_intro_ref: vagaAnterior ? vagaAnterior.video_intro_ref || null : null,
+  };
+}
+
+// True quando o usuario digitou algo no campo de video mas nao foi possivel extrair um ID
+// (usado pelo handler para o aviso nao-bloqueante, sem duplicar a regra de extracao).
+function videoIntroInvalido(b) {
+  const bruto = String((b && b.video_intro_ref) || '').trim();
+  return Boolean(bruto) && !extrairYoutubeId(bruto);
+}
+
 // Le do corpo do POST os campos ricos (compartilhado entre criar e editar). Arrays
 // "um item por linha" via arrayDeLinhas (declarado adiante; hoisted); potencial_ganhos
-// e texto livre; secoes_extras usa o parser proprio acima.
-function lerCamposRicos(b) {
+// e texto livre; secoes_extras usa o parser proprio acima. vagaAnterior (opcional, so na
+// edicao) permite preservar o video valido anterior quando a nova entrada e invalida.
+function lerCamposRicos(b, vagaAnterior = null) {
   // modalidade/regime so valem se baterem com as opcoes conhecidas; senao ficam vazios.
   const modalidade = MODALIDADES.some(([v]) => v === b.modalidade) ? b.modalidade : '';
   const regime = REGIMES.some(([v]) => v === b.regime) ? b.regime : '';
@@ -1366,6 +1396,8 @@ function lerCamposRicos(b) {
     atividades: arrayDeLinhas(b.atividades),
     requisitos: arrayDeLinhas(b.requisitos),
     secoes_extras: parseSecoesExtras(b.secoes_extras),
+    // Item 8 — video introdutorio (tipo + ref canonico); ver lerVideoIntro.
+    ...lerVideoIntro(b, vagaAnterior),
   };
 }
 
@@ -1492,6 +1524,17 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
     <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
       Rotinas do dia a dia que a Vera usa como contexto na pergunta de Princípios (ex.:
       reunião diária às 8h com oração, dress code formal). Não aparece na página pública.</p>
+
+    <label class="campo">
+      <span>Vídeo introdutório da vaga (opcional)</span>
+      <input type="text" name="video_intro_ref" value="${escapeHtml(vaga.video_intro_ref || '')}"
+        placeholder="Link do YouTube (não listado) ou ID do vídeo">
+    </label>
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+      Vídeo institucional de 2-3 min (empresa, salário, remuneração), exibido ao candidato
+      antes das permissões de câmera/microfone. Use um vídeo do YouTube configurado como
+      <b>“não listado”</b> (não use <b>“privado”</b>, que não pode ser incorporado). Aceita o
+      link completo ou só o ID — guardamos o ID. Deixe vazio para pular esta etapa.</p>
 
     <label class="campo-check">
       <input type="checkbox" name="ativo" value="1"${vaga.ativo ? ' checked' : ''}>
@@ -1759,7 +1802,9 @@ router.post('/vagas', (req, res) => {
     ...lerCamposRicos(b),
   });
 
-  res.redirect(`/admin/vagas/${id}?salvo=1`);
+  // Item 8 — aviso NAO bloqueante: video digitado mas invalido (a vaga salva mesmo assim).
+  const aviso = videoIntroInvalido(b) ? '&aviso=video' : '';
+  res.redirect(`/admin/vagas/${id}?salvo=1${aviso}`);
 });
 
 // ── GET /admin/vagas/:id ── formulario de edicao de uma vaga ──
@@ -1771,11 +1816,19 @@ router.get('/vagas/:id', (req, res) => {
   }
 
   const salvo = req.query.salvo === '1' ? '<p class="aviso-ok">Alterações salvas.</p>' : '';
+  // Item 8 — aviso nao bloqueante: o link de video colado nao pôde ser interpretado.
+  const avisoVideo =
+    req.query.aviso === 'video'
+      ? `<p class="aviso-alerta">Não reconhecemos o link/ID do vídeo do YouTube — o campo
+         de vídeo foi mantido como estava. Os demais campos foram salvos. Cole a URL completa
+         do vídeo (não listado) ou apenas o ID.</p>`
+      : '';
 
   const conteudo = `
     <p><a class="btn btn--ghost" href="/admin/vagas">← Voltar às vagas</a></p>
     <h1>Editar vaga</h1>
     ${salvo}
+    ${avisoVideo}
     ${avisoRoteiroFaltando(vaga)}
     ${blocoLinksEtapa(vaga)}
     <form method="POST" action="/admin/vagas/${vaga.id}">
@@ -1815,10 +1868,13 @@ router.post('/vagas/:id', (req, res) => {
     sobre_empresa: String(b.sobre_empresa || '').trim(),
     ativo: b.ativo === '1' || b.ativo === 'on',
     entrevista_ativa: b.entrevista_ativa === '1' || b.entrevista_ativa === 'on',
-    ...lerCamposRicos(b),
+    // Item 8 — passa a vaga anterior p/ preservar o video valido se a nova entrada falhar.
+    ...lerCamposRicos(b, vaga),
   });
 
-  res.redirect(`/admin/vagas/${id}?salvo=1`);
+  // Item 8 — aviso NAO bloqueante: video digitado mas invalido (o resto salva mesmo assim).
+  const aviso = videoIntroInvalido(b) ? '&aviso=video' : '';
+  res.redirect(`/admin/vagas/${id}?salvo=1${aviso}`);
 });
 
 // ── POST /admin/vagas/:id/encerrar e /reativar ── alterna o campo ativo ──

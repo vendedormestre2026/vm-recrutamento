@@ -89,6 +89,15 @@ function migrar() {
   // sobre_empresa (institucional, voltado ao candidato na pagina da vaga). Opcional/NULL.
   adicionarColunaSeFaltar('jobs', 'cultura_empresa', 'TEXT');
 
+  // Item 8 - video introdutorio da vaga (YouTube nao listado), exibido numa etapa do
+  // funil ANTES das permissoes. Campo polimorfico (tipo + ref) para permitir upload
+  // direto no futuro sem re-migrar. video_intro_tipo: 'youtube' hoje (extensivel para
+  // 'upload'/'vimeo'). video_intro_ref: ID CANONICO do YouTube (normalizado no save via
+  // extrairYoutubeId, nunca a URL bruta) — o significado depende de video_intro_tipo.
+  // Ambos nullable: vaga sem video fica NULL e a etapa e pulada.
+  adicionarColunaSeFaltar('jobs', 'video_intro_tipo', 'TEXT');
+  adicionarColunaSeFaltar('jobs', 'video_intro_ref', 'TEXT');
+
   // Func. 2 - toggle por-vaga do modo do funil: 1 = Completo (entrevista automatica,
   // comportamento atual), 0 = Simples (so confirmacao + WhatsApp). Default 1 preserva
   // o comportamento de todas as vagas existentes. So vale quando o toggle GERAL esta ON.
