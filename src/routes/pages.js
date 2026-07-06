@@ -10,7 +10,13 @@ const db = require('../db');
 const session = require('../lib/session');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
-const { calcularPontuacaoGeral, badgeRecomendacaoHtml } = require('../lib/relatorio');
+const {
+  calcularPontuacaoGeral,
+  badgeRecomendacaoHtml,
+  rotuloNivel,
+  textoGap,
+  badgeVereditoHtml,
+} = require('../lib/relatorio');
 const { pagina, escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -868,7 +874,8 @@ router.get('/relatorio/:token', (req, res) => {
   const comps = (report.pontuacoes || [])
     .map((p) => {
       const naoCoberta = p.coberta === false;
-      const nota = p.nota != null ? `${escapeHtml(String(p.nota))}<small>/5</small>` : '—';
+      // Item 7.6: nivel Alta/Média/Baixa (retrocompat: nota legada "N/5"), via helper unico.
+      const nota = escapeHtml(rotuloNivel(p));
       return `
         <article class="vm-card vm-rel-comp${naoCoberta ? ' vm-rel-comp--off' : ''}">
           <div class="vm-rel-comp__cab">
@@ -881,10 +888,41 @@ router.get('/relatorio/:token', (req, res) => {
     })
     .join('');
 
+  // Item 7.6 — Requisitos obrigatorios (gate must-have). Omitido inteiro quando vazio.
+  const requisitos = Array.isArray(report.requisitos) ? report.requisitos : [];
+  const requisitosHtml = requisitos
+    .map(
+      (r) => `
+        <article class="vm-card">
+          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+            ${badgeVereditoHtml(r.veredito)}
+            <span style="font-family:var(--font-display);font-weight:700;text-transform:uppercase;font-size:1.05rem;letter-spacing:.02em">${escapeHtml(r.requisito || '')}</span>
+          </div>
+          ${
+            r.evidencia
+              ? `<p class="vm-rel-just" style="margin:.5rem 0 0;font-style:italic">&ldquo;${escapeHtml(r.evidencia)}&rdquo;</p>`
+              : ''
+          }
+        </article>`,
+    )
+    .join('');
+
   const itens = (lista) =>
     (lista || []).map((i) => `<li>${escapeHtml(i)}</li>`).join('');
   const listaFortes = itens(report.destaque_pontos_fortes);
-  const listaAtencao = itens(report.destaque_atencao);
+  // Item 7.6 — Gaps com mitigacao: textoGap normaliza string (legado) e { risco, mitigacao }.
+  const listaAtencao = (report.destaque_atencao || [])
+    .map((g) => {
+      const { risco, mitigacao } = textoGap(g);
+      if (!risco && !mitigacao) return '';
+      return `<li><b>${escapeHtml(risco)}</b>${
+        mitigacao
+          ? `<br><span class="vm-rel-just">Mitigação: ${escapeHtml(mitigacao)}</span>`
+          : ''
+      }</li>`;
+    })
+    .filter(Boolean)
+    .join('');
 
   const conteudo = `
     <section class="vm-rel">
@@ -922,6 +960,15 @@ router.get('/relatorio/:token', (req, res) => {
                 </p>
                 <p class="vm-rel-just" style="margin:.4rem 0 0">Média ponderada pelo peso de cada competência.</p>
               </div>
+            </section>`
+          : ''
+      }
+
+      ${
+        requisitos.length
+          ? `<section class="vm-secao">
+              <h2 class="vm-h2">Requisitos obrigatórios</h2>
+              <div class="vm-rel-comps">${requisitosHtml}</div>
             </section>`
           : ''
       }

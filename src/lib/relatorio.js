@@ -80,6 +80,76 @@ function badgeRecomendacaoHtml(recomendacao) {
   );
 }
 
+// ── Item 7.6 (formato Victoria) — helpers de apresentacao compartilhados ──
+// UM unico ponto de mapeamento (nivel / veredito / gap) reusado pelos 3 renderizadores
+// (e-mail, pagina publica /relatorio/:token, painel /admin/relatorio/:id) para que nunca
+// divirjam — inclusive na regra de cor da marca: laranja=positivo, tom sobrio=negativo,
+// cinza=neutro; NUNCA verde/vermelho. Retrocompat com relatorios antigos em cada helper.
+
+// Rotulo do nivel de aderencia. Novo: nivel 'alta'|'media'|'baixa' -> Alta/Média/Baixa.
+// Legado: relatorio antigo nao tem nivel, so nota numerica -> "N/5". Nada disso -> "—".
+const ROTULO_NIVEL = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+function rotuloNivel(item) {
+  const nivel = item && typeof item.nivel === 'string' ? item.nivel.trim().toLowerCase() : '';
+  if (ROTULO_NIVEL[nivel]) return ROTULO_NIVEL[nivel];
+  if (item && item.nota != null) return `${item.nota}/5`; // legado (nota numerica)
+  return '—';
+}
+
+// Rotulo textual do veredito de um requisito obrigatorio.
+const ROTULO_VEREDITO = {
+  atende: 'Atende',
+  parcial: 'Atende parcialmente',
+  nao_atende: 'Não atende',
+};
+function rotuloVeredito(veredito) {
+  return ROTULO_VEREDITO[veredito] || '—';
+}
+
+// Glifo MONOCROMATICO do veredito — herda a cor do chip, nunca emoji colorido (a regra da
+// marca proibe verde/vermelho). O tom (laranja/preto/cinza) vem do estilo do chip, abaixo.
+const ICONE_VEREDITO = { atende: '✓', parcial: '~', nao_atende: '✕' };
+function iconeVeredito(veredito) {
+  return ICONE_VEREDITO[veredito] || '';
+}
+
+// Normaliza um gap (ponto de atencao) para { risco, mitigacao }. Retrocompat: no formato
+// antigo o item era apenas uma string (o risco); no novo e um objeto { risco, mitigacao }.
+function textoGap(item) {
+  if (typeof item === 'string') return { risco: item, mitigacao: '' };
+  if (item && typeof item === 'object') {
+    return { risco: item.risco || '', mitigacao: item.mitigacao || '' };
+  }
+  return { risco: '', mitigacao: '' };
+}
+
+// Cores inline do chip de veredito — MESMA paleta de ESTILO_RECOMENDACAO: laranja para o
+// caso positivo (atende), neutro para o intermediario (parcial) e um tom SOBRIO (escuro)
+// para o negativo (nao_atende). NUNCA vermelho/verde. Desconhecido cai no chip neutro.
+const ESTILO_VEREDITO = {
+  atende: { fundo: '#FF5500', texto: '#FFFFFF', borda: '#FF5500' },
+  parcial: { fundo: '#F4F3F1', texto: '#0D0B0A', borda: '#D8D5D0' },
+  nao_atende: { fundo: '#0D0B0A', texto: '#F4F3F1', borda: '#0D0B0A' },
+};
+function estiloVeredito(veredito) {
+  return ESTILO_VEREDITO[veredito] || ESTILO_VEREDITO.parcial;
+}
+
+// Chip (pill) inline-styled do veredito, autossuficiente e identico nos 3 renderizadores —
+// mesma construcao de badgeRecomendacaoHtml. Nunca imprime undefined/[object Object]:
+// veredito nulo/invalido cai no rotulo "—" com o tom neutro.
+function badgeVereditoHtml(veredito) {
+  const e = estiloVeredito(veredito);
+  const icone = iconeVeredito(veredito);
+  const rotulo = rotuloVeredito(veredito);
+  return (
+    `<span style="display:inline-block;padding:2px 10px;border-radius:999px;` +
+    `background:${e.fundo};color:${e.texto};border:1px solid ${e.borda};` +
+    `font-weight:700;font-size:12px;line-height:1.35;white-space:nowrap">` +
+    `${icone ? escapeHtml(icone) + ' ' : ''}${escapeHtml(rotulo)}</span>`
+  );
+}
+
 // ── Prompt de avaliacao (system + user) enviado ao DeepSeek ──
 // Saida exigida: SOMENTE JSON (sem markdown), com resumo, pontuacoes[], pontos_fortes[], pontos_atencao[].
 function montarMensagensAvaliacao({ roteiro, vaga, candidato, turns, agente }) {
@@ -393,11 +463,52 @@ function montarEmailHtml({ candidato, vaga, avaliacao, token, roteiro }) {
       (p) =>
         `<tr>
            <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapeHtml(p.competencia)}</td>
-           <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center"><b>${p.nota != null ? p.nota : '—'}</b>/5</td>
+           <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:center"><b>${escapeHtml(rotuloNivel(p))}</b></td>
            <td style="padding:6px 10px;border-bottom:1px solid #eee">${escapeHtml(p.justificativa)}</td>
          </tr>`,
     )
     .join('');
+
+  // Item 7.6 — Requisitos obrigatorios (gate must-have). Omitido inteiro quando vazio.
+  const requisitos = Array.isArray(avaliacao.requisitos) ? avaliacao.requisitos : [];
+  const requisitosHtml = requisitos.length
+    ? `<div style="margin:16px 0">
+         <h3 style="margin:0 0 8px;font-size:16px">Requisitos obrigatórios</h3>
+         ${requisitos
+           .map(
+             (r) =>
+               `<div style="padding:8px 0;border-bottom:1px solid #eee">
+                  <div>${badgeVereditoHtml(r.veredito)} <span style="font-weight:600">${escapeHtml(r.requisito || '')}</span></div>
+                  ${
+                    r.evidencia
+                      ? `<p style="margin:4px 0 0;color:#555;font-style:italic;font-size:13px">&ldquo;${escapeHtml(r.evidencia)}&rdquo;</p>`
+                      : ''
+                  }
+                </div>`,
+           )
+           .join('')}
+       </div>`
+    : '';
+
+  // Item 7.6 — Gaps (pontos de atencao) com mitigacao. textoGap normaliza string/objeto.
+  const gaps = Array.isArray(avaliacao.pontos_atencao) ? avaliacao.pontos_atencao : [];
+  const gapsHtml = gaps.length
+    ? `<div style="margin:16px 0">
+         <h3 style="margin:0 0 8px;font-size:16px">Pontos de atenção</h3>
+         <ul style="margin:0;padding-left:18px">
+           ${gaps
+             .map((g) => {
+               const { risco, mitigacao } = textoGap(g);
+               if (!risco && !mitigacao) return '';
+               return `<li style="margin:0 0 6px"><b>${escapeHtml(risco)}</b>${
+                 mitigacao ? ` — Mitigação: ${escapeHtml(mitigacao)}` : ''
+               }</li>`;
+             })
+             .filter(Boolean)
+             .join('')}
+         </ul>
+       </div>`
+    : '';
 
   return `
   <div style="font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;max-width:640px">
@@ -422,16 +533,18 @@ function montarEmailHtml({ candidato, vaga, avaliacao, token, roteiro }) {
            </p>`
         : ''
     }
+    ${requisitosHtml}
     <table style="border-collapse:collapse;width:100%;font-size:14px;margin:12px 0">
       <thead>
         <tr style="text-align:left;background:#f4f3f1">
           <th style="padding:6px 10px">Competencia</th>
-          <th style="padding:6px 10px;text-align:center">Nota</th>
+          <th style="padding:6px 10px;text-align:center">Nível</th>
           <th style="padding:6px 10px">Justificativa</th>
         </tr>
       </thead>
       <tbody>${linhas}</tbody>
     </table>
+    ${gapsHtml}
     <p style="margin:18px 0">
       <a href="${link}" style="background:#0d0b0a;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;display:inline-block">
         Ver relatorio completo
@@ -556,4 +669,11 @@ module.exports = {
   RECOMENDACOES_VALIDAS,
   estiloRecomendacao,
   badgeRecomendacaoHtml,
+  // Item 7.6 — helpers de apresentacao compartilhados (nivel / veredito / gap).
+  rotuloNivel,
+  rotuloVeredito,
+  iconeVeredito,
+  textoGap,
+  estiloVeredito,
+  badgeVereditoHtml,
 };

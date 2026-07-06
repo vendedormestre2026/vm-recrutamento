@@ -16,7 +16,13 @@ const db = require('../db');
 const drive = require('../providers/drive');
 const llm = require('../providers/llm');
 const { importarVagaDeBriefing } = require('../lib/importar_vaga');
-const { calcularPontuacaoGeral, badgeRecomendacaoHtml } = require('../lib/relatorio');
+const {
+  calcularPontuacaoGeral,
+  badgeRecomendacaoHtml,
+  rotuloNivel,
+  textoGap,
+  badgeVereditoHtml,
+} = require('../lib/relatorio');
 const { escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -966,7 +972,8 @@ router.get('/relatorio/:interviewId', (req, res) => {
   const comps = (report.pontuacoes || [])
     .map((p) => {
       const off = p.coberta === false;
-      const nota = p.nota != null ? `${escapeHtml(String(p.nota))}<small>/5</small>` : '—';
+      // Item 7.6: nivel Alta/Média/Baixa (retrocompat: nota legada "N/5"), via helper unico.
+      const nota = escapeHtml(rotuloNivel(p));
       return `
         <div class="comp${off ? ' comp--off' : ''}">
           <div class="comp-cab">
@@ -978,9 +985,38 @@ router.get('/relatorio/:interviewId', (req, res) => {
     })
     .join('');
 
+  // Item 7.6 — Requisitos obrigatorios (gate must-have). Omitido inteiro quando vazio.
+  const requisitos = Array.isArray(report.requisitos) ? report.requisitos : [];
+  const requisitosHtml = requisitos
+    .map(
+      (r) => `
+        <div class="comp">
+          <div class="comp-cab">
+            <h3 style="margin:0;">${escapeHtml(r.requisito || '')}</h3>
+            ${badgeVereditoHtml(r.veredito)}
+          </div>
+          ${
+            r.evidencia
+              ? `<p style="margin:.4rem 0 0;color:var(--cinza);font-style:italic;">&ldquo;${escapeHtml(r.evidencia)}&rdquo;</p>`
+              : ''
+          }
+        </div>`,
+    )
+    .join('');
+
   const itens = (lista) => (lista || []).map((i) => `<li>${escapeHtml(i)}</li>`).join('');
   const fortes = itens(report.destaque_pontos_fortes);
-  const atencao = itens(report.destaque_atencao);
+  // Item 7.6 — Gaps com mitigacao: textoGap normaliza string (legado) e { risco, mitigacao }.
+  const atencao = (report.destaque_atencao || [])
+    .map((g) => {
+      const { risco, mitigacao } = textoGap(g);
+      if (!risco && !mitigacao) return '';
+      return `<li><strong>${escapeHtml(risco)}</strong>${
+        mitigacao ? `<br><span style="color:var(--cinza);">Mitigação: ${escapeHtml(mitigacao)}</span>` : ''
+      }</li>`;
+    })
+    .filter(Boolean)
+    .join('');
 
   const nomeCand = nomeCompleto(candidato || {});
   const transcricao = turns
@@ -1028,6 +1064,15 @@ router.get('/relatorio/:interviewId', (req, res) => {
                 <span class="comp-nota">${escapeHtml(String(geral.media))}<small>/${escapeHtml(String(geral.escalaMax))}</small></span>
               </div>
             </div>
+          </section>`
+        : ''
+    }
+
+    ${
+      requisitos.length
+        ? `<section class="rel-sec">
+            <h2>Requisitos obrigatórios</h2>
+            ${requisitosHtml}
           </section>`
         : ''
     }
