@@ -3,9 +3,7 @@
   "instrucoes_gerais": [
     "Sempre pedir exemplos concretos. Nunca aceitar resposta genérica.",
     "Usar sondas BEI quando a resposta for vaga: 'E o que exatamente você fez?', 'Qual foi o resultado em número?', 'O que mudou depois disso?'",
-    "Avaliar cada resposta pelo critério STAR: a resposta teve Situação, Tarefa, Ação e Resultado?",
-    "Inferir DISC pelo comportamento ao longo da entrevista. Só perguntar diretamente se ainda houver dúvida no final.",
-    "Na simulação: entrar no papel de cliente com objeção ativa. Após a simulação, agradecer e seguir para a próxima pergunta, SEM comentar o desempenho com o candidato. Observar internamente (para o relatório) como o candidato conduziu, mas nunca verbalizar nada avaliativo."
+    "Avaliar cada resposta pelo critério STAR: a resposta teve Situação, Tarefa, Ação e Resultado?"
   ],
   "blocos": [
     {
@@ -36,7 +34,7 @@
       "id": "metas_ambicao",
       "nome": "Metas e ambição",
       "obrigatorio": true,
-      "competencias_alvo": ["ambicao", "disc_dominante"],
+      "competencias_alvo": ["ambicao"],
       "pergunta_semente": "Quais são suas metas para 1 ano, 3 anos e 10 anos — profissionalmente?",
       "sondas_bei": [
         "O que exatamente você está fazendo hoje para chegar lá?",
@@ -83,22 +81,6 @@
       "instrucao_vera": "Observar se o candidato fala em descoberta de dor antes de apresentar solução, ou se já sai apresentando produto."
     },
     {
-      "id": "simulacao_vendas",
-      "nome": "Simulação de vendas",
-      "obrigatorio": true,
-      "max_trocas": 3,
-      "competencias_alvo": ["tecnica_vendas", "resiliencia", "recepcao_feedback"],
-      "pergunta_semente": "Agora vou te pedir uma simulação. Eu vou entrar no papel de um cliente e você vai vender para mim. O cenário: eu sou um empresário que quer crescer o negócio. Você já sabe que eu tenho interesse, mas quando você falar do investimento, eu entro com uma objeção. Pode começar quando quiser.",
-      "objecao_padrao": "Está caro. Não vejo valor suficiente nisso agora para justificar esse investimento.",
-      "instrucao_vera": "Entrar no papel de cliente resistente mas não impossível. Usar a objeção padrão de preço. Após a simulação, sair do papel e perguntar: 'Que nota você daria para você nessa simulação, de 0 a 10? E por quê?' Após a autoavaliação do candidato, agradecer de forma neutra e seguir em frente, SEM dar sua própria nota, elogio ou crítica. Observar internamente (para o relatório) como o candidato conduziu a simulação e como fez a própria autoavaliação, sem verbalizar nada avaliativo ao candidato.",
-      "o_que_observar": [
-        "Amortece a objeção antes de argumentar?",
-        "Faz perguntas para entender o cliente ou só defende o produto?",
-        "Tangibiliza valor ou só fala de características do produto?",
-        "Como reage ao feedback: aceita, defende ou ignora?"
-      ]
-    },
-    {
       "id": "fit_cultural",
       "nome": "Fit cultural e valores",
       "obrigatorio": true,
@@ -111,33 +93,11 @@
       "instrucao_vera": "Não aceitar resposta vaga como 'me identifico com os valores'. Sondar até ter exemplo concreto com Situação, Ação e Resultado."
     },
     {
-      "id": "disc_espectro",
-      "nome": "DISC — pergunta de espectro",
-      "obrigatorio": false,
-      "competencias_alvo": ["disc_dominante"],
-      "pergunta_semente": "Uma pergunta para entender melhor seu perfil: dessas duas características, qual está mais próxima de você? Pessoa mais organizada, metódica e analítica — ou pessoa mais expansiva, competitiva e carismática?",
-      "instrucao_vera": "Usar este bloco SOMENTE se ainda houver dúvida sobre o perfil DISC após todos os blocos anteriores. Não é obrigatório."
-    },
-    {
       "id": "principios",
       "nome": "Princípios",
       "obrigatorio": true,
       "pergunta_semente": "Toda empresa tem rotinas e valores próprios — pode ser uma reunião diária, uma forma específica de tratar cliente, um ritual do time. Se [nome da empresa] tivesse uma rotina dessas que não é comum em outros lugares, como você reagiria a ela no dia a dia?",
       "competencias_alvo": ["principios"]
-    },
-    {
-      "id": "postura_alto_padrao",
-      "nome": "Postura para Alto Padrão",
-      "obrigatorio": true,
-      "pergunta_semente": "Como você se prepara antes de uma ligação ou reunião importante de vendas — o que você faz para chegar afiado?",
-      "competencias_alvo": ["postura_alto_padrao"]
-    },
-    {
-      "id": "fome",
-      "nome": "Fome",
-      "obrigatorio": true,
-      "pergunta_semente": "O que faz você continuar buscando bater a meta mesmo num dia em que já bateu o mínimo esperado?",
-      "competencias_alvo": ["fome"]
     },
     {
       "id": "fechamento",
@@ -174,38 +134,20 @@
     {
       "id": "tecnica_vendas",
       "nome": "Técnica de vendas",
-      "peso": 2,
+      "peso": 1,
       "boa_resposta": "Condução consultiva, descobre dor antes de apresentar solução, amortece objeção antes de argumentar, tangibiliza valor em vez de só listar features."
     },
     {
       "id": "cultura",
       "nome": "Fit cultural",
-      "peso": 1,
+      "peso": 2,
       "boa_resposta": "Exemplos concretos de alinhamento com valores. Não aceitar resposta genérica. Respostas com Situação e Resultado reais."
-    },
-    {
-      "id": "disc_dominante",
-      "nome": "Perfil DISC",
-      "peso": 1,
-      "boa_resposta": "D alto: decisivo, age, metas grandes, reage bem à pressão. I como secundário é positivo (carismático). S ou C alto como dominante é risco para closer. Ideal: D dominante com I secundário."
     },
     {
       "id": "principios",
       "nome": "Princípios",
       "peso": 1,
       "boa_resposta": "Demonstra flexibilidade e respeito a normas e culturas diferentes da sua, sem soar servil; expressa que adaptaria o comportamento mantendo a integridade pessoal, sem rejeitar a rotina só por ser incomum."
-    },
-    {
-      "id": "postura_alto_padrao",
-      "nome": "Postura para Alto Padrão",
-      "peso": 1,
-      "boa_resposta": "Descreve um ritual concreto de preparação (estudo do lead/empresa, ensaio de abordagem, organização de material), não apenas 'me preparo mentalmente'; demonstra disciplina e cuidado com a imagem profissional."
-    },
-    {
-      "id": "fome",
-      "nome": "Fome",
-      "peso": 1,
-      "boa_resposta": "Expressa motivação intrínseca além da meta mínima — menciona buscar superação pessoal ou recordes, não apenas cumprir tabela por obrigação."
     }
   ],
   "rubrica": {
