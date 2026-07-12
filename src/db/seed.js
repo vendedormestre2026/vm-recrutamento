@@ -39,7 +39,8 @@ const ROTEIRO_SDR = {
         id: 'abordagem_comunicacao',
         nome: 'Abordagem/comunicação',
         obrigatorio: true,
-        pergunta_semente: 'Como aborda um lead frio nos primeiros 30 segundos?',
+        pergunta_semente:
+          'Como você conduz um lead do primeiro contato até o agendamento da reunião com o closer? Me explica o seu processo.',
         competencias_alvo: ['abordagem_comunicacao'],
       },
       {
@@ -140,7 +141,7 @@ const ROTEIRO_SDR = {
         nome: 'Abordagem/comunicação',
         peso: 1,
         boa_resposta:
-          'Tem abertura clara, gera valor rápido e desperta interesse sem ser invasivo.',
+          'Tem abertura clara, gera valor rápido e conduz o lead com um processo claro até o agendamento da reunião com o closer, sem ser invasivo.',
       },
       {
         id: 'qualificacao',
