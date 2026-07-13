@@ -262,6 +262,14 @@
       const resp = await fetch('/api/banco-curriculos', { method: 'POST', body: new FormData(form) });
       const dados = await resp.json();
       if (resp.ok && dados.ok) {
+        // T3: a API devolve o HTML do resultado ja renderizado no servidor; trocamos o
+        // formulario por ele na propria pagina (sem navegacao). O redirect segue como
+        // fallback (resposta antiga/sem resultadoHtml) para /recebido, tela generica.
+        if (dados.resultadoHtml) {
+          form.outerHTML = dados.resultadoHtml;
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
         window.location = dados.redirect || '/bancodecurriculos/recebido';
         return;
       }

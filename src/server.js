@@ -16,7 +16,7 @@ const db = require('./db');
 const paginas = require('./routes/pages');
 const api = require('./routes/api');
 const admin = require('./routes/admin');
-const bancoCurriculos = require('./routes/banco_curriculos');
+const { router: bancoCurriculos } = require('./routes/banco_curriculos');
 const apiBancoCurriculos = require('./routes/api_banco_curriculos');
 
 function criarApp() {

@@ -1,9 +1,11 @@
 'use strict';
 
-// API do Banco de Curriculos (T2). Router proprio montado em /api pelo server.js,
+// API do Banco de Curriculos. Router proprio montado em /api pelo server.js,
 // SEPARADO de api.js para nao misturar com o funil de vaga (mesma decisao das paginas).
-// T2: persiste o cadastro e devolve o redirect para a tela provisoria de confirmacao.
-// T3 estende esta rota para chamar o motor de analise (LLM) e gravar `talentos.analise`.
+// T3: alem de persistir o cadastro, chama o motor de analise (LLM real, sem mock),
+// grava `talentos.analise`, envia o resultado por e-mail ao candidato e devolve o HTML
+// do resultado ja renderizado (`resultadoHtml`) — o front troca o form por ele, sem
+// navegacao. Analise e e-mail sao best-effort: NUNCA bloqueiam o cadastro.
 
 const express = require('express');
 const fs = require('node:fs');
@@ -14,6 +16,10 @@ const multer = require('multer');
 const { config } = require('../config');
 const db = require('../db');
 const { extrairTextoPdf } = require('../lib/curriculo');
+const { analisarCurriculo } = require('../lib/analise_curriculo');
+const emailProvider = require('../providers/email');
+const { renderizarResultadoTalentoHtml } = require('./banco_curriculos');
+const { escapeHtml } = require('../views');
 
 const router = express.Router();
 
@@ -35,6 +41,52 @@ const upload = multer({
     cb(null, true);
   },
 }).single('curriculo');
+
+// Corpo do e-mail ao candidato: versao simplificada e inline-styled do resultado
+// (e-mail nao carrega o CSS do site — mesma tatica do montarEmailHtml de relatorio.js).
+// Sem analise, vira uma confirmacao simples de cadastro recebido.
+function montarEmailAnaliseHtml({ nome, analise }) {
+  const primeiroNome = String(nome || '').trim().split(/\s+/)[0];
+  const saudacao = `Olá${primeiroNome ? `, <b>${escapeHtml(primeiroNome)}</b>` : ''}!`;
+
+  const lista = (titulo, itens) =>
+    Array.isArray(itens) && itens.length
+      ? `<div style="margin:16px 0">
+           <h3 style="margin:0 0 8px;font-size:16px">${titulo}</h3>
+           <ul style="margin:0;padding-left:18px">
+             ${itens.map((i) => `<li style="margin:0 0 6px">${escapeHtml(i)}</li>`).join('')}
+           </ul>
+         </div>`
+      : '';
+
+  const corpo = analise
+    ? `
+    <p>${saudacao} Recebemos seu currículo no nosso banco de talentos e analisamos o seu
+    perfil de vendas com nossa inteligência artificial. Veja o resumo:</p>
+    ${
+      Number.isFinite(analise.score_geral)
+        ? `<p style="margin:16px 0;font-size:15px">
+             <b>Aderência ao perfil de vendas:</b>
+             <span style="font-size:22px;font-weight:bold;color:#FF5500">${analise.score_geral}</span> / 100
+           </p>`
+        : ''
+    }
+    ${lista('Pontos fortes', analise.pontos_fortes)}
+    ${lista('Pontos de atenção', analise.pontos_atencao)}
+    <p>Entraremos em contato quando surgir uma oportunidade compatível com você.</p>`
+    : `
+    <p>${saudacao} Recebemos seu currículo no nosso banco de talentos. Entraremos em
+    contato quando surgir uma oportunidade compatível com você.</p>`;
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;max-width:640px">
+    <h2 style="margin:0 0 4px">Banco de Currículos — Vendedor Mestre</h2>
+    ${corpo}
+    <p style="color:#888;font-size:12px;margin-top:24px">Você recebeu este e-mail porque
+    se cadastrou no banco de talentos da Vendedor Mestre. Para solicitar a remoção dos
+    seus dados, basta responder a esta mensagem.</p>
+  </div>`;
+}
 
 // ── POST /api/banco-curriculos ── cadastro no banco de talentos ──
 router.post('/banco-curriculos', (req, res) => {
@@ -105,7 +157,27 @@ router.post('/banco-curriculos', (req, res) => {
       // devolve '' sem quebrar o cadastro).
       const curriculoTexto = await extrairTextoPdf(req.file.buffer);
 
-      db.criarTalento({
+      // ── Motor de analise (T3) — best-effort: NUNCA bloqueia o cadastro. ──
+      // Sem perfil ideal cadastrado, ou com falha na analise (ok:false), o cadastro
+      // segue com analise = null; o motivo fica so no log (nada tecnico na resposta).
+      let analise = null;
+      const perfilCurriculo = db.buscarPerfilCurriculoAtivoPara(perfilInteresse);
+      if (!perfilCurriculo) {
+        console.warn(
+          `[api/banco-curriculos] sem perfil ideal de curriculo para ${perfilInteresse}; cadastro segue sem analise.`,
+        );
+      } else {
+        const resultado = await analisarCurriculo({ perfilCurriculo, curriculoTexto });
+        if (resultado.ok) {
+          analise = resultado.analise;
+        } else {
+          console.error(
+            `[api/banco-curriculos] analise falhou (${resultado.erroCodigo}); cadastro segue sem analise.`,
+          );
+        }
+      }
+
+      const talento = {
         nome,
         email,
         telefone: `${ddi} ${telefoneNum}`.trim(),
@@ -113,10 +185,28 @@ router.post('/banco-curriculos', (req, res) => {
         linkedin_url: linkedin,
         curriculo_path: caminhoPdf,
         curriculo_texto: curriculoTexto,
-      });
+        analise,
+      };
+      db.criarTalento(talento);
 
-      // T2: tela provisoria de confirmacao. T3 troca este destino pelo resultado da analise.
-      return res.json({ ok: true, redirect: '/bancodecurriculos/recebido' });
+      // ── E-mail ao candidato (Resend) — fire-and-forget: falha so loga, nunca ──
+      // quebra nem atrasa a resposta (mesmo espirito do envio em relatorio.js).
+      // Assunto/corpo condicionais: sem analise NAO se afirma que ela existe — vira uma
+      // confirmacao simples de cadastro (o corpo tambem ramifica em montarEmailAnaliseHtml).
+      const assunto = analise
+        ? 'Sua análise no Banco de Currículos da Vendedor Mestre'
+        : 'Recebemos seu cadastro no Banco de Currículos da Vendedor Mestre';
+      emailProvider
+        .enviar(email, assunto, montarEmailAnaliseHtml({ nome, analise }))
+        .catch((erroEmail) => {
+          console.error(
+            `[api/banco-curriculos] falha ao enviar e-mail ao candidato: ${erroEmail.message}`,
+          );
+        });
+
+      // T3: devolve o HTML do resultado ja renderizado; o front troca o formulario por
+      // ele via outerHTML (sem redirect; /recebido segue como fallback generico).
+      return res.json({ ok: true, resultadoHtml: renderizarResultadoTalentoHtml(talento) });
     } catch (erro) {
       console.error('[api/banco-curriculos] erro:', erro.message);
       return res
