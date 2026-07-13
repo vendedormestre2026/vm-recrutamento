@@ -248,6 +248,52 @@ function criarRoteiro(roteiro) {
   return Number(info.lastInsertRowid);
 }
 
+// Perfis ideais de curriculo (Banco de Curriculos)
+// Mesma anatomia de roteiros: `estrutura` e JSON serializado na escrita e parseado na
+// leitura (perfilCurriculoDeLinha), para o app so lidar com objetos.
+function perfilCurriculoDeLinha(linha) {
+  if (!linha) return null;
+  return { ...linha, estrutura: lerJson(linha.estrutura, {}) };
+}
+
+function criarPerfilCurriculo(perfilCurriculo) {
+  const info = getDb().prepare(`
+    INSERT INTO perfis_curriculo (nome, perfil, versao, estrutura)
+    VALUES (@nome, @perfil, @versao, @estrutura)
+  `).run({
+    nome: perfilCurriculo.nome,
+    perfil: perfilCurriculo.perfil,
+    versao: perfilCurriculo.versao || 1,
+    estrutura: JSON.stringify(perfilCurriculo.estrutura || {}),
+  });
+  return Number(info.lastInsertRowid);
+}
+
+function listarPerfisCurriculo() {
+  return getDb()
+    .prepare('SELECT * FROM perfis_curriculo ORDER BY criado_em DESC')
+    .all()
+    .map(perfilCurriculoDeLinha);
+}
+
+function buscarPerfilCurriculo(id) {
+  return perfilCurriculoDeLinha(
+    getDb().prepare('SELECT * FROM perfis_curriculo WHERE id = ?').get(id),
+  );
+}
+
+// Atualiza nome + estrutura (JSON, serializado aqui — espelha atualizarEstruturaRoteiro).
+// O perfil (SDR/CLOSER) e fixo apos a criacao, igual a vagas (perfilEditavel: false).
+// Retorna o numero de linhas afetadas (0 se o id nao existir).
+function atualizarPerfilCurriculo(id, { nome, estrutura }) {
+  const info = getDb()
+    .prepare(
+      "UPDATE perfis_curriculo SET nome = ?, estrutura = ?, atualizado_em = datetime('now') WHERE id = ?",
+    )
+    .run(nome, JSON.stringify(estrutura || {}), id);
+  return info.changes;
+}
+
 // Aplicacoes
 // Cria a aplicacao. consent_at recebe datetime('now') direto no INSERT: a rota so
 // chega aqui apos validar o checkbox de consentimento (LGPD), entao criar a linha ja
@@ -935,6 +981,11 @@ module.exports = {
   obterRoteiroPorPerfil,
   atualizarEstruturaRoteiro,
   criarRoteiro,
+  // perfis de curriculo (Banco de Curriculos)
+  criarPerfilCurriculo,
+  listarPerfisCurriculo,
+  buscarPerfilCurriculo,
+  atualizarPerfilCurriculo,
   // aplicacoes
   criarAplicacao,
   obterAplicacao,

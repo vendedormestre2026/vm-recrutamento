@@ -489,6 +489,7 @@ router.get('/', (req, res) => {
         <a class="btn btn--ghost" href="/admin/dashboard">Funil de Conversão</a>
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
         <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
+        <a class="btn btn--ghost" href="/admin/perfis-curriculo">Perfis de currículo</a>
         <a class="btn btn--ghost" href="/admin/config">Configurações</a>
         <a class="btn btn--ghost" href="/admin/uso">Custos / Uso API</a>
       </div>
@@ -2085,6 +2086,256 @@ router.post('/roteiro', (req, res) => {
 
   db.atualizarEstruturaRoteiro(id, est);
   res.redirect('/admin/roteiro?salvo=1');
+});
+
+// ── CRUD de perfis ideais de curriculo (Banco de Curriculos — T1) ──
+// Replica o padrao de /admin/vagas (listagem + criacao + edicao com POST tradicional e
+// redirect ?salvo=1) combinado com a edicao por campos amigaveis de /admin/roteiro
+// (nunca JSON cru). estrutura salva: { criterios: [{ id, nome, peso, descricao_ideal }],
+// instrucoes: '' } — criterios de CURRICULO (experiencia, trajetoria), nao comportamentais.
+
+// Linhas extras EM BRANCO no form de criterios: e assim que se ADICIONA um criterio sem
+// JS (linha preenchida entra; linha com nome vazio e descartada no save — e tambem e
+// assim que se REMOVE um criterio existente: apagar o nome dele).
+const CRITERIOS_LINHAS_NOVO = 8; // form de criacao (perfil nasce vazio)
+const CRITERIOS_LINHAS_EXTRAS = 3; // form de edicao (alem dos existentes)
+
+// id estavel de um criterio a partir do nome (snake_case sem acento), no estilo dos ids
+// de competencia do roteiro (ex.: "Experiência em vendas B2B" -> "experiencia_em_vendas_b2b").
+function idDeCriterio(nome) {
+  const id = String(nome || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return id || 'criterio';
+}
+
+// Uma linha de criterio do form (existente ou em branco). O id viaja num hidden para
+// ser PRESERVADO na edicao (criterio novo ganha id derivado do nome no save).
+function campoCriterioHtml(criterio, i) {
+  const c = criterio || {};
+  return `
+      <div class="comp">
+        <input type="hidden" name="crit_${i}_id" value="${escapeHtml(c.id || '')}">
+        <label class="campo">
+          <span>Critério</span>
+          <input type="text" name="crit_${i}_nome" value="${escapeHtml(c.nome || '')}"
+            placeholder="Ex.: Experiência com vendas consultivas">
+        </label>
+        <label class="campo">
+          <span>Peso (1–2)</span>
+          <input type="number" name="crit_${i}_peso" min="1" max="2" value="${escapeHtml(String(c.peso || 1))}">
+        </label>
+        <label class="campo">
+          <span>O que um currículo ideal evidencia</span>
+          <textarea name="crit_${i}_descricao_ideal" rows="3"
+            placeholder="Ex.: Passagens por times de vendas B2B, com metas e números concretos de resultado.">${escapeHtml(c.descricao_ideal || '')}</textarea>
+        </label>
+      </div>`;
+}
+
+// Reconstroi a lista de criterios a partir das linhas do form (crit_<i>_*). Linhas com
+// nome vazio sao descartadas. Peso fora de 1-2 e grampeado (mesma regra do roteiro).
+function lerCriteriosDoForm(b) {
+  const criterios = [];
+  for (let i = 0; b[`crit_${i}_nome`] !== undefined; i += 1) {
+    const nome = String(b[`crit_${i}_nome`] || '').trim();
+    if (!nome) continue;
+    const pesoNum = parseInt(b[`crit_${i}_peso`], 10);
+    const idExistente = String(b[`crit_${i}_id`] || '').trim();
+    criterios.push({
+      id: idExistente || idDeCriterio(nome),
+      nome,
+      peso: Number.isFinite(pesoNum) ? Math.min(2, Math.max(1, pesoNum)) : 1,
+      descricao_ideal: String(b[`crit_${i}_descricao_ideal`] || '').trim(),
+    });
+  }
+  return criterios;
+}
+
+// Form compartilhado entre criacao e edicao. Na criacao o perfil e um select
+// (SDR/CLOSER); na edicao ele e fixo (mesma decisao de /admin/vagas/:id).
+function camposPerfilCurriculoHtml(perfilCurriculo, { perfilEditavel } = {}) {
+  const p = perfilCurriculo || { perfil: 'SDR', estrutura: {} };
+  const criterios = Array.isArray(p.estrutura && p.estrutura.criterios)
+    ? p.estrutura.criterios
+    : [];
+
+  const campoPerfil = perfilEditavel
+    ? `
+      <label class="campo">
+        <span>Perfil</span>
+        <select name="perfil">
+          ${PERFIS_VALIDOS.map(
+            (v) => `<option value="${v}"${p.perfil === v ? ' selected' : ''}>${v}</option>`,
+          ).join('')}
+        </select>
+      </label>`
+    : `
+      <label class="campo">
+        <span>Perfil (fixo após a criação)</span>
+        <input type="text" value="${escapeHtml(p.perfil || '')}" disabled>
+      </label>`;
+
+  const totalLinhas = criterios.length
+    ? criterios.length + CRITERIOS_LINHAS_EXTRAS
+    : CRITERIOS_LINHAS_NOVO;
+  const linhasCriterios = Array.from({ length: totalLinhas }, (_, i) =>
+    campoCriterioHtml(criterios[i], i),
+  ).join('');
+
+  return `
+      <label class="campo">
+        <span>Nome do perfil</span>
+        <input type="text" name="nome" value="${escapeHtml(p.nome || '')}"
+          placeholder="Ex.: SDR - Currículo ideal v1">
+      </label>
+      ${campoPerfil}
+
+      <h2>Critérios do currículo ideal</h2>
+      <p style="color:var(--cinza);font-size:.85rem;margin:-.3rem 0 1rem;">
+        Preencha um critério por card (linhas com o nome vazio são ignoradas). Para
+        remover um critério existente, apague o nome dele e salve.</p>
+      ${linhasCriterios}`;
+}
+
+// ── GET /admin/perfis-curriculo ── listagem dos perfis ideais de curriculo ──
+router.get('/perfis-curriculo', (req, res) => {
+  const perfis = db.listarPerfisCurriculo();
+  const salvo = req.query.salvo === '1' ? '<p class="aviso-ok">Perfil salvo.</p>' : '';
+
+  const linhas = perfis
+    .map((p) => {
+      const criterios = Array.isArray(p.estrutura && p.estrutura.criterios)
+        ? p.estrutura.criterios.length
+        : 0;
+      return `
+        <tr>
+          <td>${escapeHtml(p.nome)}</td>
+          <td>${escapeHtml(p.perfil)}</td>
+          <td>${criterios}</td>
+          <td>${escapeHtml(formatarDataHora(p.atualizado_em))}</td>
+          <td>
+            <div class="acoes-linha">
+              <a class="btn btn--ghost" href="/admin/perfis-curriculo/${p.id}">Editar</a>
+            </div>
+          </td>
+        </tr>`;
+    })
+    .join('');
+
+  const conteudo = `
+    <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <h1 style="margin:0;">Perfis de currículo</h1>
+      <a class="btn" href="/admin/perfis-curriculo/novo">+ Novo perfil</a>
+    </div>
+    <p style="color:var(--cinza);font-size:.9rem;margin:-.5rem 0 1rem;">
+      Perfis ideais de currículo do Banco de Currículos: os critérios abaixo servirão de
+      referência para a análise automática dos currículos cadastrados.</p>
+    ${salvo}
+    <div class="admin-tab-scroll">
+      <table class="admin-tab">
+        <thead>
+          <tr><th>Nome</th><th>Perfil</th><th>Critérios</th><th>Atualizado em</th><th>Ações</th></tr>
+        </thead>
+        <tbody>
+          ${linhas || '<tr><td colspan="5">Nenhum perfil de currículo cadastrado.</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+
+  res.send(paginaAdmin({ titulo: 'Perfis de currículo', conteudo }));
+});
+
+// ── GET /admin/perfis-curriculo/novo ── formulario de criacao (antes de /:id p/ nao casar como id) ──
+router.get('/perfis-curriculo/novo', (req, res) => {
+  const erroNome =
+    req.query.erro === 'nome'
+      ? '<p class="aviso-alerta">O nome do perfil não pode ficar vazio.</p>'
+      : '';
+  const conteudo = `
+    <p><a class="btn btn--ghost" href="/admin/perfis-curriculo">← Voltar aos perfis</a></p>
+    <h1>Novo perfil de currículo</h1>
+    ${erroNome}
+    <form method="POST" action="/admin/perfis-curriculo">
+      ${camposPerfilCurriculoHtml(null, { perfilEditavel: true })}
+      <button type="submit" class="btn">Criar perfil</button>
+    </form>`;
+  res.send(paginaAdmin({ titulo: 'Novo perfil de currículo', conteudo }));
+});
+
+// ── POST /admin/perfis-curriculo ── cria novo perfil ──
+router.post('/perfis-curriculo', (req, res) => {
+  const b = req.body || {};
+  const nome = String(b.nome || '').trim();
+  if (!nome) {
+    return res.redirect('/admin/perfis-curriculo/novo?erro=nome');
+  }
+
+  const perfil = PERFIS_VALIDOS.includes(b.perfil) ? b.perfil : 'SDR';
+  const id = db.criarPerfilCurriculo({
+    nome,
+    perfil,
+    estrutura: { criterios: lerCriteriosDoForm(b), instrucoes: '' },
+  });
+
+  res.redirect(`/admin/perfis-curriculo/${id}?salvo=1`);
+});
+
+// ── GET /admin/perfis-curriculo/:id ── formulario de edicao ──
+router.get('/perfis-curriculo/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const perfilCurriculo = Number.isInteger(id) ? db.buscarPerfilCurriculo(id) : null;
+  if (!perfilCurriculo) {
+    return res.status(404).send(paginaErroAdmin('Perfil de currículo não encontrado.'));
+  }
+
+  const salvo = req.query.salvo === '1' ? '<p class="aviso-ok">Alterações salvas.</p>' : '';
+  const conteudo = `
+    <p><a class="btn btn--ghost" href="/admin/perfis-curriculo">← Voltar aos perfis</a></p>
+    <h1>Editar perfil de currículo</h1>
+    ${salvo}
+    <form method="POST" action="/admin/perfis-curriculo/${perfilCurriculo.id}">
+      ${camposPerfilCurriculoHtml(perfilCurriculo, { perfilEditavel: false })}
+      <button type="submit" class="btn">Salvar alterações</button>
+    </form>`;
+
+  res.send(paginaAdmin({ titulo: 'Editar perfil de currículo', conteudo }));
+});
+
+// ── POST /admin/perfis-curriculo/:id ── salva alteracoes (nome + criterios) ──
+router.post('/perfis-curriculo/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const perfilCurriculo = Number.isInteger(id) ? db.buscarPerfilCurriculo(id) : null;
+  if (!perfilCurriculo) {
+    return res.status(404).send(paginaErroAdmin('Perfil de currículo não encontrado.'));
+  }
+
+  const b = req.body || {};
+  const nome = String(b.nome || '').trim();
+  if (!nome) {
+    return res.status(400).send(
+      paginaAdmin({
+        titulo: 'Editar perfil de currículo',
+        conteudo: `
+          <p><a class="btn btn--ghost" href="/admin/perfis-curriculo/${perfilCurriculo.id}">← Voltar</a></p>
+          <section class="rel-sec"><h1>Editar perfil de currículo</h1>
+            <p>O nome do perfil não pode ficar vazio.</p></section>`,
+      }),
+    );
+  }
+
+  // Parte da estrutura ATUAL e sobrescreve SO os criterios (mesma tatica do POST
+  // /roteiro): preserva campos fora do form — hoje `instrucoes`, e o que vier a existir.
+  const est = JSON.parse(JSON.stringify(perfilCurriculo.estrutura || {}));
+  est.criterios = lerCriteriosDoForm(b);
+  if (typeof est.instrucoes !== 'string') est.instrucoes = '';
+
+  db.atualizarPerfilCurriculo(id, { nome, estrutura: est });
+  res.redirect(`/admin/perfis-curriculo/${id}?salvo=1`);
 });
 
 // ── GET /admin/uso ── monitoramento de custos das chamadas ao LLM ──

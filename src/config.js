@@ -43,6 +43,18 @@ const config = {
     'entrevistas',
   ),
 
+  // Pasta dos curriculos do Banco de Talentos (/bancodecurriculos), SEPARADA de
+  // caminhoCurriculos: as finalidades LGPD sao distintas (banco de talentos vs.
+  // candidatura a vaga) e os PDFs nao devem se misturar. Sobrescrevivel por env;
+  // default segue o padrao das demais pastas (mesmo volume persistente do banco).
+  caminhoCurriculosTalentos: path.resolve(
+    process.env.CAMINHO_CURRICULOS_TALENTOS ||
+      path.join(
+        path.dirname(process.env.DATABASE_PATH || './data/app.db'),
+        'curriculos_talentos',
+      ),
+  ),
+
   sessao: {
     segredo: process.env.SESSION_SECRET || 'troque-isto',
   },

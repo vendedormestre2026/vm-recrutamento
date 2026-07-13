@@ -125,6 +125,44 @@ CREATE TABLE IF NOT EXISTS configuracoes (
   atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Perfis ideais de curriculo (Banco de Curriculos - T1). Mesma anatomia de `roteiros`:
+-- a coluna `estrutura` guarda o JSON inteiro, editavel pelo painel sem mexer no codigo.
+-- Formato: { criterios: [{ id, nome, peso, descricao_ideal }], instrucoes: '' } —
+-- criterios de CURRICULO (experiencia, trajetoria, ferramentas), nao comportamentais.
+CREATE TABLE IF NOT EXISTS perfis_curriculo (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  nome          TEXT NOT NULL,
+  perfil        TEXT NOT NULL CHECK (perfil IN ('SDR', 'CLOSER')),
+  versao        INTEGER NOT NULL DEFAULT 1,
+  estrutura     TEXT NOT NULL,     -- JSON: criterios do curriculo ideal + instrucoes p/ o motor de analise
+  criado_em     TEXT NOT NULL DEFAULT (datetime('now')),
+  atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Cadastros do Banco de Curriculos (/bancodecurriculos) — fluxo INDEPENDENTE do funil
+-- de vagas (`applications` segue exclusivo do funil). `analise` recebe o JSON do motor
+-- de analise (incremento futuro); NULL = ainda nao analisado. `consent_at` segue o
+-- padrao LGPD de applications (datetime('now') no INSERT, apos a rota validar o
+-- checkbox), com finalidade distinta: "banco de talentos". `aplicacao_id` e referencia
+-- LOGICA a applications(id), sem constraint rigida — preenchida se o talento um dia
+-- virar candidatura formal.
+CREATE TABLE IF NOT EXISTS talentos (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  nome             TEXT,
+  email            TEXT,
+  telefone         TEXT,
+  perfil_interesse TEXT CHECK (perfil_interesse IN ('SDR', 'CLOSER')),
+  linkedin_url     TEXT,
+  curriculo_path   TEXT,            -- caminho do PDF (volume persistente, pasta separada do funil)
+  curriculo_texto  TEXT,            -- texto extraido p/ o motor de analise
+  analise          TEXT,            -- JSON: score + pontos fortes + pontos de atencao (NULL = sem analise)
+  consent_at       TEXT,            -- (LGPD) quando aceitou a finalidade "banco de talentos"
+  status           TEXT NOT NULL DEFAULT 'novo'
+                     CHECK (status IN ('novo', 'contatado', 'descartado', 'convertido')),
+  aplicacao_id     INTEGER,         -- referencia logica a applications(id), sem FK rigida
+  criado_em        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Indices uteis
 CREATE INDEX IF NOT EXISTS idx_jobs_ativo            ON jobs(ativo);
 CREATE INDEX IF NOT EXISTS idx_applications_token    ON applications(token);

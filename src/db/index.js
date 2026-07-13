@@ -31,6 +31,12 @@ module.exports = {
   atualizarEstruturaRoteiro: driver.atualizarEstruturaRoteiro,
   criarRoteiro: driver.criarRoteiro,
 
+  // perfis de curriculo (Banco de Curriculos)
+  criarPerfilCurriculo: driver.criarPerfilCurriculo,
+  listarPerfisCurriculo: driver.listarPerfisCurriculo,
+  buscarPerfilCurriculo: driver.buscarPerfilCurriculo,
+  atualizarPerfilCurriculo: driver.atualizarPerfilCurriculo,
+
   // aplicacoes
   criarAplicacao: driver.criarAplicacao,
   obterAplicacao: driver.obterAplicacao,
