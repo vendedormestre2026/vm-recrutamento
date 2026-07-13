@@ -143,6 +143,137 @@
   });
 })();
 
+// ── Banco de Curriculos: formulario de cadastro (/bancodecurriculos) ──
+// Mesmo comportamento da tela de Aplicacao (upload com clique/arrastar, botao de envio
+// habilitado so com o consentimento marcado, envio via fetch com erro inline), num
+// bloco proprio porque o form, os campos obrigatorios e o endpoint sao do fluxo do
+// banco de talentos (independente do funil de vaga).
+(function () {
+  const form = document.getElementById('form-banco-curriculos');
+  if (!form) return;
+
+  const MAX_PDF = 10 * 1024 * 1024;
+  const areaErro = form.querySelector('[data-erro]');
+  function mostrarErro(msg) {
+    areaErro.textContent = msg;
+    areaErro.hidden = !msg;
+    if (msg) areaErro.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // Upload de PDF: clique (label nativo) + arrastar/soltar + validacao
+  const upload = form.querySelector('[data-upload]');
+  const inputArquivo = form.querySelector('input[name="curriculo"]');
+  const textoUpload = form.querySelector('[data-upload-texto]');
+
+  function validarArquivo(file) {
+    if (!file) return true;
+    const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    if (!ehPdf) {
+      mostrarErro('Envie o currículo em formato PDF.');
+      return false;
+    }
+    if (file.size > MAX_PDF) {
+      mostrarErro('O currículo deve ter no máximo 10 MB.');
+      return false;
+    }
+    return true;
+  }
+
+  function aceitarArquivo(file) {
+    mostrarErro('');
+    textoUpload.textContent = file.name;
+    upload.classList.add('vm-upload--ok');
+  }
+
+  inputArquivo.addEventListener('change', () => {
+    const file = inputArquivo.files[0];
+    if (file && validarArquivo(file)) aceitarArquivo(file);
+  });
+
+  ['dragover', 'dragenter'].forEach((ev) =>
+    upload.addEventListener(ev, (e) => {
+      e.preventDefault();
+      upload.classList.add('vm-upload--sobre');
+    }),
+  );
+  ['dragleave', 'drop'].forEach((ev) =>
+    upload.addEventListener(ev, (e) => {
+      e.preventDefault();
+      upload.classList.remove('vm-upload--sobre');
+    }),
+  );
+  upload.addEventListener('drop', (e) => {
+    const file = e.dataTransfer.files[0];
+    if (file && validarArquivo(file)) {
+      inputArquivo.files = e.dataTransfer.files;
+      aceitarArquivo(file);
+    }
+  });
+
+  // Validacao basica (conveniencia; o servidor revalida)
+  function validarFormulario() {
+    const obrig = [
+      ['nome', 'nome'],
+      ['email', 'e-mail'],
+      ['telefone', 'telefone'],
+    ];
+    for (const [name, rotulo] of obrig) {
+      const campo = form.querySelector(`[name="${name}"]`);
+      if (!campo.value.trim()) {
+        mostrarErro(`Preencha o campo ${rotulo}.`);
+        campo.focus();
+        return false;
+      }
+    }
+    const perfil = form.querySelector('[name="perfil_interesse"]');
+    if (!perfil.value) {
+      mostrarErro('Escolha o perfil de interesse (SDR ou Closer).');
+      perfil.focus();
+      return false;
+    }
+    if (!inputArquivo.files[0]) {
+      mostrarErro('Anexe seu currículo em PDF.');
+      return false;
+    }
+    if (!validarArquivo(inputArquivo.files[0])) return false;
+    if (chkConsentimento && !chkConsentimento.checked) {
+      mostrarErro('É necessário autorizar o armazenamento dos seus dados no banco de talentos para se cadastrar.');
+      return false;
+    }
+    return true;
+  }
+
+  // Consentimento LGPD (banco de talentos): o botao so habilita com o checkbox marcado.
+  const chkConsentimento = form.querySelector('[data-consentimento]');
+  const btnEnviar = form.querySelector('[data-enviar]');
+  function sincronizarConsentimento() {
+    if (btnEnviar && chkConsentimento) btnEnviar.disabled = !chkConsentimento.checked;
+  }
+  if (chkConsentimento) chkConsentimento.addEventListener('change', sincronizarConsentimento);
+  sincronizarConsentimento();
+
+  // Envio
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!validarFormulario()) return;
+    btnEnviar.disabled = true;
+    btnEnviar.textContent = 'Enviando...';
+    try {
+      const resp = await fetch('/api/banco-curriculos', { method: 'POST', body: new FormData(form) });
+      const dados = await resp.json();
+      if (resp.ok && dados.ok) {
+        window.location = dados.redirect || '/bancodecurriculos/recebido';
+        return;
+      }
+      mostrarErro(dados.erro || 'Não foi possível enviar seu cadastro.');
+    } catch (err) {
+      mostrarErro('Falha de conexão. Verifique sua internet e tente novamente.');
+    }
+    btnEnviar.disabled = false;
+    btnEnviar.textContent = 'Enviar currículo';
+  });
+})();
+
 // ── Utilitarios de midia (Fase 2): mensagens de erro PT-BR + parar tracks ──
 const VM_MIDIA = {
   mensagemErro(err, tipo) {

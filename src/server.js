@@ -16,6 +16,8 @@ const db = require('./db');
 const paginas = require('./routes/pages');
 const api = require('./routes/api');
 const admin = require('./routes/admin');
+const bancoCurriculos = require('./routes/banco_curriculos');
+const apiBancoCurriculos = require('./routes/api_banco_curriculos');
 
 function criarApp() {
   const app = express();
@@ -48,7 +50,9 @@ function criarApp() {
 
   // Rotas
   app.use('/api', api);
+  app.use('/api', apiBancoCurriculos); // Banco de Curriculos (API; fluxo independente do funil)
   app.use('/admin', admin); // painel do recrutador (protegido por adminAuth interno)
+  app.use('/bancodecurriculos', bancoCurriculos); // Banco de Curriculos (paginas publicas)
   app.use('/', paginas);
 
   // 404 simples

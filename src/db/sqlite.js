@@ -294,6 +294,31 @@ function atualizarPerfilCurriculo(id, { nome, estrutura }) {
   return info.changes;
 }
 
+// Talentos (Banco de Curriculos)
+// Cria o cadastro do banco de talentos. consent_at recebe datetime('now') direto no
+// INSERT (mesma tatica de criarAplicacao: a rota so chega aqui apos validar o checkbox
+// de consentimento LGPD — finalidade "banco de talentos"). `analise` nasce NULL (o motor
+// de analise e incremento futuro) e `status` fica no default 'novo' do schema.
+function criarTalento(talento) {
+  const info = getDb().prepare(`
+    INSERT INTO talentos
+      (nome, email, telefone, perfil_interesse, linkedin_url,
+       curriculo_path, curriculo_texto, consent_at)
+    VALUES
+      (@nome, @email, @telefone, @perfil_interesse, @linkedin_url,
+       @curriculo_path, @curriculo_texto, datetime('now'))
+  `).run({
+    nome: talento.nome || null,
+    email: talento.email || null,
+    telefone: talento.telefone || null,
+    perfil_interesse: talento.perfil_interesse || null,
+    linkedin_url: talento.linkedin_url || null,
+    curriculo_path: talento.curriculo_path || null,
+    curriculo_texto: talento.curriculo_texto || null,
+  });
+  return Number(info.lastInsertRowid);
+}
+
 // Aplicacoes
 // Cria a aplicacao. consent_at recebe datetime('now') direto no INSERT: a rota so
 // chega aqui apos validar o checkbox de consentimento (LGPD), entao criar a linha ja
@@ -986,6 +1011,8 @@ module.exports = {
   listarPerfisCurriculo,
   buscarPerfilCurriculo,
   atualizarPerfilCurriculo,
+  // talentos (Banco de Curriculos)
+  criarTalento,
   // aplicacoes
   criarAplicacao,
   obterAplicacao,

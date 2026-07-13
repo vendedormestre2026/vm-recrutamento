@@ -37,6 +37,9 @@ module.exports = {
   buscarPerfilCurriculo: driver.buscarPerfilCurriculo,
   atualizarPerfilCurriculo: driver.atualizarPerfilCurriculo,
 
+  // talentos (Banco de Curriculos)
+  criarTalento: driver.criarTalento,
+
   // aplicacoes
   criarAplicacao: driver.criarAplicacao,
   obterAplicacao: driver.obterAplicacao,
