@@ -334,6 +334,54 @@ function criarTalento(talento) {
   return Number(info.lastInsertRowid);
 }
 
+// Enums de talento (espelham os CHECK do schema em talentos). Validados no app antes das
+// queries (mesmo padrao de STATUS_RECRUTADOR_VALIDOS): entrada fora do enum e ignorada.
+const PERFIS_VALIDOS = ['SDR', 'CLOSER'];
+const STATUS_TALENTO_VALIDOS = ['novo', 'contatado', 'descartado', 'convertido'];
+
+// Converte a linha crua em objeto do app, parseando `analise` (JSON) — mesmo padrao de
+// perfilCurriculoDeLinha. `analise` NULL/invalido vira null (nunca quebra a leitura).
+function talentoDeLinha(linha) {
+  if (!linha) return null;
+  return { ...linha, analise: linha.analise ? lerJson(linha.analise, null) : null };
+}
+
+// Lista talentos com filtro OPCIONAL por perfil_interesse e/ou status, ORDER BY
+// criado_em DESC. Sem filtro, lista todos. Filtros invalidos sao IGNORADOS (tratados
+// como ausentes) — a rota tambem saneia, mas a camada de dados nao confia na entrada.
+function listarTalentos({ perfil, status } = {}) {
+  const where = [];
+  const params = [];
+  if (PERFIS_VALIDOS.includes(perfil)) {
+    where.push('perfil_interesse = ?');
+    params.push(perfil);
+  }
+  if (STATUS_TALENTO_VALIDOS.includes(status)) {
+    where.push('status = ?');
+    params.push(status);
+  }
+  const sql =
+    'SELECT * FROM talentos' +
+    (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+    ' ORDER BY criado_em DESC';
+  return getDb().prepare(sql).all(...params).map(talentoDeLinha);
+}
+
+// Um talento por id, com `analise` ja parseada. null se nao existir.
+function buscarTalento(id) {
+  return talentoDeLinha(getDb().prepare('SELECT * FROM talentos WHERE id = ?').get(id));
+}
+
+// Atualiza o status do talento. Valida contra o enum do schema ANTES do UPDATE: status
+// invalido nao gera query (retorna 0). Retorna o numero de linhas afetadas (0 se o id
+// nao existir ou o status for invalido).
+function atualizarStatusTalento(id, status) {
+  const v = status != null ? String(status).trim().toLowerCase() : '';
+  if (!STATUS_TALENTO_VALIDOS.includes(v)) return 0;
+  const info = getDb().prepare('UPDATE talentos SET status = ? WHERE id = ?').run(v, id);
+  return info.changes;
+}
+
 // Aplicacoes
 // Cria a aplicacao. consent_at recebe datetime('now') direto no INSERT: a rota so
 // chega aqui apos validar o checkbox de consentimento (LGPD), entao criar a linha ja
@@ -1029,6 +1077,10 @@ module.exports = {
   atualizarPerfilCurriculo,
   // talentos (Banco de Curriculos)
   criarTalento,
+  listarTalentos,
+  buscarTalento,
+  atualizarStatusTalento,
+  STATUS_TALENTO_VALIDOS,
   // aplicacoes
   criarAplicacao,
   obterAplicacao,

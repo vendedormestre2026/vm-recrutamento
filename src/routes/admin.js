@@ -490,6 +490,7 @@ router.get('/', (req, res) => {
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
         <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
         <a class="btn btn--ghost" href="/admin/perfis-curriculo">Perfis de currículo</a>
+        <a class="btn btn--ghost" href="/admin/talentos">Banco de talentos</a>
         <a class="btn btn--ghost" href="/admin/config">Configurações</a>
         <a class="btn btn--ghost" href="/admin/uso">Custos / Uso API</a>
       </div>
@@ -2336,6 +2337,273 @@ router.post('/perfis-curriculo/:id', (req, res) => {
 
   db.atualizarPerfilCurriculo(id, { nome, estrutura: est });
   res.redirect(`/admin/perfis-curriculo/${id}?salvo=1`);
+});
+
+// ── Banco de talentos (Banco de Curriculos — T4) ── listagem/gestao (so leitura +
+//    mudanca de status). Os dados foram persistidos pelo fluxo publico (T2/T3); aqui o
+//    recrutador ve os cadastros e move o status. Nao toca no funil de vaga. ──
+
+// Rotulos amigaveis dos status do talento (enum em db.STATUS_TALENTO_VALIDOS).
+const ROTULOS_STATUS_TALENTO = {
+  novo: 'Novo',
+  contatado: 'Contatado',
+  descartado: 'Descartado',
+  convertido: 'Convertido',
+};
+
+// Chip do status do talento. Reusa a paleta existente: laranja (contatado/convertido =
+// ativo/positivo), contorno sobrio (descartado = negativo), cinza (novo = neutro inicial).
+function badgeStatusTalento(status) {
+  const classe = {
+    novo: 'badge--aplicado',
+    contatado: 'badge--entrevista',
+    convertido: 'badge--entrevista',
+    descartado: 'badge--concluido',
+  }[status] || 'badge--aplicado';
+  const rotulo = ROTULOS_STATUS_TALENTO[status] || status || '—';
+  return `<span class="badge ${classe}">${escapeHtml(rotulo)}</span>`;
+}
+
+// Score do talento para a coluna da listagem: numero /100 quando ha score; "sem analise"
+// quando a analise nao existe ou nao trouxe score numerico (perfil ideal ausente/falha).
+function scoreTalentoTexto(analise) {
+  const s = analise && analise.score_geral;
+  return Number.isFinite(s) ? `${s}/100` : 'sem análise';
+}
+
+// Render da analise completa no PAINEL (tema escuro): score + pontos fortes + pontos de
+// atencao + nota/comentario por criterio. NAO reusa renderizarResultadoTalentoHtml de
+// banco_curriculos.js de proposito: aquele usa as classes do site publico (vm-hero/
+// vm-card), tem copy voltada ao candidato e nao renderiza por_criterio. Aqui seguimos o
+// padrao de card de competencia (.comp/.comp-nota) do relatorio de entrevista.
+function analiseTalentoAdminHtml(analise) {
+  if (!analise) {
+    return `<p style="color:var(--cinza);">Sem análise. Não havia perfil ideal de currículo
+      cadastrado para este perfil de interesse no momento do cadastro, ou a análise
+      automática falhou. O cadastro do talento foi preservado normalmente.</p>`;
+  }
+
+  const temScore = Number.isFinite(analise.score_geral);
+  const scoreHtml = temScore
+    ? `<p style="margin:.2rem 0 1rem;font-size:1.05rem;">Score geral:
+         <span class="comp-nota">${analise.score_geral}<small>/100</small></span></p>`
+    : '<p style="color:var(--cinza);margin:.2rem 0 1rem;">Análise sem score geral.</p>';
+
+  const listaItens = (itens) =>
+    (Array.isArray(itens) ? itens : []).map((i) => `<li>${escapeHtml(i)}</li>`).join('');
+  const fortes = listaItens(analise.pontos_fortes);
+  const atencao = listaItens(analise.pontos_atencao);
+
+  const criterios = Array.isArray(analise.por_criterio) ? analise.por_criterio : [];
+  const criteriosHtml = criterios
+    .map((c) => {
+      const nota = Number.isFinite(c.nota) ? `${c.nota}<small>/5</small>` : '—';
+      return `
+        <div class="comp">
+          <div class="comp-cab">
+            <h3 style="margin:0;">${escapeHtml(c.nome || '')}</h3>
+            <span class="comp-nota">${nota}</span>
+          </div>
+          ${c.comentario ? `<p style="margin:.4rem 0 0;">${escapeHtml(c.comentario)}</p>` : ''}
+        </div>`;
+    })
+    .join('');
+
+  return `
+    ${scoreHtml}
+    ${fortes ? `<h3>Pontos fortes</h3><ul class="lista">${fortes}</ul>` : ''}
+    ${atencao ? `<h3 style="margin-top:1rem;">Pontos de atenção</h3><ul class="lista">${atencao}</ul>` : ''}
+    ${criteriosHtml ? `<h3 style="margin-top:1.2rem;">Notas por critério</h3>${criteriosHtml}` : ''}`;
+}
+
+// ── GET /admin/talentos ── listagem do banco de talentos (filtros por perfil/status) ──
+router.get('/talentos', (req, res) => {
+  const q = req.query || {};
+  // Saneamento: filtros so valem se pertencerem ao enum; caso contrario = "todos".
+  const perfil = PERFIS_VALIDOS.includes(q.perfil) ? q.perfil : '';
+  const status = db.STATUS_TALENTO_VALIDOS.includes(q.status) ? q.status : '';
+
+  const talentos = db.listarTalentos({
+    perfil: perfil || undefined,
+    status: status || undefined,
+  });
+
+  const linhas = talentos
+    .map(
+      (t) => `
+        <tr>
+          <td><a href="/admin/talentos/${t.id}">${escapeHtml(t.nome || '—')}</a></td>
+          <td>${escapeHtml(t.email || '—')}</td>
+          <td>${escapeHtml(t.telefone || '—')}</td>
+          <td>${escapeHtml(t.perfil_interesse || '—')}</td>
+          <td>${escapeHtml(scoreTalentoTexto(t.analise))}</td>
+          <td>${badgeStatusTalento(t.status)}</td>
+          <td>${escapeHtml(formatarDataHora(t.criado_em))}</td>
+          <td><a class="btn btn--ghost" href="/admin/talentos/${t.id}">Ver análise</a></td>
+        </tr>`,
+    )
+    .join('');
+
+  const selPerfil = (v) => (perfil === v ? ' selected' : '');
+  const selStatus = (v) => (status === v ? ' selected' : '');
+  const temFiltro = perfil || status;
+  const opcoesStatus = db.STATUS_TALENTO_VALIDOS.map(
+    (s) => `<option value="${s}"${selStatus(s)}>${escapeHtml(ROTULOS_STATUS_TALENTO[s] || s)}</option>`,
+  ).join('');
+
+  const filtros = `
+    <form method="GET" action="/admin/talentos" class="admin-filtros">
+      <label class="filtro">
+        <span>Perfil</span>
+        <select name="perfil">
+          <option value=""${perfil ? '' : ' selected'}>Todos</option>
+          <option value="SDR"${selPerfil('SDR')}>SDR</option>
+          <option value="CLOSER"${selPerfil('CLOSER')}>Closer</option>
+        </select>
+      </label>
+      <label class="filtro">
+        <span>Status</span>
+        <select name="status">
+          <option value=""${status ? '' : ' selected'}>Todos</option>
+          ${opcoesStatus}
+        </select>
+      </label>
+      <button type="submit" class="btn">Filtrar</button>
+      ${temFiltro ? '<a class="btn btn--ghost" href="/admin/talentos">Limpar</a>' : ''}
+    </form>`;
+
+  const conteudo = `
+    <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
+    <h1 style="margin:0 0 .3rem;">Banco de talentos</h1>
+    <p style="color:var(--cinza);font-size:.9rem;margin:0 0 1.25rem;">
+      Cadastros recebidos pelo Banco de Currículos (/bancodecurriculos), com a análise
+      automática do currículo quando havia um perfil ideal cadastrado.</p>
+    ${filtros}
+    <div class="admin-tab-scroll">
+      <table class="admin-tab">
+        <thead>
+          <tr>
+            <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Perfil</th>
+            <th>Score</th><th>Status</th><th>Cadastrado em</th><th>Ação</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${linhas || `<tr><td colspan="8">${temFiltro ? 'Nenhum talento para os filtros aplicados.' : 'Nenhum talento cadastrado ainda.'}</td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+
+  res.send(paginaAdmin({ titulo: 'Banco de talentos', conteudo }));
+});
+
+// ── GET /admin/talentos/:id/curriculo ── download do PDF (mesmo padrao do funil) ──
+// Seguranca: o caminho vem do DB (curriculo_path absoluto), NUNCA de req.params.
+router.get('/talentos/:id/curriculo', (req, res) => {
+  const id = Number(req.params.id);
+  const talento = Number.isInteger(id) && id > 0 ? db.buscarTalento(id) : null;
+  if (!talento || !talento.curriculo_path) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Currículo não disponível',
+      descricao: 'Este talento não possui currículo anexado.',
+    });
+  }
+  const caminho = talento.curriculo_path; // caminho absoluto do banco (nao montado de req)
+  if (!fs.existsSync(caminho)) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Arquivo não encontrado',
+      descricao: 'O arquivo do currículo não foi localizado no armazenamento.',
+    });
+  }
+  const nomeArquivo = `${sanitizarNomeArquivo(`curriculo_${talento.nome || ''}`)}.pdf`;
+  res.type('application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
+  return res.sendFile(caminho);
+});
+
+// ── GET /admin/talentos/:id ── detalhe do talento (contato + curriculo + analise) ──
+router.get('/talentos/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const talento = Number.isInteger(id) && id > 0 ? db.buscarTalento(id) : null;
+  if (!talento) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Talento não encontrado',
+      descricao: 'Não há cadastro no banco de talentos com este identificador.',
+    });
+  }
+
+  const salvo = req.query.salvo === '1' ? '<div class="aviso-ok">Status atualizado.</div>' : '';
+  const linkedin = talento.linkedin_url
+    ? `<a href="${escapeHtml(talento.linkedin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(talento.linkedin_url)}</a>`
+    : '—';
+  const botaoCurriculo = talento.curriculo_path
+    ? `<a class="btn" href="/admin/talentos/${talento.id}/curriculo">Baixar currículo (PDF)</a>`
+    : `<span class="btn btn--off">Baixar currículo (PDF)</span>`;
+
+  const opcoesStatus = db.STATUS_TALENTO_VALIDOS.map(
+    (s) =>
+      `<option value="${s}"${talento.status === s ? ' selected' : ''}>${escapeHtml(ROTULOS_STATUS_TALENTO[s] || s)}</option>`,
+  ).join('');
+
+  const nomeTalento = talento.nome || talento.email || `Talento ${talento.id}`;
+
+  const conteudo = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <h1 style="margin:0;">${escapeHtml(nomeTalento)}</h1>
+      <a class="btn btn--ghost" href="/admin/talentos">← Voltar ao banco de talentos</a>
+    </div>
+    ${salvo}
+
+    <section class="rel-sec">
+      <h2>Dados de contato</h2>
+      <dl class="rel-id">
+        <div><dt>Nome</dt><dd>${escapeHtml(talento.nome || '—')}</dd></div>
+        <div><dt>E-mail</dt><dd>${escapeHtml(talento.email || '—')}</dd></div>
+        <div><dt>Telefone</dt><dd>${escapeHtml(talento.telefone || '—')}</dd></div>
+        <div><dt>LinkedIn</dt><dd>${linkedin}</dd></div>
+        <div><dt>Perfil de interesse</dt><dd>${escapeHtml(talento.perfil_interesse || '—')}</dd></div>
+        <div><dt>Status</dt><dd>${badgeStatusTalento(talento.status)}</dd></div>
+        <div><dt>Cadastrado em</dt><dd>${escapeHtml(formatarDataHora(talento.criado_em))}</dd></div>
+        <div><dt>Consentimento (LGPD)</dt><dd>${escapeHtml(formatarDataHora(talento.consent_at))}</dd></div>
+      </dl>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Gerenciar status</h2>
+      <form method="POST" action="/admin/talentos/${talento.id}/status">
+        <label class="campo" style="max-width:320px;">
+          <span>Status</span>
+          <select name="status">${opcoesStatus}</select>
+        </label>
+        <button type="submit" class="btn">Salvar status</button>
+      </form>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Análise do currículo</h2>
+      ${analiseTalentoAdminHtml(talento.analise)}
+    </section>
+
+    <section class="rel-sec">
+      <h2>Currículo</h2>
+      <div class="acoes-linha">${botaoCurriculo}</div>
+    </section>`;
+
+  res.send(paginaAdmin({ titulo: `Talento — ${nomeTalento}`, conteudo }));
+});
+
+// ── POST /admin/talentos/:id/status ── atualiza o status (enum validado na camada
+//    de dados: valor invalido -> 0 changes, sem quebrar) ──
+router.post('/talentos/:id/status', (req, res) => {
+  const id = Number(req.params.id);
+  const talento = Number.isInteger(id) && id > 0 ? db.buscarTalento(id) : null;
+  if (!talento) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Talento não encontrado',
+      descricao: 'Não há cadastro no banco de talentos com este identificador.',
+    });
+  }
+  db.atualizarStatusTalento(id, (req.body && req.body.status) || '');
+  return res.redirect(`/admin/talentos/${id}?salvo=1`);
 });
 
 // ── GET /admin/uso ── monitoramento de custos das chamadas ao LLM ──
