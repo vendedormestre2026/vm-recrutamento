@@ -1,157 +1,53 @@
 {
   "metodo": "BEI",
   "instrucoes_gerais": [
-    "Sempre pedir exemplos concretos. Nunca aceitar resposta genérica.",
-    "Usar sondas BEI quando a resposta for vaga: 'E o que exatamente você fez?', 'Qual foi o resultado em número?', 'O que mudou depois disso?'",
-    "Avaliar cada resposta pelo critério STAR: a resposta teve Situação, Tarefa, Ação e Resultado?"
+    "Foque em COMPORTAMENTO: o que o candidato fez, por que fez e o que aprendeu. Nao avalie conhecimento tecnico de vendas nem metodologia nomeada.",
+    "Se a resposta vier totalmente abstrata, peca UM exemplo concreto — no maximo uma vez por bloco. Depois disso, siga em frente com o que foi dito.",
+    "Nunca verbalize julgamento, nota ou opiniao sobre a resposta: a avaliacao acontece depois, fora da conversa."
   ],
-  "blocos": [
-    {
-      "id": "abertura",
+  "blocos": {
+    "abertura": {
       "nome": "Abertura",
-      "obrigatorio": true,
-      "competencias_alvo": ["postura", "contexto_de_vida"],
-      "pergunta_semente": "Me conta um pouco sobre você — não o currículo, mas quem é [nome] de verdade. O que te move profissionalmente?",
-      "sondas_bei": [
-        "Me dá um exemplo concreto de como essa característica que você citou apareceu no seu trabalho.",
-        "O que te fez travar no passado e o que você fez de diferente depois?"
-      ],
-      "instrucao_vera": "Após a resposta aberta, perguntar de forma natural: você é casado, solteiro? Tem filhos?"
+      "avaliado": false,
+      "pergunta_semente": "Me conta sua trajetória em vendas até aqui.",
+      "observacao": "Bloco de contexto, não gera nota de competência."
     },
-    {
-      "id": "motivacao_saida",
-      "nome": "Trajetória e motivação de saída",
-      "obrigatorio": true,
-      "competencias_alvo": ["autorresponsabilidade", "clareza_de_proposito"],
-      "pergunta_semente": "Por que você quer sair da oportunidade que está hoje?",
-      "sondas_bei": [
-        "Me dá um exemplo de uma situação específica que te fez tomar essa decisão.",
-        "O que você tentou fazer antes de decidir sair?"
-      ],
-      "instrucao_vera": "Observar se o candidato terceiriza culpa ou assume responsabilidade pela situação atual."
-    },
-    {
-      "id": "metas_ambicao",
-      "nome": "Metas e ambição",
-      "obrigatorio": true,
-      "competencias_alvo": ["ambicao"],
-      "pergunta_semente": "Quais são suas metas para 1 ano, 3 anos e 10 anos — profissionalmente?",
-      "sondas_bei": [
-        "O que exatamente você está fazendo hoje para chegar lá?",
-        "Se você continuar fazendo o que faz hoje, você bate essa meta? Por quê?"
-      ],
-      "instrucao_vera": "Dominante alto tem metas grandes e concretas. Resposta vaga ou com metas baixas é sinal de alerta."
-    },
-    {
-      "id": "track_record",
-      "nome": "Track record e números",
-      "obrigatorio": true,
-      "competencias_alvo": ["resultado", "resiliencia"],
-      "pergunta_semente": "Na sua última posição de vendas: qual era a meta mensal? Quanto você bateu no mês passado e no retrasado? Por que variou?",
-      "pergunta_secundaria": "O que você fazia de diferente dos colegas que não batiam meta?",
-      "sondas_bei": [
-        "Me dá um exemplo específico de como você organizava sua carteira ou pipeline.",
-        "Qual ferramenta você usava? Me explica como funcionava na prática."
-      ],
-      "instrucao_vera": "Quem tem resultado fala de número sem hesitar. Se hesitar ou generalizar, sondar mais."
-    },
-    {
-      "id": "maior_venda_perdida",
-      "nome": "Maior venda perdida",
-      "obrigatorio": true,
-      "competencias_alvo": ["autocritica", "autorresponsabilidade", "aprendizado"],
-      "pergunta_semente": "Me conta a maior venda que você perdeu. O que aconteceu, qual era o valor, e por que você perdeu?",
-      "sondas_bei": [
-        "O que exatamente você fez — ou deixou de fazer — que contribuiu para essa perda?",
-        "O que você mudou no seu processo depois disso? Me dá um exemplo.",
-        "Se você voltasse nessa venda hoje, o que faria diferente?"
-      ],
-      "instrucao_vera": "BEI e STAR puros aqui. Não aceitar 'o cliente não tinha budget' sem sondar o papel do candidato na perda."
-    },
-    {
-      "id": "conducao_consultiva",
-      "nome": "Condução de venda consultiva",
-      "obrigatorio": true,
-      "competencias_alvo": ["tecnica_vendas", "descoberta_de_dor"],
-      "pergunta_semente": "Como você estrutura uma reunião de venda do início ao fim? Me explica o seu processo.",
-      "sondas_bei": [
-        "Me dá um exemplo de uma reunião específica onde você descobriu a dor real do cliente — como você chegou lá?",
-        "Como você lida quando o cliente não sabe qual é o problema dele?"
-      ],
-      "instrucao_vera": "Observar se o candidato fala em descoberta de dor antes de apresentar solução, ou se já sai apresentando produto."
-    },
-    {
-      "id": "fit_cultural",
-      "nome": "Fit cultural e valores",
-      "obrigatorio": true,
-      "competencias_alvo": ["cultura", "resiliencia"],
-      "pergunta_semente": "Em quais aspectos específicos da sua história você acredita que se encaixa na cultura da empresa? Me dá exemplos concretos — da vida pessoal ou profissional.",
-      "sondas_bei": [
-        "Me dá um exemplo de uma situação onde você foi pressionado e como reagiu.",
-        "Conte uma sequência de nãos que você enfrentou. O que fez para não desanimar?"
-      ],
-      "instrucao_vera": "Não aceitar resposta vaga como 'me identifico com os valores'. Sondar até ter exemplo concreto com Situação, Ação e Resultado."
-    },
-    {
-      "id": "principios",
-      "nome": "Princípios",
-      "obrigatorio": true,
-      "pergunta_semente": "Toda empresa tem rotinas e valores próprios — pode ser uma reunião diária, uma forma específica de tratar cliente, um ritual do time. Se [nome da empresa] tivesse uma rotina dessas que não é comum em outros lugares, como você reagiria a ela no dia a dia?",
-      "competencias_alvo": ["principios"]
-    },
-    {
-      "id": "fechamento",
+    "competencias": [
+      {
+        "id": "resiliencia_autorresponsabilidade",
+        "nome": "Resiliência/Autorresponsabilidade",
+        "peso": 3,
+        "pergunta_semente": "Qual foi a venda mais difícil que você já perdeu?",
+        "boa_resposta": "Assume responsabilidade pelo que não funcionou, sem terceirizar culpa; demonstra aprendizado concreto a partir da perda."
+      },
+      {
+        "id": "ambicao",
+        "nome": "Ambição",
+        "peso": 3,
+        "pergunta_semente": "Onde você quer chegar profissionalmente nos próximos anos?",
+        "boa_resposta": "Visão clara e ambiciosa, articulada com convicção própria, não genérica."
+      },
+      {
+        "id": "fit_cultural",
+        "nome": "Fit cultural",
+        "peso": 2,
+        "pergunta_semente": "O que é inegociável pra você num ambiente de trabalho?",
+        "boa_resposta": "Valores concretos e específicos, com exemplo real, não clichê de entrevista."
+      }
+    ],
+    "fechamento": {
       "nome": "Fechamento",
-      "obrigatorio": true,
-      "competencias_alvo": [],
+      "avaliado": false,
       "perguntas": [
         "Qual é sua disponibilidade para início?",
-        "Qual é sua expectativa de remuneração e comissão?",
-        "Por que deveríamos te escolher entre todos os candidatos?"
+        "Qual é sua expectativa de remuneração?",
+        "Por que deveríamos te escolher entre os candidatos?"
       ],
-      "instrucao_vera": "Encerrar a entrevista de forma calorosa após estas perguntas."
+      "observacao": "3 perguntas, 3 turnos separados — nunca despejar juntas."
     }
-  ],
-  "competencias": [
-    {
-      "id": "autorresponsabilidade",
-      "nome": "Autorresponsabilidade",
-      "peso": 2,
-      "boa_resposta": "Assume erros sem terceirizar culpa. STAR completo na maior venda perdida. Identifica o que fez diferente depois da perda."
-    },
-    {
-      "id": "ambicao",
-      "nome": "Ambição",
-      "peso": 2,
-      "boa_resposta": "Metas concretas de 1, 3 e 10 anos com ações concretas hoje. Dominante alto sonha grande e age. Resposta vaga ou metas baixas é sinal de alerta."
-    },
-    {
-      "id": "resiliencia",
-      "nome": "Resiliência",
-      "peso": 2,
-      "boa_resposta": "Reage a pressão, sequência de nãos e feedback sem desmoronar. Não vitimiza. Aceita feedback e propõe melhoria."
-    },
-    {
-      "id": "tecnica_vendas",
-      "nome": "Técnica de vendas",
-      "peso": 1,
-      "boa_resposta": "Condução consultiva, descobre dor antes de apresentar solução, amortece objeção antes de argumentar, tangibiliza valor em vez de só listar features."
-    },
-    {
-      "id": "cultura",
-      "nome": "Fit cultural",
-      "peso": 2,
-      "boa_resposta": "Exemplos concretos de alinhamento com valores. Não aceitar resposta genérica. Respostas com Situação e Resultado reais."
-    },
-    {
-      "id": "principios",
-      "nome": "Princípios",
-      "peso": 1,
-      "boa_resposta": "Demonstra flexibilidade e respeito a normas e culturas diferentes da sua, sem soar servil; expressa que adaptaria o comportamento mantendo a integridade pessoal, sem rejeitar a rotina só por ser incomum."
-    }
-  ],
+  },
   "rubrica": {
     "escala": "1-5",
-    "saida": "nota + justificativa curta + indicação STAR (quais elementos S/T/A/R estavam presentes na resposta) por competência"
+    "saida": "nota + justificativa curta por competencia, mais resumo e pontos de atencao"
   }
 }

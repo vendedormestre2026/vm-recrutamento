@@ -66,7 +66,7 @@ function migrarRoteiroSdr() {
   // UPDATE in-place com o shape RICO do ROTEIRO_SDR (seed.js). Idempotente: rodar de novo
   // reescreve o mesmo conteudo (nenhum erro). Bump de versao p/ marcar a migracao.
   const estruturaJson = JSON.stringify(ROTEIRO_SDR.estrutura);
-  const novaVersao = Number(alvo.versao) >= 2 ? Number(alvo.versao) : 2;
+  const novaVersao = Number(alvo.versao) >= 3 ? Number(alvo.versao) : 3;
   db.prepare(
     `UPDATE roteiros
         SET nome = ?, perfil = 'SDR', versao = ?, estrutura = ?, atualizado_em = datetime('now')

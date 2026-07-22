@@ -96,13 +96,21 @@ function comTimeout(promessa, ms, nome) {
 //   metodo, instrucoes_gerais:[...], blocos:[{ id, nome, obrigatorio, pergunta_semente,
 //   sondas_bei:[...], instrucao_vera, perguntas:[...], ... }], competencias:[{ nome, peso,
 //   boa_resposta }], rubrica:{ escala, saida } }.
-// Formato ANTIGO (seed SDR): estrutura = {
+// Formato COMPORTAMENTAL (redesenho atual, SDR e Closer): estrutura = {
+//   instrucoes_gerais:[...], blocos:{ abertura:{ pergunta_semente, avaliado:false },
+//   competencias:[{ id, nome, peso, pergunta_semente, boa_resposta }],
+//   roleplay:{ nome, avaliado, peso, contexto_abertura, objecao_padrao, instrucao_vera,
+//   pergunta_fechamento_simulacao, max_trocas, boa_resposta } (opcional, so SDR),
+//   fechamento:{ avaliado:false, perguntas:[...] } }, rubrica }.
+// Formato ANTIGO (seed SDR original): estrutura = {
 //   blocos:{ abertura:[...], competencias:[{ nome, peso, ... }], fechamento:[...] }, rubrica }.
 //
 // Devolve UMA visao unica { metodo, instrucoesGerais, blocos[], competencias[], rubrica }
-// usada por todo o motor. No formato antigo o objeto `blocos` e convertido para um array
-// equivalente (abertura -> 1 bloco; cada competencia -> 1 bloco; fechamento -> 1 bloco),
-// preservando o comportamento anterior (chips, perguntas e relatorio inalterados).
+// usada por todo o motor. Nos formatos de OBJETO o `blocos` e convertido para um array
+// equivalente (abertura -> 1 bloco; cada competencia -> 1 bloco; roleplay -> 1 bloco;
+// fechamento -> 1 bloco), preservando o contrato de chips, perguntas e relatorio.
+// A lista `competencias` (consumida por relatorio.js) sai das competencias declaradas
+// mais, quando avaliado, a competencia derivada do roleplay.
 function normalizarEstrutura(roteiro) {
   const est = (roteiro && roteiro.estrutura) || {};
   const rubrica = est.rubrica || {};
@@ -117,26 +125,95 @@ function normalizarEstrutura(roteiro) {
     competencias = est.blocos.competencias;
   }
 
-  // Blocos: array (novo) ou objeto { abertura, competencias, fechamento } (antigo).
+  // Bloco de abertura/fechamento: aceita ARRAY de perguntas (formato antigo) ou OBJETO
+  // { nome, avaliado, pergunta_semente | perguntas, observacao } (formato comportamental).
+  // Devolve null quando o bloco nao existe ou nao tem pergunta alguma.
+  function blocoSimples(entrada, idPadrao, nomePadrao) {
+    if (Array.isArray(entrada)) {
+      if (!entrada.length) return null;
+      return { id: idPadrao, nome: nomePadrao, obrigatorio: true, avaliado: false, perguntas: entrada };
+    }
+    if (!entrada || typeof entrada !== 'object') return null;
+    const perguntas = Array.isArray(entrada.perguntas) ? entrada.perguntas.filter(Boolean) : [];
+    if (!perguntas.length && !entrada.pergunta_semente) return null;
+    return {
+      id: entrada.id || idPadrao,
+      nome: entrada.nome || nomePadrao,
+      obrigatorio: true,
+      // avaliado default FALSE aqui: abertura e fechamento sao blocos de contexto/
+      // operacionais — nao geram nota de competencia.
+      avaliado: entrada.avaliado === true,
+      observacao: entrada.observacao || null,
+      ...(perguntas.length ? { perguntas } : { pergunta_semente: entrada.pergunta_semente }),
+    };
+  }
+
+  // Bloco de ROLEPLAY (hoje so o SDR tem). A fala de entrada da simulacao vem em
+  // `contexto_abertura`; a pergunta de saida do papel em `pergunta_fechamento_simulacao`
+  // (renderizada no prompt como instrucao, nao como bloco separado — ela acontece DENTRO
+  // do orcamento de trocas do proprio roleplay).
+  function blocoRoleplay(rp) {
+    if (!rp || typeof rp !== 'object') return null;
+    const semente = rp.contexto_abertura || rp.pergunta_semente;
+    if (!semente) return null;
+    return {
+      id: rp.id || 'roleplay',
+      nome: rp.nome || 'Simulação',
+      obrigatorio: true,
+      avaliado: rp.avaliado !== false,
+      pergunta_semente: semente,
+      objecao_padrao: rp.objecao_padrao || null,
+      instrucao_vera: rp.instrucao_vera || null,
+      pergunta_fechamento_simulacao: rp.pergunta_fechamento_simulacao || null,
+      max_trocas: Number(rp.max_trocas) > 0 ? Number(rp.max_trocas) : 1,
+    };
+  }
+
+  // Blocos: array (formato rico do Closer/BEI e dos testes) ou objeto nomeado
+  // { abertura, competencias, roleplay, fechamento } (formato comportamental e antigo).
   let blocos = [];
+  let compRoleplay = null;
   if (Array.isArray(est.blocos)) {
     blocos = est.blocos;
   } else if (est.blocos && typeof est.blocos === 'object') {
     const o = est.blocos;
-    if (Array.isArray(o.abertura) && o.abertura.length) {
-      blocos.push({ id: 'abertura', nome: 'Abertura', obrigatorio: true, perguntas: o.abertura });
-    }
+
+    const abertura = blocoSimples(o.abertura, 'abertura', 'Abertura');
+    if (abertura) blocos.push(abertura);
+
     for (const c of o.competencias || []) {
       blocos.push({
-        id: `comp:${c.nome}`,
+        id: c.id ? `comp:${c.id}` : `comp:${c.nome}`,
         nome: c.nome,
         obrigatorio: true,
+        avaliado: true,
         pergunta_semente: c.pergunta_semente || `Conte sobre ${c.nome}.`,
       });
     }
-    if (Array.isArray(o.fechamento) && o.fechamento.length) {
-      blocos.push({ id: 'fechamento', nome: 'Fechamento', obrigatorio: true, perguntas: o.fechamento });
+
+    const roleplay = blocoRoleplay(o.roleplay);
+    if (roleplay) {
+      blocos.push(roleplay);
+      // Roleplay avaliado vira tambem uma COMPETENCIA (relatorio.js deriva a lista de
+      // competencias daqui), com o peso declarado no proprio bloco.
+      if (roleplay.avaliado) {
+        compRoleplay = {
+          id: roleplay.id,
+          nome: roleplay.nome,
+          peso: Number(o.roleplay.peso) > 0 ? Number(o.roleplay.peso) : 1,
+          boa_resposta: o.roleplay.boa_resposta || null,
+        };
+      }
     }
+
+    const fechamento = blocoSimples(o.fechamento, 'fechamento', 'Fechamento');
+    if (fechamento) blocos.push(fechamento);
+  }
+
+  // A competencia do roleplay entra na lista avaliada se ainda nao estiver la (o roteiro
+  // pode declara-la explicitamente em competencias; nesse caso a declaracao explicita manda).
+  if (compRoleplay && !competencias.some((c) => c && c.nome === compRoleplay.nome)) {
+    competencias = competencias.concat([compRoleplay]);
   }
 
   return { metodo, instrucoesGerais, competencias, blocos, rubrica };
@@ -200,7 +277,14 @@ function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas, vag
       if (perguntas.length === 1) {
         partes.push(`   Pergunta-semente: ${perguntas[0]}`);
       } else if (perguntas.length > 1) {
-        partes.push('   Perguntas:');
+        // Bloco com varias perguntas (ex.: Fechamento). O aviso de UM TURNO POR PERGUNTA
+        // e explicito aqui porque a lista, sozinha, sugeria que as perguntas saiam juntas
+        // numa unica fala — era uma das causas das perguntas combinadas.
+        partes.push(
+          `   Perguntas (${perguntas.length} no total) — faca UMA POR TURNO, em turnos ` +
+            'SEPARADOS, aguardando a resposta do candidato antes da proxima. NUNCA junte ' +
+            'duas delas na mesma fala:',
+        );
         for (const q of perguntas) partes.push(`     - ${q}`);
       }
       if (b.pergunta_secundaria) partes.push(`   Pergunta secundaria: ${b.pergunta_secundaria}`);
@@ -213,6 +297,14 @@ function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas, vag
       // alerta", "como reage ao feedback") que vaza julgamento na fala. Fica so no
       // roteiro (disponivel a relatorio.js, que recebe o roteiro inteiro).
       if (b.instrucao_vera) partes.push(`   Instrucao para voce (Vera): ${b.instrucao_vera}`);
+      // Roleplay: a saida do papel acontece DENTRO do orcamento de trocas deste bloco,
+      // por isso a pergunta final da simulacao e instrucao — nao um bloco separado.
+      if (b.pergunta_fechamento_simulacao) {
+        partes.push(
+          '   Para encerrar a simulacao, saia do papel e faca ESTA pergunta sozinha, em ' +
+            `turno proprio: ${b.pergunta_fechamento_simulacao}`,
+        );
+      }
       return partes.join('\n');
     })
     .join('\n');
@@ -244,10 +336,26 @@ function montarSystemPrompt({ roteiro, curriculoTexto, agente, maxPerguntas, vag
     'acolhedor SEM avaliar. A avaliacao e feita depois, internamente, por outro processo — voce',
     'nunca participa disso na conversa.',
     '',
+    // Mesmo peso retorico da regra de neutralidade (maiusculas + clausula de precedencia).
+    // A regra 1 de "REGRAS IMPORTANTES" sozinha era contradita na pratica pelas proprias
+    // perguntas-semente do roteiro, que o LLM copia literalmente.
+    'REGRA CRITICA DE PERGUNTA UNICA — sobrepoe qualquer outra instrucao deste prompt ou do roteiro:',
+    'Faca sempre e apenas UMA pergunta por vez, curta e direta. NUNCA combine duas perguntas na',
+    'mesma fala, mesmo que o roteiro apresente uma pergunta-semente com multiplas partes — nesse',
+    'caso, escolha a parte mais importante e faca so ela. NUNCA use "e" para conectar duas',
+    'perguntas distintas numa mesma fala. Uma fala sua tem no maximo UM ponto de interrogacao.',
+    '',
+    'REGRA CRITICA DE NAO INSISTIR — sobrepoe qualquer outra instrucao deste prompt ou do roteiro:',
+    'Depois de um follow-up, se o candidato ja respondeu — mesmo que nao seja a resposta ideal, ou',
+    'fuja um pouco do ponto — reconheca brevemente e avance para o proximo bloco. NUNCA insista,',
+    'repita a pergunta de outra forma, ou tente "puxar" uma resposta melhor. A qualidade da',
+    'resposta e sinal de avaliacao, nao motivo para travar a conversa.',
+    '',
     'REGRAS IMPORTANTES:',
     '1. Faca UMA pergunta por vez (curta e clara, falavel em voz alta).',
     '2. Referencie o que o candidato acabou de dizer antes de fazer a proxima pergunta, sempre de forma neutra (sem avaliar).',
-    '3. Siga o roteiro de blocos na ordem; quando a resposta for vaga, aprofunde com as sondas BEI do bloco antes de avancar.',
+    '3. Siga o roteiro de blocos na ordem. Quando a resposta for vaga, voce pode fazer NO MAXIMO UM follow-up por bloco (tambem uma pergunta unica); depois dele, avance — mesmo que a resposta continue imperfeita.',
+    '3b. Cada bloco com uma unica pergunta-semente ocupa UM turno (mais, no maximo, o follow-up). Blocos com varias perguntas listadas ocupam UM TURNO POR PERGUNTA.',
     `4. Quando ja tiver coberto os blocos OU atingido ${maxPerguntas} perguntas, NAO faca outra pergunta nem escreva uma fala de encerramento: responda apenas com o marcador ${MARCADOR_ENCERRAR} sozinho. A despedida ao candidato e feita automaticamente pelo sistema.`,
     `5. Use o marcador ${MARCADOR_ENCERRAR} APENAS ao encerrar, nunca antes.`,
     '6. Nao invente informacoes do candidato; baseie-se no curriculo e nas respostas.',
@@ -339,6 +447,13 @@ function extrairEncerrar(texto) {
 
 // Monta a lista linear de perguntas a partir do roteiro (blocos na ordem). Cada bloco
 // contribui com sua(s) pergunta(s) roteirizada(s); o topico (chip) e o nome do bloco.
+//
+// Roteiro comportamental (redesenho): 1 abertura (nao avaliada) + 3 competencias
+// (avaliadas) + roleplay (so SDR, avaliado, max_trocas=3) + 3 perguntas de fechamento
+// (nao avaliadas). O fechamento vira 3 ENTRADAS distintas (maxTrocas=1 cada), logo 3
+// turnos separados e UM unico chip "Fechamento" — o ponteiro de progresso avanca uma
+// posicao por troca. Chips resultantes: 6 no SDR e 5 no Closer (antes: 12 e 9).
+// A pergunta obrigatoria de abertura (injetada abaixo) entra sob o chip da abertura.
 function montarPerguntas(roteiro) {
   const { blocos } = normalizarEstrutura(roteiro);
   const perguntas = [];

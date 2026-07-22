@@ -52,7 +52,7 @@ function migrarRoteiroCloser() {
 
     db.prepare(
       `UPDATE roteiros
-         SET nome = ?, perfil = 'CLOSER', versao = 2, estrutura = ?, atualizado_em = datetime('now')
+         SET nome = ?, perfil = 'CLOSER', versao = 3, estrutura = ?, atualizado_em = datetime('now')
        WHERE id = ?`,
     ).run(NOME_ROTEIRO, estruturaJson, roteiroId);
     console.log(
@@ -61,7 +61,7 @@ function migrarRoteiroCloser() {
   } else {
     // Rede de seguranca: roteiro alvo nao existe -> cria e aponta a vaga p/ ele.
     const info = db
-      .prepare("INSERT INTO roteiros (nome, perfil, versao, estrutura) VALUES (?, 'CLOSER', 2, ?)")
+      .prepare("INSERT INTO roteiros (nome, perfil, versao, estrutura) VALUES (?, 'CLOSER', 3, ?)")
       .run(NOME_ROTEIRO, estruturaJson);
     idFinal = Number(info.lastInsertRowid);
     if (vagaAtiva) {

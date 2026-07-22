@@ -28,6 +28,7 @@ const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { semear, ROTEIRO_SDR } = require('../src/db/seed');
 const { gerarRelatorio } = require('../src/lib/relatorio');
+const { normalizarEstrutura } = require('../src/lib/entrevista');
 const { criarApp } = require('../src/server');
 
 // Estado compartilhado, montado no before().
@@ -122,9 +123,10 @@ test('gerarRelatorio (mock): avaliacao deterministica, campo coberta, sem tocar 
   // RECRUITER_EMAIL definido + mock apenas loga o e-mail -> status final 'enviado'.
   assert.equal(reportCompleto.status, 'enviado');
 
-  // Item 7.2: SDR migrado para o formato rico — competencias agora no topo da estrutura
-  // (antes: estrutura.blocos.competencias). Mesmos nomes/pesos/ordem, so relocados.
-  const comps = ROTEIRO_SDR.estrutura.competencias;
+  // Redesenho comportamental: as competencias voltaram para dentro de `blocos` e a do
+  // roleplay e derivada. A fonte de verdade passa a ser normalizarEstrutura (a mesma que
+  // relatorio.js consome), em vez de ler a estrutura crua.
+  const comps = normalizarEstrutura(ROTEIRO_SDR).competencias;
   assert.equal(reportCompleto.pontuacoes.length, comps.length);
 
   // Nomes preservam a acentuacao do roteiro (regressao da correcao de acentos).
@@ -246,13 +248,14 @@ test('GET /relatorio/:token — quatro cenarios', async (t) => {
       assert.equal(res.status, 200);
       const html = await res.text();
       assert.match(html, /Fulano de Teste/);
-      assert.match(html, /Resiliência\/volume/); // acentuacao na tela
+      assert.match(html, /Ambição\/Fome/); // acentuacao na tela
       assert.match(html, /Não abordada nesta entrevista/); // badge da competencia coberta=false
-      // Score ponderado (Fase 5): mock = notas 4 (cobertas) e 2 (ultima nao coberta).
-      // Item 7.6: mock usa nivel, mapeado no calculo (alta=5, baixa=1). SDR 9 competencias,
-      // pesos 2,1,2,1,2,1,1,1,1; a ULTIMA (Fome, peso 1) e 'baixa'. (5*11 + 1*1)/12 = 4.7.
+      // Score ponderado (Fase 5): mock usa nivel, mapeado no calculo (alta=5, baixa=1).
+      // Redesenho comportamental: SDR tem 4 competencias (Resiliencia 3, Ambicao/Fome 3,
+      // Fit cultural 2, Simulacao 2); a ULTIMA (Simulacao, peso 2) e 'baixa'.
+      // (5*3 + 5*3 + 5*2 + 1*2)/10 = 4.2.
       assert.match(html, /Pontuação geral/);
-      assert.match(html, /4\.7/);
+      assert.match(html, /4\.2/);
     });
 
     await t.test('pendente -> 200 "sendo processado"', async () => {

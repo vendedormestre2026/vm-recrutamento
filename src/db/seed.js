@@ -7,191 +7,87 @@
 const { migrar } = require('./migrate');
 const db = require('./index');
 
-// Roteiro SDR — formato RICO (blocos array + competencias top-level), mesmo shape do
-// Closer. Migrado do formato antigo/aninhado (item 7.2) SEM mudar o conteudo: mesmas
-// perguntas, pesos, boas-respostas e nomes de bloco/competencia (chips e calculo de
-// pontuacao inalterados). Sondas/instrucao_vera/metodo/pilares novos entram no item 7.3.
+// Roteiro SDR — formato COMPORTAMENTAL (blocos como objeto nomeado: abertura,
+// competencias, roleplay, fechamento). Redesenho: o roteiro deixa de medir tecnica de
+// vendas (abordagem, qualificacao, CRM, postura) e passa a medir COMPORTAMENTO em 3
+// competencias de peso alto, mais um roleplay avaliado. Cada bloco tem UMA pergunta
+// unica e direta — perguntas compostas ("X? E Y? E Z?") foram eliminadas, porque o LLM
+// copia a semente literalmente e o candidato recebia 3-4 perguntas numa fala so.
+// O bloco de fechamento e operacional (nao avaliado) e sai em 3 turnos separados.
 const ROTEIRO_SDR = {
   nome: 'SDR - Padrão v1',
   perfil: 'SDR',
-  versao: 1,
+  versao: 3,
   estrutura: {
     perfil: 'SDR',
-    blocos: [
-      {
-        id: 'abertura',
+    instrucoes_gerais: [
+      'Foque em COMPORTAMENTO: o que o candidato fez, por que fez e o que aprendeu. Nao avalie conhecimento tecnico de vendas nem metodologia nomeada.',
+      'Se a resposta vier totalmente abstrata, peca UM exemplo concreto — no maximo uma vez por bloco. Depois disso, siga em frente com o que foi dito.',
+      'Nunca verbalize julgamento, nota ou opiniao sobre a resposta: a avaliacao acontece depois, fora da conversa.',
+    ],
+    blocos: {
+      abertura: {
         nome: 'Abertura',
-        obrigatorio: true,
-        perguntas: [
-          'O que te atrai em trabalhar com vendas?',
-          'Conte rapidamente sua experiência mais recente na área.',
-        ],
+        avaliado: false,
+        pergunta_semente: 'Me conta sua trajetória em vendas até aqui.',
+        observacao: 'Bloco de contexto, não gera nota de competência.',
       },
-      {
-        id: 'resiliencia_volume',
-        nome: 'Resiliência/volume',
-        obrigatorio: true,
-        pergunta_semente:
-          'Conte um dia de muitas tentativas e poucos retornos. Como manteve o ritmo?',
-        competencias_alvo: ['resiliencia_volume'],
-      },
-      {
-        id: 'abordagem_comunicacao',
-        nome: 'Abordagem/comunicação',
-        obrigatorio: true,
-        pergunta_semente:
-          'Como você conduz um lead do primeiro contato até o agendamento da reunião com o closer? Me explica o seu processo.',
-        competencias_alvo: ['abordagem_comunicacao'],
-      },
-      {
-        id: 'qualificacao',
-        nome: 'Qualificação',
-        obrigatorio: true,
-        pergunta_semente:
-          'Quando percebeu que um lead não era qualificado? Como concluiu isso?',
-        competencias_alvo: ['qualificacao'],
-      },
-      {
-        id: 'organizacao_crm',
-        nome: 'Organização/CRM',
-        obrigatorio: true,
-        pergunta_semente:
-          'Como se organiza para não perder follow-ups? Que ferramentas usa?',
-        competencias_alvo: ['organizacao_crm'],
-      },
-      {
-        id: 'responsabilidade',
-        nome: 'Responsabilidade',
-        obrigatorio: true,
-        pergunta_semente:
-          'Me conta sobre a maior venda ou oportunidade que você perdeu. O que você acha que causou a perda?',
-        competencias_alvo: ['responsabilidade'],
-      },
-      {
-        id: 'ambicao',
-        nome: 'Ambição',
-        obrigatorio: true,
-        pergunta_semente: 'Quais são suas metas de vida para os próximos 1, 3 e 10 anos?',
-        competencias_alvo: ['ambicao'],
-      },
-      {
-        id: 'principios',
-        nome: 'Princípios',
-        obrigatorio: true,
-        pergunta_semente:
-          'Toda empresa tem rotinas e valores próprios — pode ser uma reunião diária, uma forma específica de tratar cliente, um ritual do time. Se [nome da empresa] tivesse uma rotina dessas que não é comum em outros lugares, como você reagiria a ela no dia a dia?',
-        competencias_alvo: ['principios'],
-      },
-      {
-        id: 'postura_alto_padrao',
-        nome: 'Postura para Alto Padrão',
-        obrigatorio: true,
-        pergunta_semente:
-          'Como você se prepara antes de uma ligação ou reunião importante de vendas — o que você faz para chegar afiado?',
-        competencias_alvo: ['postura_alto_padrao'],
-      },
-      {
-        id: 'fome',
-        nome: 'Fome',
-        obrigatorio: true,
-        pergunta_semente:
-          'O que faz você continuar buscando bater a meta mesmo num dia em que já bateu o mínimo esperado?',
-        competencias_alvo: ['fome'],
-      },
-      {
+      competencias: [
+        {
+          id: 'resiliencia',
+          nome: 'Resiliência',
+          peso: 3,
+          pergunta_semente:
+            'Descreva um dia de prospecção que foi particularmente difícil pra você.',
+          boa_resposta:
+            'Demonstra constância e método pra manter ritmo, sem terceirizar frustração.',
+        },
+        {
+          id: 'ambicao_fome',
+          nome: 'Ambição/Fome',
+          peso: 3,
+          pergunta_semente:
+            'O que te faz continuar buscando mais, mesmo num dia em que você já bateu o mínimo esperado?',
+          boa_resposta: 'Motivação intrínseca clara, não só meta imposta de fora.',
+        },
+        {
+          id: 'fit_cultural',
+          nome: 'Fit cultural',
+          peso: 2,
+          pergunta_semente: 'O que é inegociável pra você num ambiente de trabalho?',
+          boa_resposta: 'Valores concretos e específicos, com exemplo real.',
+        },
+      ],
+      roleplay: {
         id: 'simulacao_qualificacao',
         nome: 'Simulação de qualificação',
-        obrigatorio: true,
-        max_trocas: 3,
-        pergunta_semente:
-          'Agora vou te pedir uma simulação. Vou entrar no papel de um lead que você acabou de ligar do zero. O cenário: sou dono de um pequeno negócio e nunca ouvi falar da sua empresa. Você tem 30 segundos para me engajar antes que eu desligue. Pode começar quando quiser.',
+        avaliado: true,
+        peso: 2,
+        contexto_abertura:
+          'Agora vou simular ser um lead que você está prospectando. Vou te colocar uma objeção real. Pode começar a ligação.',
         objecao_padrao:
-          'Olha, agora não é um bom momento e eu já uso outro fornecedor para isso.',
+          'Olha, agora não é um bom momento, e eu já uso outro fornecedor pra isso.',
         instrucao_vera:
-          'Entrar no papel de um lead ocupado e cético, mas não hostil. Usar a objeção padrão de tempo/fornecedor já existente. Após a simulação, sair do papel e perguntar: "Que nota você daria para você nessa simulação, de 0 a 10? E por quê?" Após a autoavaliação do candidato, agradecer de forma neutra e seguir em frente, SEM dar sua própria nota, elogio ou crítica. Observar internamente (para o relatório) como o candidato conduziu a qualificação e a própria autoavaliação, sem verbalizar nada avaliativo ao candidato.',
-        o_que_observar: [
-          'Consegue prender a atenção nos primeiros segundos?',
-          'Faz perguntas para qualificar ou só recita um discurso decorado?',
-          'Como reage à objeção: contorna com uma pergunta ou insiste sem ouvir?',
-          'Como reage ao feedback: aceita, defende ou ignora?',
-        ],
-        competencias_alvo: ['qualificacao'],
+          'Use essa objeção uma única vez. Se o candidato responder com qualquer argumento razoável — mesmo simples, mesmo sem técnica nomeada — reconheça brevemente e avance para a pergunta de fechamento da simulação. Nunca repita a mesma objeção duas vezes.',
+        pergunta_fechamento_simulacao: 'Saindo do papel: como você avalia essa ligação?',
+        max_trocas: 3,
+        // boa_resposta NAO veio na especificacao do redesenho; redigida aqui para que a
+        // competencia do roleplay tenha referencia de avaliacao no relatorio (relatorio.js
+        // deriva a lista de competencias do roteiro). Revisar com o Jean.
+        boa_resposta:
+          'Reage a objecao sem travar nem insistir no mesmo argumento; devolve com pergunta ou reenquadra a conversa. Na autoavaliacao, e honesto sobre o proprio desempenho, sem se supervalorizar nem se demolir.',
       },
-      {
-        id: 'fechamento',
+      fechamento: {
         nome: 'Fechamento',
-        obrigatorio: true,
+        avaliado: false,
         perguntas: [
-          'Disponibilidade de início.',
-          'Expectativa de remuneração/comissão.',
-          'Por que deveríamos te escolher?',
+          'Qual é sua disponibilidade para início?',
+          'Qual é sua expectativa de remuneração?',
+          'Por que deveríamos te escolher entre os candidatos?',
         ],
+        observacao: '3 perguntas, 3 turnos separados — nunca despejar juntas.',
       },
-    ],
-    competencias: [
-      {
-        id: 'resiliencia_volume',
-        nome: 'Resiliência/volume',
-        peso: 2,
-        boa_resposta:
-          'Demonstra constância, método para manter ritmo e não terceiriza a culpa.',
-      },
-      {
-        id: 'abordagem_comunicacao',
-        nome: 'Abordagem/comunicação',
-        peso: 1,
-        boa_resposta:
-          'Tem abertura clara, gera valor rápido e conduz o lead com um processo claro até o agendamento da reunião com o closer, sem ser invasivo.',
-      },
-      {
-        id: 'qualificacao',
-        nome: 'Qualificação',
-        peso: 2,
-        boa_resposta:
-          'Usa critérios (ex.: BANT/perfil), faz perguntas certas e decide com objetividade.',
-      },
-      {
-        id: 'organizacao_crm',
-        nome: 'Organização/CRM',
-        peso: 1,
-        boa_resposta: 'Tem rotina, cadência e usa CRM/ferramentas de forma disciplinada.',
-      },
-      {
-        id: 'responsabilidade',
-        nome: 'Responsabilidade',
-        peso: 2,
-        boa_resposta:
-          'Assume proporção de responsabilidade própria na perda, sem terceirizar toda a culpa para o cliente ou fatores externos; demonstra aprendizado concreto extraído do episódio.',
-      },
-      {
-        id: 'ambicao',
-        nome: 'Ambição',
-        peso: 1,
-        boa_resposta:
-          'Verbaliza metas concretas e crescentes, conectadas a crescimento profissional/financeiro; demonstra visão de médio-longo prazo.',
-      },
-      {
-        id: 'principios',
-        nome: 'Princípios',
-        peso: 1,
-        boa_resposta:
-          'Demonstra flexibilidade e respeito a normas e culturas diferentes da sua, sem soar servil; expressa que adaptaria o comportamento mantendo a integridade pessoal, sem rejeitar a rotina só por ser incomum.',
-      },
-      {
-        id: 'postura_alto_padrao',
-        nome: 'Postura para Alto Padrão',
-        peso: 1,
-        boa_resposta:
-          'Descreve um ritual concreto de preparação (estudo do lead/empresa, ensaio de abordagem, organização de material), não apenas "me preparo mentalmente"; demonstra disciplina e cuidado com a imagem profissional.',
-      },
-      {
-        id: 'fome',
-        nome: 'Fome',
-        peso: 1,
-        boa_resposta:
-          'Expressa motivação intrínseca além da meta mínima — menciona buscar superação pessoal ou recordes, não apenas cumprir tabela por obrigação.',
-      },
-    ],
+    },
     rubrica: {
       escala: '1-5',
       saida: 'nota + justificativa curta por competencia, mais resumo e pontos de atencao',
