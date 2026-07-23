@@ -469,18 +469,40 @@ router.get('/video/:slug', exigirCandidato, bloquearSeModoSimples, (req, res) =>
 // dos dados da application + titulo da vaga e vai URL-encoded. Sem numero: botao
 // desabilitado + aviso no log (a pagina ainda renderiza).
 function paginaConfirmacaoSimples({ candidato, vaga }) {
-  const nome = nomeCandidato(candidato);
+  const nome = nomeCandidato(candidato); // ja junta nome + sobrenome (fallback: e-mail)
   const tituloVaga = (vaga && vaga.titulo) || 'a vaga';
   const telefone = (candidato && candidato.telefone) || 'não informado';
+  const email = (candidato && candidato.email) || 'não informado';
 
   const numero = String(config.recrutador.whatsapp || '').replace(/\D/g, ''); // wa.me: so digitos
-  const mensagem = `Olá! Nova candidatura para a vaga ${tituloVaga}. Candidato: ${nome}. Telefone: ${telefone}.`;
+  // Resumo da candidatura para o recrutador. Sem "empresa" (sistema mono-empresa, sem
+  // valor dinamico a puxar) e sem inventar campos que a application nao tem. \n vira
+  // quebra de linha no WhatsApp apos o encodeURIComponent.
+  const mensagem =
+    `👋 Candidatura de ${nome}\n\n` +
+    `📧 E-mail: ${email}\n` +
+    `📱 WhatsApp: ${telefone}\n` +
+    `💼 Vaga: ${tituloVaga}`;
 
   let botao;
+  let autoAbrir = '';
   if (numero) {
     // encodeURIComponent no texto: tambem neutraliza aspas/&, entao o href e seguro no atributo.
     const href = `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`;
-    botao = `<a class="vm-btn vm-btn--primario" href="${href}" target="_blank" rel="noopener noreferrer">Avisar recrutador no WhatsApp</a>`;
+    botao = `<a class="vm-btn vm-btn--primario" href="${href}" target="_blank" rel="noopener noreferrer" data-wa-auto>Avisar recrutador no WhatsApp</a>`;
+    // BONUS best-effort: tenta abrir o WhatsApp automaticamente ao carregar. NAO e o
+    // caminho garantido — a maioria dos navegadores (sobretudo mobile) bloqueia
+    // window.open sem gesto do usuario, entao isso falha SILENCIOSAMENTE na maior parte
+    // dos acessos. O link <a> visivel acima continua sendo o caminho real. Le o href do
+    // proprio <a> (evita qualquer problema de escape ao reinjetar a URL no script).
+    autoAbrir = `
+    <script>
+      (function () {
+        var a = document.querySelector('[data-wa-auto]');
+        if (!a) return;
+        try { window.open(a.href, '_blank', 'noopener'); } catch (e) { /* ok: o botao e o fallback */ }
+      })();
+    </script>`;
   } else {
     console.warn('[confirmacao] RECRUITER_WHATSAPP ausente; botão de WhatsApp desabilitado.');
     botao = `<button type="button" class="vm-btn vm-btn--primario" disabled aria-disabled="true">Avisar recrutador no WhatsApp</button>
@@ -495,7 +517,7 @@ function paginaConfirmacaoSimples({ candidato, vaga }) {
       <div class="vm-acoes">
         ${botao}
       </div>
-    </section>`;
+    </section>${autoAbrir}`;
 
   return pagina({ titulo: 'Candidatura recebida', tema: 'claro', conteudo });
 }
