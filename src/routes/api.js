@@ -24,6 +24,10 @@ const stt = require('../providers/stt');
 const tts = require('../providers/tts');
 const drive = require('../providers/drive');
 const email = require('../providers/email');
+// Alias do MESMO provider (modulo cacheado): dentro do handler POST /aplicacao a var
+// local "email" (e-mail do candidato) sombreia o import acima, entao o disparo ao
+// recrutador precisa de um nome nao-sombreado. Mesma convencao de api_banco_curriculos.js.
+const emailProvider = require('../providers/email');
 const { escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -213,6 +217,39 @@ router.post('/aplicacao', (req, res) => {
         console.log(
           `[dev] application criada — token=${token} (use em /identificacao). Este log NAO ocorre em producao.`,
         );
+      }
+
+      // ── E-mail ao recrutador (Resend) — fire-and-forget ──────────────────────────
+      // Avisa o recrutador da nova candidatura com todos os campos + link do painel.
+      // Falha (ou provider indisponivel) SO loga: nunca quebra nem atrasa a criacao da
+      // candidatura nem a resposta ao candidato (mesmo padrao de api_banco_curriculos.js).
+      // Destino SO de config.recrutador.email (env RECRUITER_EMAIL); vazio -> pula.
+      const destinoRecrutador = config.recrutador.email;
+      if (destinoRecrutador) {
+        const linkAdmin = `${config.baseUrl}/admin/candidato/${applicationId}`;
+        const linha = (rotulo, valor) =>
+          `<tr><td style="padding:4px 8px;font-weight:bold">${rotulo}</td><td style="padding:4px 8px">${escapeHtml(valor || '—')}</td></tr>`;
+        const assuntoRecrutador = `Nova candidatura — ${vaga.titulo}: ${nome} ${sobrenome}`;
+        const htmlRecrutador = `
+          <h2>Nova candidatura</h2>
+          <p>Vaga: <strong>${escapeHtml(vaga.titulo)}</strong></p>
+          <table style="border-collapse:collapse">
+            ${linha('Nome', `${nome} ${sobrenome}`.trim())}
+            ${linha('E-mail', email)}
+            ${linha('Telefone', telefone)}
+            ${linha('LinkedIn', linkedin)}
+            ${linha('Origem (utm_source)', utmSource)}
+          </table>
+          <p><a href="${linkAdmin}">Abrir candidatura no painel</a></p>`;
+        emailProvider
+          .enviar(destinoRecrutador, assuntoRecrutador, htmlRecrutador)
+          .catch((erroEmail) => {
+            console.error(
+              `[api/aplicacao] falha ao enviar e-mail ao recrutador: ${erroEmail.message}`,
+            );
+          });
+      } else {
+        console.warn('[api/aplicacao] RECRUITER_EMAIL ausente; e-mail ao recrutador nao enviado.');
       }
 
       // Grava a sessao do candidato e bifurca o funil (Func. 2), com a decisao
