@@ -119,6 +119,20 @@ router.get('/vaga/:slug', (req, res) => {
     console.error('[vaga] falha ao registrar acesso (métrica, ignorado):', e.message);
   }
 
+  // Origem do lead (first-touch): captura utm_source da query da campanha num cookie
+  // proprio (vm_utm). NAO ha sessao de servidor nesta etapa; o cookie sobrevive ao hop
+  // /vaga -> /aplicar e e lido no POST /api/aplicacao. First-touch: so grava se ainda
+  // nao existir (nao sobrescreve a primeira origem). Sem utm_source na query: nada a fazer.
+  const utmSourceRecebido = req.query.utm_source;
+  if (utmSourceRecebido && !(req.cookies && req.cookies.vm_utm)) {
+    res.cookie('vm_utm', String(utmSourceRecebido), {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+  }
+
   const esc = escapeHtml;
 
   // Monta uma <section> "titulo (h2) + lista". Retorna '' quando nao ha itens

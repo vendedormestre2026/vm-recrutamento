@@ -113,6 +113,11 @@ function migrar() {
   // link de retomada (ISO/UTC). Usado para nao reenviar dentro de 30 min. Idempotente.
   adicionarColunaSeFaltar('applications', 'enviado_retomada_em', 'TEXT');
 
+  // Origem do lead (first-touch): utm_source capturado no cookie vm_utm na Pagina da
+  // Vaga e persistido na criacao da application. NULL em bancos antigos; novas linhas
+  // gravam a origem ou 'direto' quando nao ha UTM. Aditiva, sem CHECK.
+  adicionarColunaSeFaltar('applications', 'utm_source', 'TEXT');
+
   // Painel do recrutador - soft-delete de lead: momento do arquivamento (ISO/UTC).
   // NULL = ativo. Aditiva (sem default/CHECK/DROP). Arquivados saem da listagem do
   // painel, mas o historico e preservado; reversivel via restaurarAplicacao.

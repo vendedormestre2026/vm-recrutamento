@@ -390,10 +390,10 @@ function criarAplicacao(aplicacao) {
   const info = getDb().prepare(`
     INSERT INTO applications
       (job_id, nome, sobrenome, email, telefone, linkedin_url,
-       curriculo_path, curriculo_texto, campos_extras, token, status, consent_at)
+       curriculo_path, curriculo_texto, campos_extras, token, utm_source, status, consent_at)
     VALUES
       (@job_id, @nome, @sobrenome, @email, @telefone, @linkedin_url,
-       @curriculo_path, @curriculo_texto, @campos_extras, @token, @status, datetime('now'))
+       @curriculo_path, @curriculo_texto, @campos_extras, @token, @utm_source, @status, datetime('now'))
   `).run({
     job_id: aplicacao.job_id,
     nome: aplicacao.nome || null,
@@ -405,6 +405,7 @@ function criarAplicacao(aplicacao) {
     curriculo_texto: aplicacao.curriculo_texto || null,
     campos_extras: JSON.stringify(aplicacao.campos_extras || {}),
     token: aplicacao.token || null,
+    utm_source: aplicacao.utm_source || null,
     status: aplicacao.status || 'aplicado',
   });
   return Number(info.lastInsertRowid);

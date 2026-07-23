@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS applications (
   curriculo_texto TEXT,           -- texto extraido p/ contexto do agente
   campos_extras  TEXT,            -- (legado) nao mais coletado; novas linhas gravam '{}'. Coluna orfa mantida.
   token          TEXT UNIQUE,     -- acesso retomavel
+  utm_source     TEXT,            -- origem do lead (first-touch, cookie vm_utm); 'direto' quando sem UTM
   status         TEXT NOT NULL DEFAULT 'aplicado'
                    CHECK (status IN ('aplicado', 'em_entrevista', 'concluido')),
   consent_at          TEXT,        -- (Fase 5/LGPD) quando aceitou a coleta/uso dos dados (checkbox da aplicacao)

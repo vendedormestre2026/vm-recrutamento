@@ -178,6 +178,10 @@ router.post('/aplicacao', (req, res) => {
 
       const telefone = `${ddi} ${telefoneNum}`.trim();
 
+      // Origem do lead: cookie vm_utm setado (first-touch) na Pagina da Vaga. Ausente
+      // (acesso direto, sem UTM) -> 'direto'. cookie-parser ja roda no app (server.js).
+      const utmSource = (req.cookies && req.cookies.vm_utm) || 'direto';
+
       const token = session.gerarToken();
 
       // Salva o PDF no volume persistente (cria a pasta se nao existir)
@@ -189,7 +193,7 @@ router.post('/aplicacao', (req, res) => {
       const curriculoTexto = await extrairTextoPdf(req.file.buffer);
 
       // Persiste a application pela camada de dados agnostica
-      db.criarAplicacao({
+      const applicationId = db.criarAplicacao({
         job_id: vaga.id,
         nome,
         sobrenome,
@@ -199,6 +203,7 @@ router.post('/aplicacao', (req, res) => {
         curriculo_path: caminhoPdf,
         curriculo_texto: curriculoTexto,
         token,
+        utm_source: utmSource,
         status: 'aplicado',
       });
 
