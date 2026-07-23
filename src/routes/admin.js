@@ -17,6 +17,7 @@ const drive = require('../providers/drive');
 const llm = require('../providers/llm');
 const { importarVagaDeBriefing } = require('../lib/importar_vaga');
 const { extrairYoutubeId } = require('../lib/youtube');
+const { modoEntrevistaAtivo } = require('../lib/modo');
 const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
@@ -1555,16 +1556,23 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
 
 // Bloco "Links por etapa": URLs ABSOLUTAS (config.baseUrl + caminho) de cada etapa
 // do funil desta vaga, para parametrizar no GTM. Cada uma com botao "Copiar". A de
-// Confirmacao (/preparacao/:slug) e a que marca o LEAD no GTM. O <script> de copia
-// vai junto (o shell do admin nao carrega app.js).
+// "Confirmacao (Lead)" e a pagina que carrega logo apos o formulario e marca o LEAD
+// no GTM — e ela DEPENDE DO MODO da vaga: modo Completo -> /preparacao/:slug (tela de
+// preparacao da entrevista); modo Simples -> /confirmacao/:slug (tela "candidatura
+// recebida"). A decisao usa modoEntrevistaAtivo (lib/modo), o MESMO galho do redirect
+// pos-aplicacao em api.js, para painel e funil real ficarem sempre em sincronia. O
+// <script> de copia vai junto (o shell do admin nao carrega app.js).
 function blocoLinksEtapa(vaga) {
   const base = config.baseUrl;
+  const destinoLead = modoEntrevistaAtivo(vaga)
+    ? `${base}/preparacao/${vaga.slug}`
+    : `${base}/confirmacao/${vaga.slug}`;
   const linhas = [
     ['Vaga', `${base}/vaga/${vaga.slug}`, 'Página pública da vaga — destino do tráfego pago.'],
     ['Formulário', `${base}/aplicar/${vaga.slug}`, 'Formulário de candidatura.'],
     [
       'Confirmação (Lead)',
-      `${base}/preparacao/${vaga.slug}`,
+      destinoLead,
       'É esta que marca o LEAD no GTM (pageview por vaga). Use no acompanhamento de conversão.',
     ],
   ];
