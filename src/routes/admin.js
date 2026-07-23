@@ -647,6 +647,12 @@ router.get('/candidato/:id', (req, res) => {
     ? `<a href="${escapeHtml(cand.linkedin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cand.linkedin_url)}</a>`
     : '—';
 
+  // Origem do lead (utm_source). NULL (candidaturas anteriores a esta feature) e o
+  // valor literal 'direto' (acesso sem UTM) exibem como "Direto"; qualquer outra
+  // origem mostra o utm_source cru (escapado). Nunca "null" nem em branco na tela.
+  const origemLead =
+    cand.utm_source && cand.utm_source !== 'direto' ? escapeHtml(cand.utm_source) : 'Direto';
+
   const arquivado = Boolean(cand.deleted_at);
 
   // Aviso pos-acao (edicao/restauracao), sinalizado por query string apos o redirect.
@@ -692,6 +698,7 @@ router.get('/candidato/:id', (req, res) => {
         <div><dt>E-mail</dt><dd>${escapeHtml(cand.email || '—')}</dd></div>
         <div><dt>Telefone</dt><dd>${escapeHtml(cand.telefone || '—')}</dd></div>
         <div><dt>LinkedIn</dt><dd>${linkedin}</dd></div>
+        <div><dt>Origem (UTM)</dt><dd>${origemLead}</dd></div>
         ${cand.cidade ? `<div><dt>Cidade</dt><dd>${escapeHtml(cand.cidade)}</dd></div>` : ''}
         <div><dt>Vaga</dt><dd>${escapeHtml((vaga && vaga.titulo) || cand.vaga_titulo || '—')}</dd></div>
         <div><dt>Status</dt><dd>${badgeStatus(cand.status)}</dd></div>
