@@ -390,10 +390,12 @@ function criarAplicacao(aplicacao) {
   const info = getDb().prepare(`
     INSERT INTO applications
       (job_id, nome, sobrenome, email, telefone, linkedin_url,
-       curriculo_path, curriculo_texto, campos_extras, token, utm_source, status, consent_at)
+       curriculo_path, curriculo_texto, campos_extras, token,
+       utm_source, utm_medium, utm_campaign, utm_content, utm_term, status, consent_at)
     VALUES
       (@job_id, @nome, @sobrenome, @email, @telefone, @linkedin_url,
-       @curriculo_path, @curriculo_texto, @campos_extras, @token, @utm_source, @status, datetime('now'))
+       @curriculo_path, @curriculo_texto, @campos_extras, @token,
+       @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term, @status, datetime('now'))
   `).run({
     job_id: aplicacao.job_id,
     nome: aplicacao.nome || null,
@@ -405,7 +407,13 @@ function criarAplicacao(aplicacao) {
     curriculo_texto: aplicacao.curriculo_texto || null,
     campos_extras: JSON.stringify(aplicacao.campos_extras || {}),
     token: aplicacao.token || null,
+    // utm_source preserva o comportamento atual (o chamador passa 'direto' quando
+    // ausente). Os demais UTM ficam NULL quando ausentes — sem inventar 'direto' p/ eles.
     utm_source: aplicacao.utm_source || null,
+    utm_medium: aplicacao.utm_medium || null,
+    utm_campaign: aplicacao.utm_campaign || null,
+    utm_content: aplicacao.utm_content || null,
+    utm_term: aplicacao.utm_term || null,
     status: aplicacao.status || 'aplicado',
   });
   return Number(info.lastInsertRowid);
@@ -779,8 +787,28 @@ function obterReportPorInterview(interviewId) {
 // Registra UM acesso a pagina publica da vaga (topo do funil). Uma linha por acesso
 // (inclui refresh) — deduplicacao por sessao/bot fica como refinamento futuro. O
 // criado_em usa o default da tabela (datetime('now')).
-function registrarAcessoVaga(jobId) {
-  getDb().prepare('INSERT INTO vaga_acessos (job_id) VALUES (?)').run(jobId);
+//
+// `utm` (opcional) e o objeto do helper de UTM ({ source, medium, campaign, content,
+// term }) ou null. Retrocompativel: chamado so com jobId, grava NULL nas cinco colunas
+// de UTM (comportamento historico preservado). Nao ha literal 'direto' aqui — o topo do
+// funil registra a origem observada ou NULL.
+function registrarAcessoVaga(jobId, utm = null) {
+  const u = utm || {};
+  getDb()
+    .prepare(
+      `INSERT INTO vaga_acessos
+         (job_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term)
+       VALUES
+         (@job_id, @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term)`,
+    )
+    .run({
+      job_id: jobId,
+      utm_source: u.source || null,
+      utm_medium: u.medium || null,
+      utm_campaign: u.campaign || null,
+      utm_content: u.content || null,
+      utm_term: u.term || null,
+    });
 }
 
 // Totais para o rodape do painel.

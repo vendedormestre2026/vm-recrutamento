@@ -117,6 +117,12 @@ function migrar() {
   // Vaga e persistido na criacao da application. NULL em bancos antigos; novas linhas
   // gravam a origem ou 'direto' quando nao ha UTM. Aditiva, sem CHECK.
   adicionarColunaSeFaltar('applications', 'utm_source', 'TEXT');
+  // Demais parametros UTM (first-touch, mesmo cookie vm_utm). Diferente de utm_source,
+  // NAO recebem o literal 'direto' quando ausentes: ficam NULL. Aditivas, sem CHECK.
+  adicionarColunaSeFaltar('applications', 'utm_medium', 'TEXT');
+  adicionarColunaSeFaltar('applications', 'utm_campaign', 'TEXT');
+  adicionarColunaSeFaltar('applications', 'utm_content', 'TEXT');
+  adicionarColunaSeFaltar('applications', 'utm_term', 'TEXT');
 
   // Painel do recrutador - soft-delete de lead: momento do arquivamento (ISO/UTC).
   // NULL = ativo. Aditiva (sem default/CHECK/DROP). Arquivados saem da listagem do
@@ -135,9 +141,20 @@ function migrar() {
   //   Nasce NULL e permanece NULL ate o item 3.
   adicionarColunaSeFaltar('applications', 'status_recrutador', 'TEXT');
 
-  // Indices de reports ficam aqui (e nao no schema.sql) porque dependem das
-  // colunas acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
+  // Origem do lead no TOPO do funil (first-touch): mesma UTM do cookie vm_utm, agora
+  // tambem gravada no acesso a Pagina da Vaga (antes so a application guardava). Permite
+  // atribuir Acessos a uma origem no dashboard. NULL em bancos antigos e quando nao ha
+  // UTM na visita (sem literal 'direto' aqui). Aditivas, sem CHECK.
+  adicionarColunaSeFaltar('vaga_acessos', 'utm_source', 'TEXT');
+  adicionarColunaSeFaltar('vaga_acessos', 'utm_medium', 'TEXT');
+  adicionarColunaSeFaltar('vaga_acessos', 'utm_campaign', 'TEXT');
+  adicionarColunaSeFaltar('vaga_acessos', 'utm_content', 'TEXT');
+  adicionarColunaSeFaltar('vaga_acessos', 'utm_term', 'TEXT');
+
+  // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
+  // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();
+  db.exec('CREATE INDEX IF NOT EXISTS idx_vaga_acessos_utm ON vaga_acessos(utm_source)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_token ON reports(token)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_reports_interview ON reports(interview_id)');
 

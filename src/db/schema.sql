@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS applications (
   campos_extras  TEXT,            -- (legado) nao mais coletado; novas linhas gravam '{}'. Coluna orfa mantida.
   token          TEXT UNIQUE,     -- acesso retomavel
   utm_source     TEXT,            -- origem do lead (first-touch, cookie vm_utm); 'direto' quando sem UTM
+  utm_medium     TEXT,            -- demais UTM (first-touch, cookie vm_utm); NULL quando ausente (sem 'direto')
+  utm_campaign   TEXT,
+  utm_content    TEXT,
+  utm_term       TEXT,
   status         TEXT NOT NULL DEFAULT 'aplicado'
                    CHECK (status IN ('aplicado', 'em_entrevista', 'concluido')),
   consent_at          TEXT,        -- (Fase 5/LGPD) quando aceitou a coleta/uso dos dados (checkbox da aplicacao)
@@ -113,9 +117,15 @@ CREATE TABLE IF NOT EXISTS api_usage (
 CREATE TABLE IF NOT EXISTS vaga_acessos (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id    INTEGER NOT NULL REFERENCES jobs(id),
+  utm_source   TEXT,   -- origem do lead no topo do funil (first-touch, cookie vm_utm); NULL quando sem UTM
+  utm_medium   TEXT,   -- demais UTM (first-touch, cookie vm_utm); NULL quando ausente (sem 'direto')
+  utm_campaign TEXT,
+  utm_content  TEXT,
+  utm_term     TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_vaga_acessos_job ON vaga_acessos(job_id);
+CREATE INDEX IF NOT EXISTS idx_vaga_acessos_utm ON vaga_acessos(utm_source);
 
 -- Configuracoes gerais (store chave/valor generico). Usado por ora para uma unica
 -- chave: entrevista_automatica_geral. Sem seed: a ausencia de linha significa "usar o

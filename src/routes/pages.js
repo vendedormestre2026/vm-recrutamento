@@ -10,6 +10,7 @@ const db = require('../db');
 const session = require('../lib/session');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
+const { extrairUtmDaQuery, lerUtmDoCookie, serializarUtmParaCookie } = require('../lib/utm');
 const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
@@ -111,26 +112,34 @@ router.get('/vaga/:slug', (req, res) => {
     );
   }
 
-  // Registra o acesso (topo do funil) em fire-and-forget: nunca bloqueia nem quebra
-  // o render por causa de metrica. So chega aqui apos os gates 404/inativa acima.
-  try {
-    db.registrarAcessoVaga(vaga.id);
-  } catch (e) {
-    console.error('[vaga] falha ao registrar acesso (métrica, ignorado):', e.message);
-  }
+  // Origem do lead (first-touch): captura os cinco parametros UTM da query da campanha
+  // num cookie proprio (vm_utm, JSON). NAO ha sessao de servidor nesta etapa; o cookie
+  // sobrevive ao hop /vaga -> /aplicar e e lido no POST /api/aplicacao.
+  // First-touch: se o cookie vm_utm JA EXISTE, ele prevalece — nunca sobrescreve a
+  // primeira origem, independentemente da query atual. So gravamos quando ainda nao ha
+  // cookie E ha UTM na query. Sem UTM na query e sem cookie: nada a fazer (o literal
+  // 'direto' e decidido so no momento da aplicacao, nao aqui).
+  const cookieBruto = (req.cookies && req.cookies.vm_utm) || '';
+  const utmQuery = extrairUtmDaQuery(req.query);
+  // UTM efetiva desta visita: com cookie, vale o cookie (first-touch); senao, a query.
+  const utmEfetiva = cookieBruto ? lerUtmDoCookie(cookieBruto) : utmQuery;
 
-  // Origem do lead (first-touch): captura utm_source da query da campanha num cookie
-  // proprio (vm_utm). NAO ha sessao de servidor nesta etapa; o cookie sobrevive ao hop
-  // /vaga -> /aplicar e e lido no POST /api/aplicacao. First-touch: so grava se ainda
-  // nao existir (nao sobrescreve a primeira origem). Sem utm_source na query: nada a fazer.
-  const utmSourceRecebido = req.query.utm_source;
-  if (utmSourceRecebido && !(req.cookies && req.cookies.vm_utm)) {
-    res.cookie('vm_utm', String(utmSourceRecebido), {
+  if (!cookieBruto && utmQuery) {
+    res.cookie('vm_utm', serializarUtmParaCookie(utmQuery), {
       httpOnly: true,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000,
       path: '/',
     });
+  }
+
+  // Registra o acesso (topo do funil) em fire-and-forget: nunca bloqueia nem quebra
+  // o render por causa de metrica. So chega aqui apos os gates 404/inativa acima.
+  // Passa a UTM efetiva para atribuir o acesso a uma origem (null quando nao ha UTM).
+  try {
+    db.registrarAcessoVaga(vaga.id, utmEfetiva);
+  } catch (e) {
+    console.error('[vaga] falha ao registrar acesso (métrica, ignorado):', e.message);
   }
 
   const esc = escapeHtml;
