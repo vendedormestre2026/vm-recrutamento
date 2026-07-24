@@ -19,6 +19,13 @@ const { importarVagaDeBriefing } = require('../lib/importar_vaga');
 const { extrairYoutubeId } = require('../lib/youtube');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const {
+  normalizarTelefoneWhatsapp,
+  montarLinkWhatsapp,
+  mensagemWhatsappCandidato,
+  RECRUTADOR_PADRAO,
+  TEMPLATE_PADRAO,
+} = require('../lib/whatsapp');
+const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
   rotuloNivel,
@@ -335,6 +342,34 @@ function nomeCompleto(linha) {
   return nome || linha.email || '—';
 }
 
+// Botao "WhatsApp": aponta para a rota interna GET /admin/candidato/:id/whatsapp, que
+// registra o 1o contato e redireciona (302) para o wa.me montado no servidor. Telefone
+// invalido/ausente -> botao desabilitado (btn--off). Ja contatado (contatadoEm) -> estado
+// DISCRETO (ghost + "✓") com title mostrando a data do 1o contato; o clique ainda abre o
+// wa.me (a data original e preservada). Paleta existente, sem cor nova. `variante` ajusta
+// o estilo do botao "novo" quando preciso.
+function botaoWhatsapp({ id, telefone, contatadoEm }, variante = '') {
+  if (normalizarTelefoneWhatsapp(telefone) == null) {
+    return `<span class="btn btn--off">WhatsApp</span>`;
+  }
+  const href = `/admin/candidato/${id}/whatsapp`;
+  if (contatadoEm) {
+    const quando = escapeHtml(formatarDataHora(contatadoEm));
+    return `<a class="btn btn--ghost" href="${href}" target="_blank" rel="noopener noreferrer" title="Já contatado em ${quando}">✓ WhatsApp</a>`;
+  }
+  const classe = variante ? `btn ${variante}` : 'btn';
+  return `<a class="${classe}" href="${href}" target="_blank" rel="noopener noreferrer">WhatsApp</a>`;
+}
+
+// Le a config da mensagem de WhatsApp (nome do recrutador + template) uma unica vez por
+// request, caindo nos padroes do helper quando as chaves ainda nao foram definidas.
+function configWhatsapp() {
+  return {
+    recrutador: db.obterConfig('recrutador_nome', RECRUTADOR_PADRAO),
+    template: db.obterConfig('whatsapp_template', TEMPLATE_PADRAO),
+  };
+}
+
 // Inteiro com separador de milhar (pt-BR).
 function fmtInt(n) {
   return Number(n || 0).toLocaleString('pt-BR');
@@ -396,6 +431,11 @@ router.get('/', (req, res) => {
       const video = c.video_url
         ? `<a href="${escapeHtml(c.video_url)}" target="_blank" rel="noopener noreferrer">Abrir</a>`
         : '—';
+      const whatsapp = botaoWhatsapp({
+        id: c.id,
+        telefone: c.telefone,
+        contatadoEm: c.contatado_whatsapp_em,
+      });
       return `
         <tr>
           <td><input type="checkbox" name="ids" value="${c.id}" aria-label="Selecionar ${escapeHtml(nomeCompleto(c))}"></td>
@@ -408,6 +448,7 @@ router.get('/', (req, res) => {
           <td>${badgeStatusRecrutador(c.status_recrutador)}</td>
           <td>${escapeHtml(formatarDataHora(c.criado_em))}</td>
           <td>${video}</td>
+          <td>${whatsapp}</td>
           <td>${acao}</td>
         </tr>`;
     })
@@ -512,11 +553,11 @@ router.get('/', (req, res) => {
             <tr>
               <th><input type="checkbox" data-selecionar-todos aria-label="Selecionar todos"></th>
               <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Vaga</th>
-              <th>Status</th><th>Status IA</th><th>Status Recrutador</th><th>Criado em</th><th>Vídeo</th><th>Ação</th>
+              <th>Status</th><th>Status IA</th><th>Status Recrutador</th><th>Criado em</th><th>Vídeo</th><th>WhatsApp</th><th>Ação</th>
             </tr>
           </thead>
           <tbody>
-            ${linhas || `<tr><td colspan="11">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
+            ${linhas || `<tr><td colspan="12">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -643,6 +684,14 @@ router.get('/candidato/:id', (req, res) => {
     ? `<a class="btn btn--ghost" href="${escapeHtml(videoUrl)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`
     : `<span class="btn btn--off">Abrir vídeo</span>`;
 
+  // Botao de WhatsApp: mensagem pre-preenchida com nome, titulo da vaga e empresa (quando
+  // a vaga tem empresa preenchida). Telefone invalido -> botao desabilitado (no helper).
+  const botaoWhats = botaoWhatsapp({
+    id: cand.id,
+    telefone: cand.telefone,
+    contatadoEm: cand.contatado_whatsapp_em,
+  });
+
   const linkedin = cand.linkedin_url
     ? `<a href="${escapeHtml(cand.linkedin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cand.linkedin_url)}</a>`
     : '—';
@@ -664,6 +713,12 @@ router.get('/candidato/:id', (req, res) => {
         : req.query.ok === 'status_recrutador'
           ? '<div class="aviso-ok">Decisão do recrutador registrada.</div>'
           : '';
+
+  // Erro pos-acao: telefone invalido ao tentar abrir o WhatsApp (redirect da rota).
+  const flashErro =
+    req.query.erro === 'whatsapp_telefone'
+      ? '<div class="aviso-alerta">Não foi possível abrir o WhatsApp: o telefone do candidato é inválido ou está incompleto. Edite o contato e tente novamente.</div>'
+      : '';
 
   const avisoArquivado = arquivado
     ? `<div class="aviso-alerta">Lead arquivado em ${escapeHtml(formatarDataHora(cand.deleted_at))}. Ele não aparece na listagem, mas o histórico foi preservado.</div>`
@@ -688,6 +743,7 @@ router.get('/candidato/:id', (req, res) => {
       <a class="btn btn--ghost" href="/admin">← Voltar ao painel</a>
     </div>
     ${flash}
+    ${flashErro}
     ${avisoArquivado}
 
     <section class="rel-sec">
@@ -697,6 +753,7 @@ router.get('/candidato/:id', (req, res) => {
         <div><dt>Sobrenome</dt><dd>${escapeHtml(cand.sobrenome || '—')}</dd></div>
         <div><dt>E-mail</dt><dd>${escapeHtml(cand.email || '—')}</dd></div>
         <div><dt>Telefone</dt><dd>${escapeHtml(cand.telefone || '—')}</dd></div>
+        <div><dt>Contato WhatsApp</dt><dd>${cand.contatado_whatsapp_em ? `✓ ${escapeHtml(formatarDataHora(cand.contatado_whatsapp_em))}` : '—'}</dd></div>
         <div><dt>LinkedIn</dt><dd>${linkedin}</dd></div>
         <div><dt>Origem (UTM)</dt><dd>${origemLead}</dd></div>
         ${cand.cidade ? `<div><dt>Cidade</dt><dd>${escapeHtml(cand.cidade)}</dd></div>` : ''}
@@ -741,6 +798,7 @@ router.get('/candidato/:id', (req, res) => {
       <h2>Ações</h2>
       <div class="acoes-linha" style="flex-wrap:wrap;gap:.6rem;">
         ${botaoEditar}
+        ${botaoWhats}
         ${botaoCurriculo}
         ${botaoRelatorio}
         ${botaoVideo}
@@ -749,6 +807,48 @@ router.get('/candidato/:id', (req, res) => {
     </section>`;
 
   res.send(paginaAdmin({ titulo: `Candidato — ${nomeCompleto(cand)}`, conteudo }));
+});
+
+// ── GET /admin/candidato/:id/whatsapp ── registra o 1o contato e abre o wa.me ──
+// Fluxo: valida id -> normaliza telefone (invalido => volta ao detalhe com erro, NUNCA
+// redireciona para um wa.me quebrado) -> grava contatado_whatsapp_em (so na 1a vez) ->
+// 302 para o link wa.me montado no servidor (mensagem do template configurado). Herda o
+// adminAuth (declarada apos router.use(adminAuth)).
+router.get('/candidato/:id/whatsapp', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, {
+      titulo: 'Candidato não encontrado',
+      descricao: 'Não há candidatura com este identificador.',
+    });
+  }
+
+  // Telefone invalido/incompleto: volta ao detalhe com flag de erro (nao abre wa.me quebrado).
+  if (!normalizarTelefoneWhatsapp(cand.telefone)) {
+    return res.redirect(`/admin/candidato/${id}?erro=whatsapp_telefone`);
+  }
+
+  const vaga = cand.job_id ? db.obterVaga(cand.job_id) : null;
+  const waCfg = configWhatsapp();
+  const link = montarLinkWhatsapp(
+    cand.telefone,
+    mensagemWhatsappCandidato({
+      nome: cand.nome,
+      vaga: (vaga && vaga.titulo) || cand.vaga_titulo,
+      empresa: vaga && vaga.empresa,
+      recrutador: waCfg.recrutador,
+      template: waCfg.template,
+    }),
+  );
+  // Redundante (telefone ja validado acima), mas defensivo: sem link, nao redireciona quebrado.
+  if (!link) {
+    return res.redirect(`/admin/candidato/${id}?erro=whatsapp_telefone`);
+  }
+
+  // Registra o 1o contato (idempotente: recliques preservam a data original).
+  db.marcarContatoWhatsapp(id);
+  return res.redirect(link);
 });
 
 // ── GET /admin/candidato/:id/curriculo ── download do PDF do curriculo ──
@@ -1154,6 +1254,11 @@ router.get('/dashboard', (req, res) => {
     ? { vagas: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 } }
     : db.obterFunilConversao({ desde: desde || undefined, ate: ate || undefined });
 
+  // Origem dos leads (B2): mesmo recorte de periodo do funil (reusa desde/ate validados).
+  const origem = temErro
+    ? { origens: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 } }
+    : db.obterOrigemLeads({ desde: desde || undefined, ate: ate || undefined });
+
   const t = funil.totais;
 
   // Etapas do funil (na ordem). taxa = conversao a partir da etapa anterior ('—' se n/d).
@@ -1207,6 +1312,27 @@ router.get('/dashboard', (req, res) => {
           <td class="col-num">${taxaConversao(v.entrevistas_realizadas, v.aplicacoes)}</td>
           <td class="col-num">${fmtInt(v.pre_aprovados)}</td>
           <td class="col-num">${taxaConversao(v.pre_aprovados, v.entrevistas_realizadas)}</td>
+        </tr>`;
+    })
+    .join('');
+
+  // Linhas do quadro de origem (mesma linguagem visual da tabela "Por vaga"). O rotulo
+  // da origem ja vem bucketizado da camada de dados ('Direto'/'Sem origem'/valor cru);
+  // passa por escapeHtml porque origens nomeadas sao dado externo (querystring da campanha).
+  const linhasOrigem = origem.origens
+    .map((o) => {
+      const zero =
+        !o.acessos && !o.aplicacoes && !o.entrevistas_realizadas && !o.pre_aprovados;
+      return `
+        <tr class="${zero ? 'linha-zero' : ''}">
+          <td>${escapeHtml(o.origem || '—')}</td>
+          <td class="col-num">${fmtInt(o.acessos)}</td>
+          <td class="col-num">${fmtInt(o.aplicacoes)}</td>
+          <td class="col-num">${taxaConversao(o.aplicacoes, o.acessos)}</td>
+          <td class="col-num">${fmtInt(o.entrevistas_realizadas)}</td>
+          <td class="col-num">${taxaConversao(o.entrevistas_realizadas, o.aplicacoes)}</td>
+          <td class="col-num">${fmtInt(o.pre_aprovados)}</td>
+          <td class="col-num">${taxaConversao(o.pre_aprovados, o.entrevistas_realizadas)}</td>
         </tr>`;
     })
     .join('');
@@ -1266,6 +1392,35 @@ router.get('/dashboard', (req, res) => {
           </thead>
           <tbody>
             ${linhas || `<tr><td colspan="8">${temErro ? 'Corrija as datas para ver os dados.' : 'Nenhuma vaga cadastrada ainda.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Origem dos leads</h2>
+      <p class="admin-sub" style="color:var(--cinza);font-size:.85rem;margin:.2rem 0 1rem;">
+        A atribuição de origem passou a ser registrada a partir da ativação do rastreio de
+        UTM. Candidaturas anteriores, ou visitas sem parâmetro de campanha, aparecem como
+        <b>Direto</b> (sem UTM no momento da candidatura) ou <b>Sem origem</b> (acesso sem
+        UTM ou anterior ao rastreio).
+      </p>
+      <div class="admin-tab-scroll">
+        <table class="admin-tab">
+          <thead>
+            <tr>
+              <th>Origem</th>
+              <th class="col-num">Acessos</th>
+              <th class="col-num">Aplicações</th>
+              <th class="col-num">Apl/Ace</th>
+              <th class="col-num">Entrevistas</th>
+              <th class="col-num">Ent/Apl</th>
+              <th class="col-num">Pré-aprovados</th>
+              <th class="col-num">Pré/Ent</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhasOrigem || `<tr><td colspan="8">${temErro ? 'Corrija as datas para ver os dados.' : 'Nenhum lead registrado ainda.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1447,6 +1602,13 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
       <span>Título da vaga</span>
       <input type="text" name="titulo" value="${escapeHtml(vaga.titulo || '')}" required>
     </label>
+
+    <label class="campo">
+      <span>Empresa (cliente)</span>
+      <input type="text" name="empresa" value="${escapeHtml(vaga.empresa || '')}" placeholder="Ex.: Acme Ltda">
+    </label>
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+      Nome da empresa dona da vaga. Usado na mensagem de WhatsApp ao candidato. Deixe vazio para omitir.</p>
 
     ${perfilCampo}
 
@@ -1813,6 +1975,7 @@ router.post('/vagas', (req, res) => {
     faixa_pagamento: String(b.faixa_pagamento || '').trim(),
     descricao: String(b.descricao || '').trim(),
     sobre_empresa: String(b.sobre_empresa || '').trim(),
+    empresa: String(b.empresa || '').trim(),
     roteiro_id: roteiro ? roteiro.id : null,
     ativo: b.ativo === '1' || b.ativo === 'on',
     entrevista_ativa: b.entrevista_ativa === '1' || b.entrevista_ativa === 'on',
@@ -1883,6 +2046,7 @@ router.post('/vagas/:id', (req, res) => {
     faixa_pagamento: String(b.faixa_pagamento || '').trim(),
     descricao: String(b.descricao || '').trim(),
     sobre_empresa: String(b.sobre_empresa || '').trim(),
+    empresa: String(b.empresa || '').trim(),
     ativo: b.ativo === '1' || b.ativo === 'on',
     entrevista_ativa: b.entrevista_ativa === '1' || b.entrevista_ativa === 'on',
     // Item 8 — passa a vaga anterior p/ preservar o video valido se a nova entrada falhar.
@@ -2725,6 +2889,10 @@ router.get('/config', (req, res) => {
   const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
   const salvo = req.query.salvo === '1' ? '<p class="aviso-ok">Configuração salva.</p>' : '';
 
+  // Config da mensagem de WhatsApp (B4): nome do recrutador + template editavel.
+  const recrutadorNome = db.obterConfig('recrutador_nome', RECRUTADOR_PADRAO);
+  const whatsappTemplate = db.obterConfig('whatsapp_template', TEMPLATE_PADRAO);
+
   const estado = ativo
     ? '<span class="badge badge--ativa">Ligada</span>'
     : '<span class="badge badge--encerrada">Desligada</span>';
@@ -2756,6 +2924,30 @@ router.get('/config', (req, res) => {
         </label>
         <button type="submit" class="btn">Salvar</button>
       </form>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Mensagem de WhatsApp</h2>
+      <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+        Texto pré-preenchido ao clicar em <b>WhatsApp</b> na lista/detalhe do candidato.
+      </p>
+      <form method="POST" action="/admin/config/whatsapp">
+        <label class="campo" style="max-width:420px;">
+          <span>Nome do recrutador</span>
+          <input type="text" name="recrutador_nome" value="${escapeHtml(recrutadorNome)}" placeholder="${escapeHtml(RECRUTADOR_PADRAO)}">
+        </label>
+        <label class="campo">
+          <span>Template da mensagem</span>
+          <textarea name="whatsapp_template" rows="4">${escapeHtml(whatsappTemplate)}</textarea>
+        </label>
+        <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Placeholders disponíveis:
+          <b>{primeiro_nome}</b> · <b>{vaga}</b> · <b>{empresa}</b> · <b>{recrutador}</b>.
+          Deixe o template <b>vazio</b> para usar o padrão. Quando a vaga não tem empresa,
+          o trecho “ da empresa {empresa}” é removido automaticamente.
+        </p>
+        <button type="submit" class="btn">Salvar</button>
+      </form>
     </section>`;
 
   res.send(paginaAdmin({ titulo: 'Configurações gerais', conteudo }));
@@ -2766,6 +2958,17 @@ router.post('/config/entrevista-automatica', (req, res) => {
   const b = req.body || {};
   const ativo = b.ativo === '1' || b.ativo === 'on';
   db.definirConfigBool(CHAVE_ENTREVISTA_AUTO, ativo);
+  res.redirect('/admin/config?salvo=1');
+});
+
+// ── POST /admin/config/whatsapp ── salva o nome do recrutador + template da mensagem ──
+// Ambos TEXT livres (definirConfig). O template vazio e permitido: mensagemWhatsappCandidato
+// cai no TEMPLATE_PADRAO quando a chave esta vazia. Sem validacao de placeholders (o helper
+// ja ignora desconhecidos e nao quebra).
+router.post('/config/whatsapp', (req, res) => {
+  const b = req.body || {};
+  db.definirConfig('recrutador_nome', String(b.recrutador_nome || '').trim());
+  db.definirConfig('whatsapp_template', String(b.whatsapp_template || '').trim());
   res.redirect('/admin/config?salvo=1');
 });
 

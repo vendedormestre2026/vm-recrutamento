@@ -16,6 +16,7 @@ const session = require('../lib/session');
 const { extrairTextoPdf } = require('../lib/curriculo');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
+const { lerUtmDoCookie } = require('../lib/utm');
 // Adaptadores agnosticos (interface). Os SDKs/chaves so sao tocados quando
 // INTERVIEW_MOCK=false; em mock estes modulos nem sao exercitados.
 const llm = require('../providers/llm');
@@ -182,9 +183,12 @@ router.post('/aplicacao', (req, res) => {
 
       const telefone = `${ddi} ${telefoneNum}`.trim();
 
-      // Origem do lead: cookie vm_utm setado (first-touch) na Pagina da Vaga. Ausente
-      // (acesso direto, sem UTM) -> 'direto'. cookie-parser ja roda no app (server.js).
-      const utmSource = (req.cookies && req.cookies.vm_utm) || 'direto';
+      // Origem do lead (first-touch): le o cookie vm_utm com o helper (JSON dos cinco
+      // parametros UTM; retrocompativel com o formato legado de string simples). Ausente
+      // (acesso direto, sem UTM) -> source 'direto'; os demais UTM ficam null. cookie-parser
+      // ja roda no app (server.js).
+      const utm = lerUtmDoCookie((req.cookies && req.cookies.vm_utm) || '');
+      const utmSource = (utm && utm.source) || 'direto';
 
       const token = session.gerarToken();
 
@@ -208,6 +212,10 @@ router.post('/aplicacao', (req, res) => {
         curriculo_texto: curriculoTexto,
         token,
         utm_source: utmSource,
+        utm_medium: utm ? utm.medium : null,
+        utm_campaign: utm ? utm.campaign : null,
+        utm_content: utm ? utm.content : null,
+        utm_term: utm ? utm.term : null,
         status: 'aplicado',
       });
 

@@ -103,13 +103,13 @@ function criarVaga(vaga) {
       (slug, titulo, perfil, faixa_pagamento, potencial_ganhos, skills,
        beneficios, atividades, requisitos, requisitos_obrigatorios, secoes_extras,
        endereco, modalidade, regime, horario,
-       descricao, sobre_empresa, cultura_empresa, video_intro_tipo, video_intro_ref,
+       descricao, sobre_empresa, cultura_empresa, empresa, video_intro_tipo, video_intro_ref,
        roteiro_id, ativo, entrevista_ativa)
     VALUES
       (@slug, @titulo, @perfil, @faixa_pagamento, @potencial_ganhos, @skills,
        @beneficios, @atividades, @requisitos, @requisitos_obrigatorios, @secoes_extras,
        @endereco, @modalidade, @regime, @horario,
-       @descricao, @sobre_empresa, @cultura_empresa, @video_intro_tipo, @video_intro_ref,
+       @descricao, @sobre_empresa, @cultura_empresa, @empresa, @video_intro_tipo, @video_intro_ref,
        @roteiro_id, @ativo, @entrevista_ativa)
   `);
   const info = stmt.run({
@@ -131,6 +131,7 @@ function criarVaga(vaga) {
     descricao: vaga.descricao || null,
     sobre_empresa: vaga.sobre_empresa || null,
     cultura_empresa: vaga.cultura_empresa || null,
+    empresa: vaga.empresa || null,
     // Item 8 — video introdutorio (TEXT simples, sem JSON): tipo + ID canonico.
     video_intro_tipo: vaga.video_intro_tipo || null,
     video_intro_ref: vaga.video_intro_ref || null,
@@ -165,6 +166,7 @@ function atualizarVaga(id, campos) {
          descricao        = @descricao,
          sobre_empresa    = @sobre_empresa,
          cultura_empresa  = @cultura_empresa,
+         empresa          = @empresa,
          video_intro_tipo = @video_intro_tipo,
          video_intro_ref  = @video_intro_ref,
          ativo            = @ativo,
@@ -189,6 +191,7 @@ function atualizarVaga(id, campos) {
       descricao: campos.descricao || null,
       sobre_empresa: campos.sobre_empresa || null,
       cultura_empresa: campos.cultura_empresa || null,
+      empresa: campos.empresa || null,
       // Item 8 — video introdutorio (TEXT simples, sem JSON): tipo + ID canonico.
       video_intro_tipo: campos.video_intro_tipo || null,
       video_intro_ref: campos.video_intro_ref || null,
@@ -390,10 +393,12 @@ function criarAplicacao(aplicacao) {
   const info = getDb().prepare(`
     INSERT INTO applications
       (job_id, nome, sobrenome, email, telefone, linkedin_url,
-       curriculo_path, curriculo_texto, campos_extras, token, utm_source, status, consent_at)
+       curriculo_path, curriculo_texto, campos_extras, token,
+       utm_source, utm_medium, utm_campaign, utm_content, utm_term, status, consent_at)
     VALUES
       (@job_id, @nome, @sobrenome, @email, @telefone, @linkedin_url,
-       @curriculo_path, @curriculo_texto, @campos_extras, @token, @utm_source, @status, datetime('now'))
+       @curriculo_path, @curriculo_texto, @campos_extras, @token,
+       @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term, @status, datetime('now'))
   `).run({
     job_id: aplicacao.job_id,
     nome: aplicacao.nome || null,
@@ -405,7 +410,13 @@ function criarAplicacao(aplicacao) {
     curriculo_texto: aplicacao.curriculo_texto || null,
     campos_extras: JSON.stringify(aplicacao.campos_extras || {}),
     token: aplicacao.token || null,
+    // utm_source preserva o comportamento atual (o chamador passa 'direto' quando
+    // ausente). Os demais UTM ficam NULL quando ausentes — sem inventar 'direto' p/ eles.
     utm_source: aplicacao.utm_source || null,
+    utm_medium: aplicacao.utm_medium || null,
+    utm_campaign: aplicacao.utm_campaign || null,
+    utm_content: aplicacao.utm_content || null,
+    utm_term: aplicacao.utm_term || null,
     status: aplicacao.status || 'aplicado',
   });
   return Number(info.lastInsertRowid);
@@ -514,6 +525,19 @@ function registrarConsentGravacao(id) {
   const info = getDb()
     .prepare(
       "UPDATE applications SET consent_gravacao_at = datetime('now') WHERE id = ? AND consent_gravacao_at IS NULL",
+    )
+    .run(id);
+  return info.changes;
+}
+
+// B4 - primeiro contato via WhatsApp: grava contatado_whatsapp_em = agora SO se ainda
+// estiver NULL (preserva a data do 1o contato; recliques nao sobrescrevem). Retorna o nº
+// de linhas afetadas (0 se ja contatado / id inexistente). Mesmo padrao idempotente de
+// registrarConsentGravacao.
+function marcarContatoWhatsapp(id) {
+  const info = getDb()
+    .prepare(
+      "UPDATE applications SET contatado_whatsapp_em = datetime('now') WHERE id = ? AND contatado_whatsapp_em IS NULL",
     )
     .run(id);
   return info.changes;
@@ -749,8 +773,9 @@ function listarAplicacoesComContexto({ status, statusIa, dataDe, dataAte, jobId,
     .prepare(
       `SELECT
          a.id, a.nome, a.sobrenome, a.email, a.telefone, a.status, a.criado_em,
-         a.status_ia, a.status_recrutador,
+         a.status_ia, a.status_recrutador, a.contatado_whatsapp_em,
          j.titulo AS vaga_titulo,
+         j.empresa AS vaga_empresa,
          (SELECT i.id FROM interviews i
             WHERE i.application_id = a.id ORDER BY i.id DESC LIMIT 1) AS interview_id,
          (SELECT i3.video_url FROM interviews i3
@@ -779,8 +804,28 @@ function obterReportPorInterview(interviewId) {
 // Registra UM acesso a pagina publica da vaga (topo do funil). Uma linha por acesso
 // (inclui refresh) — deduplicacao por sessao/bot fica como refinamento futuro. O
 // criado_em usa o default da tabela (datetime('now')).
-function registrarAcessoVaga(jobId) {
-  getDb().prepare('INSERT INTO vaga_acessos (job_id) VALUES (?)').run(jobId);
+//
+// `utm` (opcional) e o objeto do helper de UTM ({ source, medium, campaign, content,
+// term }) ou null. Retrocompativel: chamado so com jobId, grava NULL nas cinco colunas
+// de UTM (comportamento historico preservado). Nao ha literal 'direto' aqui — o topo do
+// funil registra a origem observada ou NULL.
+function registrarAcessoVaga(jobId, utm = null) {
+  const u = utm || {};
+  getDb()
+    .prepare(
+      `INSERT INTO vaga_acessos
+         (job_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term)
+       VALUES
+         (@job_id, @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term)`,
+    )
+    .run({
+      job_id: jobId,
+      utm_source: u.source || null,
+      utm_medium: u.medium || null,
+      utm_campaign: u.campaign || null,
+      utm_content: u.content || null,
+      utm_term: u.term || null,
+    });
 }
 
 // Totais para o rodape do painel.
@@ -794,6 +839,30 @@ function contarEntrevistasConcluidas() {
     .get().n;
 }
 
+// ── Helpers de agregacao compartilhados (funil por vaga + origem de leads) ──
+// Recorte de periodo (inclusivo) sobre uma coluna de data. { desde, ate } sao datas
+// 'YYYY-MM-DD'; ausentes = sem limite daquele lado. Retorna { conds, params } para
+// compor no WHERE. Usado por obterFunilConversao e obterOrigemLeads (mesma semantica).
+function condsPeriodo(coluna, { desde, ate } = {}) {
+  const conds = [];
+  const params = [];
+  if (desde) {
+    conds.push(`date(${coluna}) >= date(?)`);
+    params.push(desde);
+  }
+  if (ate) {
+    conds.push(`date(${coluna}) <= date(?)`);
+    params.push(ate);
+  }
+  return { conds, params };
+}
+
+// Junta condicoes fixas (base) + de periodo (extra.conds) num WHERE, ou '' se vazio.
+function montarWhere(base, extra) {
+  const todas = [...base, ...extra.conds];
+  return todas.length ? `WHERE ${todas.join(' AND ')}` : '';
+}
+
 // Funil de conversao por vaga (Func. 3): Acessos -> Aplicacoes -> Entrevistas realizadas
 // -> Pre-aprovados pela IA. Consolida 4 fontes (vaga_acessos, applications, interviews,
 // reports.recomendacao). opcoes.desde/ate (datas 'YYYY-MM-DD') recortam o periodo por
@@ -805,25 +874,7 @@ function contarEntrevistasConcluidas() {
 function obterFunilConversao(opcoes = {}) {
   const db = getDb();
   const { desde, ate } = opcoes;
-
-  // Condicoes de periodo (inclusivas) para uma coluna de data; vazio quando sem filtro.
-  const condsPeriodo = (coluna) => {
-    const conds = [];
-    const params = [];
-    if (desde) {
-      conds.push(`date(${coluna}) >= date(?)`);
-      params.push(desde);
-    }
-    if (ate) {
-      conds.push(`date(${coluna}) <= date(?)`);
-      params.push(ate);
-    }
-    return { conds, params };
-  };
-  const montarWhere = (base, extra) => {
-    const todas = [...base, ...extra.conds];
-    return todas.length ? `WHERE ${todas.join(' AND ')}` : '';
-  };
+  const periodo = { desde, ate };
 
   // Cada agregacao -> Map job_id -> contagem.
   const paraMapa = (linhas) => {
@@ -833,7 +884,7 @@ function obterFunilConversao(opcoes = {}) {
   };
 
   // 1) Acessos: vaga_acessos por job_id (periodo por vaga_acessos.criado_em).
-  const fAcessos = condsPeriodo('criado_em');
+  const fAcessos = condsPeriodo('criado_em', periodo);
   const acessos = paraMapa(
     db
       .prepare(
@@ -843,7 +894,7 @@ function obterFunilConversao(opcoes = {}) {
   );
 
   // 2) Aplicacoes: applications por job_id (periodo por applications.criado_em).
-  const fApp = condsPeriodo('criado_em');
+  const fApp = condsPeriodo('criado_em', periodo);
   const aplicacoes = paraMapa(
     db
       .prepare(
@@ -854,7 +905,7 @@ function obterFunilConversao(opcoes = {}) {
 
   // 3) Entrevistas realizadas: interviews concluidas, por job_id (via application_id).
   //    Periodo por interviews.finalizado_em (quando a entrevista de fato concluiu).
-  const fEntr = condsPeriodo('i.finalizado_em');
+  const fEntr = condsPeriodo('i.finalizado_em', periodo);
   const entrevistas = paraMapa(
     db
       .prepare(
@@ -871,7 +922,7 @@ function obterFunilConversao(opcoes = {}) {
   //    cadeia report -> interview -> application -> job. COUNT(DISTINCT interview_id) evita
   //    contar 2x se uma entrevista tiver mais de um report 'avancar' (regeracao).
   //    Periodo por reports.enviado_em.
-  const fPre = condsPeriodo('r.enviado_em');
+  const fPre = condsPeriodo('r.enviado_em', periodo);
   const preAprovados = paraMapa(
     db
       .prepare(
@@ -909,6 +960,123 @@ function obterFunilConversao(opcoes = {}) {
   );
 
   return { vagas: linhas, totais };
+}
+
+// Origem dos leads (B2): mesmo funil de 4 etapas (Acessos -> Aplicacoes -> Entrevistas
+// realizadas -> Pre-aprovados pela IA), mas agrupado por utm_source em vez de por vaga.
+// Reaproveita condsPeriodo/montarWhere e a MESMA estrategia anti-fan-out (4 agregacoes
+// independentes casadas em memoria). opcoes.desde/ate recortam o periodo (cada etapa pelo
+// seu timestamp); opcoes.jobId (opcional) restringe a uma vaga.
+//
+// Bucketizacao (feita aqui p/ as 4 etapas caírem no MESMO balde): utm_source NULL ->
+// 'Sem origem' (acessos historicos/pre-B1 ou nao rastreados); literal 'direto' -> 'Direto'
+// (aplicacao sem UTM); qualquer outro valor -> a propria origem. Assim, ausencia de UTM
+// (NULL) fica distinta de "sem UTM no momento da aplicacao" ('direto').
+function obterOrigemLeads(opcoes = {}) {
+  const db = getDb();
+  const { desde, ate, jobId } = opcoes;
+  const periodo = { desde, ate };
+
+  const rotuloOrigem = (valor) => {
+    if (valor == null) return 'Sem origem';
+    if (valor === 'direto') return 'Direto';
+    return valor;
+  };
+
+  // Filtro opcional por vaga: base de condicoes + param, conforme a coluna da tabela.
+  const baseJob = (coluna) => (jobId ? [`${coluna} = ?`] : []);
+  const paramsJob = jobId ? [jobId] : [];
+
+  // Acumula linhas { origem, n } de uma etapa no Map (chave = rotulo bucketizado).
+  const mapa = new Map();
+  const acumular = (linhas, campo) => {
+    for (const l of linhas) {
+      const chave = rotuloOrigem(l.origem);
+      const atual =
+        mapa.get(chave) ||
+        { origem: chave, acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 };
+      atual[campo] += l.n;
+      mapa.set(chave, atual);
+    }
+  };
+
+  // 1) Acessos: vaga_acessos por utm_source (periodo por vaga_acessos.criado_em).
+  const fAcessos = condsPeriodo('criado_em', periodo);
+  acumular(
+    db
+      .prepare(
+        `SELECT utm_source AS origem, COUNT(*) AS n FROM vaga_acessos
+           ${montarWhere(baseJob('job_id'), fAcessos)} GROUP BY utm_source`,
+      )
+      .all(...paramsJob, ...fAcessos.params),
+    'acessos',
+  );
+
+  // 2) Aplicacoes: applications por utm_source (periodo por applications.criado_em).
+  const fApp = condsPeriodo('criado_em', periodo);
+  acumular(
+    db
+      .prepare(
+        `SELECT utm_source AS origem, COUNT(*) AS n FROM applications
+           ${montarWhere(baseJob('job_id'), fApp)} GROUP BY utm_source`,
+      )
+      .all(...paramsJob, ...fApp.params),
+    'aplicacoes',
+  );
+
+  // 3) Entrevistas realizadas: interviews concluidas, por utm_source (via application).
+  //    Periodo por interviews.finalizado_em.
+  const fEntr = condsPeriodo('i.finalizado_em', periodo);
+  acumular(
+    db
+      .prepare(
+        `SELECT a.utm_source AS origem, COUNT(*) AS n
+           FROM interviews i
+           JOIN applications a ON a.id = i.application_id
+           ${montarWhere(["i.status = 'concluido'", ...baseJob('a.job_id')], fEntr)}
+          GROUP BY a.utm_source`,
+      )
+      .all(...paramsJob, ...fEntr.params),
+    'entrevistas_realizadas',
+  );
+
+  // 4) Pre-aprovados pela IA: reports 'avancar', por utm_source (cadeia report ->
+  //    interview -> application). COUNT(DISTINCT interview_id) evita contar 2x na
+  //    regeracao. Periodo por reports.enviado_em.
+  const fPre = condsPeriodo('r.enviado_em', periodo);
+  acumular(
+    db
+      .prepare(
+        `SELECT a.utm_source AS origem, COUNT(DISTINCT r.interview_id) AS n
+           FROM reports r
+           JOIN interviews i ON i.id = r.interview_id
+           JOIN applications a ON a.id = i.application_id
+           ${montarWhere(["r.recomendacao = 'avancar'", ...baseJob('a.job_id')], fPre)}
+          GROUP BY a.utm_source`,
+      )
+      .all(...paramsJob, ...fPre.params),
+    'pre_aprovados',
+  );
+
+  // Ordena por relevancia: mais aplicacoes primeiro, desempate por acessos e nome (pt-BR).
+  const origens = [...mapa.values()].sort(
+    (a, b) =>
+      b.aplicacoes - a.aplicacoes ||
+      b.acessos - a.acessos ||
+      a.origem.localeCompare(b.origem, 'pt-BR'),
+  );
+
+  const totais = origens.reduce(
+    (acc, l) => ({
+      acessos: acc.acessos + l.acessos,
+      aplicacoes: acc.aplicacoes + l.aplicacoes,
+      entrevistas_realizadas: acc.entrevistas_realizadas + l.entrevistas_realizadas,
+      pre_aprovados: acc.pre_aprovados + l.pre_aprovados,
+    }),
+    { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 },
+  );
+
+  return { origens, totais };
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1054,6 +1222,7 @@ module.exports = {
   contarAplicacoes,
   contarEntrevistasConcluidas,
   obterFunilConversao,
+  obterOrigemLeads,
   // uso/custo de API (monitoramento de custos)
   registrarUsoApi,
   resumoUsoApi,
@@ -1096,6 +1265,7 @@ module.exports = {
   arquivarAplicacao,
   restaurarAplicacao,
   registrarConsentGravacao,
+  marcarContatoWhatsapp,
   marcarRetomadaEnviada,
   // entrevistas
   criarInterview,

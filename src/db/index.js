@@ -59,6 +59,7 @@ module.exports = {
   arquivarAplicacao: driver.arquivarAplicacao,
   restaurarAplicacao: driver.restaurarAplicacao,
   registrarConsentGravacao: driver.registrarConsentGravacao,
+  marcarContatoWhatsapp: driver.marcarContatoWhatsapp,
   marcarRetomadaEnviada: driver.marcarRetomadaEnviada,
 
   // entrevistas
@@ -87,6 +88,7 @@ module.exports = {
   contarAplicacoes: driver.contarAplicacoes,
   contarEntrevistasConcluidas: driver.contarEntrevistasConcluidas,
   obterFunilConversao: driver.obterFunilConversao,
+  obterOrigemLeads: driver.obterOrigemLeads,
 
   // uso/custo de API (monitoramento de custos)
   registrarUsoApi: driver.registrarUsoApi,
