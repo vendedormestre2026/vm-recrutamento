@@ -147,6 +147,11 @@ function migrar() {
   //   Nasce NULL e permanece NULL ate o item 3.
   adicionarColunaSeFaltar('applications', 'status_recrutador', 'TEXT');
 
+  // B4 - primeiro contato via WhatsApp: momento em que o recrutador clicou no botao de
+  // WhatsApp deste candidato (ISO/UTC). Gravado uma unica vez (preserva a data do 1o
+  // contato); NULL = ainda nao contatado. Aditiva, sem CHECK.
+  adicionarColunaSeFaltar('applications', 'contatado_whatsapp_em', 'TEXT');
+
   // Origem do lead no TOPO do funil (first-touch): mesma UTM do cookie vm_utm, agora
   // tambem gravada no acesso a Pagina da Vaga (antes so a application guardava). Permite
   // atribuir Acessos a uma origem no dashboard. NULL em bancos antigos e quando nao ha

@@ -45,27 +45,58 @@ function montarLinkWhatsapp(telefone, mensagem = '', opts = {}) {
   return `https://wa.me/${numero}${query}`;
 }
 
-// Mensagem padrao que o recrutador envia ao candidato pelo WhatsApp. Template fixo
-// (Jean Dentz / Vendedor Mestre nunca mudam — decisao B3). Usa o PRIMEIRO nome do
-// candidato e o titulo da vaga; o trecho "da empresa {empresa}" so aparece quando a vaga
-// tem empresa preenchida (vagas sem empresa omitem, sem sobrar "da empresa " vazio).
-function mensagemWhatsappCandidato({ nome, vaga, empresa } = {}) {
-  const primeiroNome = String(nome || '').trim().split(/\s+/)[0] || '';
-  const vagaTxt = String(vaga || '').trim();
+// Nome do recrutador e template padrao da mensagem de WhatsApp. Ambos sao configuraveis
+// em /admin/config (chaves recrutador_nome / whatsapp_template); estes sao apenas os
+// FALLBACKS quando a config esta ausente/vazia. "Vendedor Mestre" fica fixo no texto (a
+// plataforma nao muda); o nome do recrutador entra via placeholder {recrutador}.
+const RECRUTADOR_PADRAO = 'Jean Dentz';
+const TEMPLATE_PADRAO =
+  'Olá {primeiro_nome}, aqui é o {recrutador} da Vendedor Mestre. ' +
+  'Recebi sua candidatura para a vaga de {vaga} da empresa {empresa}. Você tem alguma dúvida?';
+
+function primeiroNomeDe(nome) {
+  return String(nome || '').trim().split(/\s+/)[0] || '';
+}
+
+// Monta a mensagem ao candidato aplicando um TEMPLATE (configuravel) com placeholders:
+//   {primeiro_nome}, {vaga}, {empresa}, {recrutador}.
+// Regras:
+//   - template vazio/ausente     -> usa TEMPLATE_PADRAO.
+//   - recrutador vazio/ausente   -> usa RECRUTADOR_PADRAO.
+//   - empresa vazia              -> remove o trecho " da empresa {empresa}" do template
+//                                    (se houver); qualquer {empresa} restante vira ''.
+//   - placeholders DESCONHECIDOS ({foo}) ficam intactos (nao quebra).
+// Pura e testavel. Ao final, limpa espacos duplos e " ," / " ." residuais (ex.: quando o
+// primeiro nome vem vazio, "Olá , " -> "Olá, ").
+function mensagemWhatsappCandidato({ nome, vaga, empresa, recrutador, template } = {}) {
+  const tpl = typeof template === 'string' && template.trim() ? template : TEMPLATE_PADRAO;
   const empresaTxt = String(empresa || '').trim();
 
-  const saudacao = primeiroNome ? `Olá ${primeiroNome}` : 'Olá';
-  const vagaClause = vagaTxt ? `para a vaga de ${vagaTxt}` : 'para a vaga';
-  const empresaClause = empresaTxt ? ` da empresa ${empresaTxt}` : '';
+  let texto = tpl;
+  if (!empresaTxt) {
+    texto = texto.replace(/\s*da empresa \{empresa\}/gi, '');
+  }
 
-  return (
-    `${saudacao}, aqui é o Jean Dentz da Vendedor Mestre. ` +
-    `Recebi sua candidatura ${vagaClause}${empresaClause}. Você tem alguma dúvida?`
-  );
+  const valores = {
+    '{primeiro_nome}': primeiroNomeDe(nome),
+    '{vaga}': String(vaga || '').trim(),
+    '{empresa}': empresaTxt,
+    '{recrutador}': String(recrutador || '').trim() || RECRUTADOR_PADRAO,
+  };
+  for (const [ph, val] of Object.entries(valores)) {
+    texto = texto.split(ph).join(val);
+  }
+
+  return texto
+    .replace(/\s+([,.])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 module.exports = {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
   mensagemWhatsappCandidato,
+  RECRUTADOR_PADRAO,
+  TEMPLATE_PADRAO,
 };

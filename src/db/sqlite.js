@@ -530,6 +530,19 @@ function registrarConsentGravacao(id) {
   return info.changes;
 }
 
+// B4 - primeiro contato via WhatsApp: grava contatado_whatsapp_em = agora SO se ainda
+// estiver NULL (preserva a data do 1o contato; recliques nao sobrescrevem). Retorna o nº
+// de linhas afetadas (0 se ja contatado / id inexistente). Mesmo padrao idempotente de
+// registrarConsentGravacao.
+function marcarContatoWhatsapp(id) {
+  const info = getDb()
+    .prepare(
+      "UPDATE applications SET contatado_whatsapp_em = datetime('now') WHERE id = ? AND contatado_whatsapp_em IS NULL",
+    )
+    .run(id);
+  return info.changes;
+}
+
 // Marca o momento do ultimo envio do e-mail de retomada ("continuar depois").
 // Sobrescreve sempre (cada envio atualiza o timestamp); o controle de "nao reenviar
 // em 30 min" e feito por quem chama, comparando enviado_retomada_em com agora.
@@ -760,7 +773,7 @@ function listarAplicacoesComContexto({ status, statusIa, dataDe, dataAte, jobId,
     .prepare(
       `SELECT
          a.id, a.nome, a.sobrenome, a.email, a.telefone, a.status, a.criado_em,
-         a.status_ia, a.status_recrutador,
+         a.status_ia, a.status_recrutador, a.contatado_whatsapp_em,
          j.titulo AS vaga_titulo,
          j.empresa AS vaga_empresa,
          (SELECT i.id FROM interviews i
@@ -1252,6 +1265,7 @@ module.exports = {
   arquivarAplicacao,
   restaurarAplicacao,
   registrarConsentGravacao,
+  marcarContatoWhatsapp,
   marcarRetomadaEnviada,
   // entrevistas
   criarInterview,

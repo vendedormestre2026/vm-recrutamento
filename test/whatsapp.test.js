@@ -11,6 +11,8 @@ const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
   mensagemWhatsappCandidato,
+  RECRUTADOR_PADRAO,
+  TEMPLATE_PADRAO,
 } = require('../src/lib/whatsapp');
 
 test('normalizarTelefoneWhatsapp: mascara com +55 -> so digitos', () => {
@@ -99,4 +101,56 @@ test('mensagemWhatsappCandidato: sem nome -> "Olá," sem nome', () => {
     'Olá, aqui é o Jean Dentz da Vendedor Mestre. ' +
       'Recebi sua candidatura para a vaga de Closer da empresa Acme. Você tem alguma dúvida?',
   );
+});
+
+// ── Template configuravel (B4) ──
+test('mensagemWhatsappCandidato: template customizado substitui todos os placeholders', () => {
+  const msg = mensagemWhatsappCandidato({
+    nome: 'Maria Silva',
+    vaga: 'SDR',
+    empresa: 'Acme',
+    recrutador: 'Ana Souza',
+    template: '{recrutador} aqui, {primeiro_nome}! Vaga {vaga} na {empresa}.',
+  });
+  assert.equal(msg, 'Ana Souza aqui, Maria! Vaga SDR na Acme.');
+});
+
+test('mensagemWhatsappCandidato: recrutador vazio -> RECRUTADOR_PADRAO', () => {
+  const msg = mensagemWhatsappCandidato({
+    nome: 'Maria',
+    vaga: 'SDR',
+    recrutador: '   ',
+    template: '{recrutador}: olá {primeiro_nome}',
+  });
+  assert.equal(msg, `${RECRUTADOR_PADRAO}: olá Maria`);
+});
+
+test('mensagemWhatsappCandidato: template vazio -> usa TEMPLATE_PADRAO', () => {
+  const dados = { nome: 'Maria Silva', vaga: 'SDR Pré-vendas', empresa: 'Acme Ltda' };
+  const comVazio = mensagemWhatsappCandidato({ ...dados, template: '   ' });
+  const semTemplate = mensagemWhatsappCandidato(dados);
+  assert.equal(comVazio, semTemplate);
+  assert.ok(TEMPLATE_PADRAO.includes('{primeiro_nome}')); // o padrao tem placeholders
+});
+
+test('mensagemWhatsappCandidato: placeholder desconhecido fica intacto (nao quebra)', () => {
+  let msg;
+  assert.doesNotThrow(() => {
+    msg = mensagemWhatsappCandidato({
+      nome: 'Maria',
+      vaga: 'SDR',
+      template: 'Oi {primeiro_nome}, {foo} {vaga}',
+    });
+  });
+  assert.equal(msg, 'Oi Maria, {foo} SDR');
+});
+
+test('mensagemWhatsappCandidato: empresa vazia remove " da empresa {empresa}" do template', () => {
+  const msg = mensagemWhatsappCandidato({
+    nome: 'Maria',
+    vaga: 'SDR',
+    empresa: '',
+    template: 'Vaga de {vaga} da empresa {empresa} aberta.',
+  });
+  assert.equal(msg, 'Vaga de SDR aberta.');
 });

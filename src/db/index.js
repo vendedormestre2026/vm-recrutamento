@@ -59,6 +59,7 @@ module.exports = {
   arquivarAplicacao: driver.arquivarAplicacao,
   restaurarAplicacao: driver.restaurarAplicacao,
   registrarConsentGravacao: driver.registrarConsentGravacao,
+  marcarContatoWhatsapp: driver.marcarContatoWhatsapp,
   marcarRetomadaEnviada: driver.marcarRetomadaEnviada,
 
   // entrevistas

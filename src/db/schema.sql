@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS applications (
                    CHECK (status IN ('aplicado', 'em_entrevista', 'concluido')),
   consent_at          TEXT,        -- (Fase 5/LGPD) quando aceitou a coleta/uso dos dados (checkbox da aplicacao)
   consent_gravacao_at TEXT,        -- (Fase 5/LGPD) quando aceitou a gravacao da entrevista (checkbox do teste de microfone)
+  contatado_whatsapp_em TEXT,      -- (B4) momento do 1o clique no botao de WhatsApp pelo recrutador; NULL = nao contatado
   criado_em      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
