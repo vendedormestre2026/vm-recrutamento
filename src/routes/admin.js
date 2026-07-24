@@ -1154,6 +1154,11 @@ router.get('/dashboard', (req, res) => {
     ? { vagas: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 } }
     : db.obterFunilConversao({ desde: desde || undefined, ate: ate || undefined });
 
+  // Origem dos leads (B2): mesmo recorte de periodo do funil (reusa desde/ate validados).
+  const origem = temErro
+    ? { origens: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 } }
+    : db.obterOrigemLeads({ desde: desde || undefined, ate: ate || undefined });
+
   const t = funil.totais;
 
   // Etapas do funil (na ordem). taxa = conversao a partir da etapa anterior ('—' se n/d).
@@ -1207,6 +1212,27 @@ router.get('/dashboard', (req, res) => {
           <td class="col-num">${taxaConversao(v.entrevistas_realizadas, v.aplicacoes)}</td>
           <td class="col-num">${fmtInt(v.pre_aprovados)}</td>
           <td class="col-num">${taxaConversao(v.pre_aprovados, v.entrevistas_realizadas)}</td>
+        </tr>`;
+    })
+    .join('');
+
+  // Linhas do quadro de origem (mesma linguagem visual da tabela "Por vaga"). O rotulo
+  // da origem ja vem bucketizado da camada de dados ('Direto'/'Sem origem'/valor cru);
+  // passa por escapeHtml porque origens nomeadas sao dado externo (querystring da campanha).
+  const linhasOrigem = origem.origens
+    .map((o) => {
+      const zero =
+        !o.acessos && !o.aplicacoes && !o.entrevistas_realizadas && !o.pre_aprovados;
+      return `
+        <tr class="${zero ? 'linha-zero' : ''}">
+          <td>${escapeHtml(o.origem || '—')}</td>
+          <td class="col-num">${fmtInt(o.acessos)}</td>
+          <td class="col-num">${fmtInt(o.aplicacoes)}</td>
+          <td class="col-num">${taxaConversao(o.aplicacoes, o.acessos)}</td>
+          <td class="col-num">${fmtInt(o.entrevistas_realizadas)}</td>
+          <td class="col-num">${taxaConversao(o.entrevistas_realizadas, o.aplicacoes)}</td>
+          <td class="col-num">${fmtInt(o.pre_aprovados)}</td>
+          <td class="col-num">${taxaConversao(o.pre_aprovados, o.entrevistas_realizadas)}</td>
         </tr>`;
     })
     .join('');
@@ -1266,6 +1292,35 @@ router.get('/dashboard', (req, res) => {
           </thead>
           <tbody>
             ${linhas || `<tr><td colspan="8">${temErro ? 'Corrija as datas para ver os dados.' : 'Nenhuma vaga cadastrada ainda.'}</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Origem dos leads</h2>
+      <p class="admin-sub" style="color:var(--cinza);font-size:.85rem;margin:.2rem 0 1rem;">
+        A atribuição de origem passou a ser registrada a partir da ativação do rastreio de
+        UTM. Candidaturas anteriores, ou visitas sem parâmetro de campanha, aparecem como
+        <b>Direto</b> (sem UTM no momento da candidatura) ou <b>Sem origem</b> (acesso sem
+        UTM ou anterior ao rastreio).
+      </p>
+      <div class="admin-tab-scroll">
+        <table class="admin-tab">
+          <thead>
+            <tr>
+              <th>Origem</th>
+              <th class="col-num">Acessos</th>
+              <th class="col-num">Aplicações</th>
+              <th class="col-num">Apl/Ace</th>
+              <th class="col-num">Entrevistas</th>
+              <th class="col-num">Ent/Apl</th>
+              <th class="col-num">Pré-aprovados</th>
+              <th class="col-num">Pré/Ent</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhasOrigem || `<tr><td colspan="8">${temErro ? 'Corrija as datas para ver os dados.' : 'Nenhum lead registrado ainda.'}</td></tr>`}
           </tbody>
         </table>
       </div>

@@ -822,6 +822,30 @@ function contarEntrevistasConcluidas() {
     .get().n;
 }
 
+// ── Helpers de agregacao compartilhados (funil por vaga + origem de leads) ──
+// Recorte de periodo (inclusivo) sobre uma coluna de data. { desde, ate } sao datas
+// 'YYYY-MM-DD'; ausentes = sem limite daquele lado. Retorna { conds, params } para
+// compor no WHERE. Usado por obterFunilConversao e obterOrigemLeads (mesma semantica).
+function condsPeriodo(coluna, { desde, ate } = {}) {
+  const conds = [];
+  const params = [];
+  if (desde) {
+    conds.push(`date(${coluna}) >= date(?)`);
+    params.push(desde);
+  }
+  if (ate) {
+    conds.push(`date(${coluna}) <= date(?)`);
+    params.push(ate);
+  }
+  return { conds, params };
+}
+
+// Junta condicoes fixas (base) + de periodo (extra.conds) num WHERE, ou '' se vazio.
+function montarWhere(base, extra) {
+  const todas = [...base, ...extra.conds];
+  return todas.length ? `WHERE ${todas.join(' AND ')}` : '';
+}
+
 // Funil de conversao por vaga (Func. 3): Acessos -> Aplicacoes -> Entrevistas realizadas
 // -> Pre-aprovados pela IA. Consolida 4 fontes (vaga_acessos, applications, interviews,
 // reports.recomendacao). opcoes.desde/ate (datas 'YYYY-MM-DD') recortam o periodo por
@@ -833,25 +857,7 @@ function contarEntrevistasConcluidas() {
 function obterFunilConversao(opcoes = {}) {
   const db = getDb();
   const { desde, ate } = opcoes;
-
-  // Condicoes de periodo (inclusivas) para uma coluna de data; vazio quando sem filtro.
-  const condsPeriodo = (coluna) => {
-    const conds = [];
-    const params = [];
-    if (desde) {
-      conds.push(`date(${coluna}) >= date(?)`);
-      params.push(desde);
-    }
-    if (ate) {
-      conds.push(`date(${coluna}) <= date(?)`);
-      params.push(ate);
-    }
-    return { conds, params };
-  };
-  const montarWhere = (base, extra) => {
-    const todas = [...base, ...extra.conds];
-    return todas.length ? `WHERE ${todas.join(' AND ')}` : '';
-  };
+  const periodo = { desde, ate };
 
   // Cada agregacao -> Map job_id -> contagem.
   const paraMapa = (linhas) => {
@@ -861,7 +867,7 @@ function obterFunilConversao(opcoes = {}) {
   };
 
   // 1) Acessos: vaga_acessos por job_id (periodo por vaga_acessos.criado_em).
-  const fAcessos = condsPeriodo('criado_em');
+  const fAcessos = condsPeriodo('criado_em', periodo);
   const acessos = paraMapa(
     db
       .prepare(
@@ -871,7 +877,7 @@ function obterFunilConversao(opcoes = {}) {
   );
 
   // 2) Aplicacoes: applications por job_id (periodo por applications.criado_em).
-  const fApp = condsPeriodo('criado_em');
+  const fApp = condsPeriodo('criado_em', periodo);
   const aplicacoes = paraMapa(
     db
       .prepare(
@@ -882,7 +888,7 @@ function obterFunilConversao(opcoes = {}) {
 
   // 3) Entrevistas realizadas: interviews concluidas, por job_id (via application_id).
   //    Periodo por interviews.finalizado_em (quando a entrevista de fato concluiu).
-  const fEntr = condsPeriodo('i.finalizado_em');
+  const fEntr = condsPeriodo('i.finalizado_em', periodo);
   const entrevistas = paraMapa(
     db
       .prepare(
@@ -899,7 +905,7 @@ function obterFunilConversao(opcoes = {}) {
   //    cadeia report -> interview -> application -> job. COUNT(DISTINCT interview_id) evita
   //    contar 2x se uma entrevista tiver mais de um report 'avancar' (regeracao).
   //    Periodo por reports.enviado_em.
-  const fPre = condsPeriodo('r.enviado_em');
+  const fPre = condsPeriodo('r.enviado_em', periodo);
   const preAprovados = paraMapa(
     db
       .prepare(
@@ -937,6 +943,123 @@ function obterFunilConversao(opcoes = {}) {
   );
 
   return { vagas: linhas, totais };
+}
+
+// Origem dos leads (B2): mesmo funil de 4 etapas (Acessos -> Aplicacoes -> Entrevistas
+// realizadas -> Pre-aprovados pela IA), mas agrupado por utm_source em vez de por vaga.
+// Reaproveita condsPeriodo/montarWhere e a MESMA estrategia anti-fan-out (4 agregacoes
+// independentes casadas em memoria). opcoes.desde/ate recortam o periodo (cada etapa pelo
+// seu timestamp); opcoes.jobId (opcional) restringe a uma vaga.
+//
+// Bucketizacao (feita aqui p/ as 4 etapas caírem no MESMO balde): utm_source NULL ->
+// 'Sem origem' (acessos historicos/pre-B1 ou nao rastreados); literal 'direto' -> 'Direto'
+// (aplicacao sem UTM); qualquer outro valor -> a propria origem. Assim, ausencia de UTM
+// (NULL) fica distinta de "sem UTM no momento da aplicacao" ('direto').
+function obterOrigemLeads(opcoes = {}) {
+  const db = getDb();
+  const { desde, ate, jobId } = opcoes;
+  const periodo = { desde, ate };
+
+  const rotuloOrigem = (valor) => {
+    if (valor == null) return 'Sem origem';
+    if (valor === 'direto') return 'Direto';
+    return valor;
+  };
+
+  // Filtro opcional por vaga: base de condicoes + param, conforme a coluna da tabela.
+  const baseJob = (coluna) => (jobId ? [`${coluna} = ?`] : []);
+  const paramsJob = jobId ? [jobId] : [];
+
+  // Acumula linhas { origem, n } de uma etapa no Map (chave = rotulo bucketizado).
+  const mapa = new Map();
+  const acumular = (linhas, campo) => {
+    for (const l of linhas) {
+      const chave = rotuloOrigem(l.origem);
+      const atual =
+        mapa.get(chave) ||
+        { origem: chave, acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 };
+      atual[campo] += l.n;
+      mapa.set(chave, atual);
+    }
+  };
+
+  // 1) Acessos: vaga_acessos por utm_source (periodo por vaga_acessos.criado_em).
+  const fAcessos = condsPeriodo('criado_em', periodo);
+  acumular(
+    db
+      .prepare(
+        `SELECT utm_source AS origem, COUNT(*) AS n FROM vaga_acessos
+           ${montarWhere(baseJob('job_id'), fAcessos)} GROUP BY utm_source`,
+      )
+      .all(...paramsJob, ...fAcessos.params),
+    'acessos',
+  );
+
+  // 2) Aplicacoes: applications por utm_source (periodo por applications.criado_em).
+  const fApp = condsPeriodo('criado_em', periodo);
+  acumular(
+    db
+      .prepare(
+        `SELECT utm_source AS origem, COUNT(*) AS n FROM applications
+           ${montarWhere(baseJob('job_id'), fApp)} GROUP BY utm_source`,
+      )
+      .all(...paramsJob, ...fApp.params),
+    'aplicacoes',
+  );
+
+  // 3) Entrevistas realizadas: interviews concluidas, por utm_source (via application).
+  //    Periodo por interviews.finalizado_em.
+  const fEntr = condsPeriodo('i.finalizado_em', periodo);
+  acumular(
+    db
+      .prepare(
+        `SELECT a.utm_source AS origem, COUNT(*) AS n
+           FROM interviews i
+           JOIN applications a ON a.id = i.application_id
+           ${montarWhere(["i.status = 'concluido'", ...baseJob('a.job_id')], fEntr)}
+          GROUP BY a.utm_source`,
+      )
+      .all(...paramsJob, ...fEntr.params),
+    'entrevistas_realizadas',
+  );
+
+  // 4) Pre-aprovados pela IA: reports 'avancar', por utm_source (cadeia report ->
+  //    interview -> application). COUNT(DISTINCT interview_id) evita contar 2x na
+  //    regeracao. Periodo por reports.enviado_em.
+  const fPre = condsPeriodo('r.enviado_em', periodo);
+  acumular(
+    db
+      .prepare(
+        `SELECT a.utm_source AS origem, COUNT(DISTINCT r.interview_id) AS n
+           FROM reports r
+           JOIN interviews i ON i.id = r.interview_id
+           JOIN applications a ON a.id = i.application_id
+           ${montarWhere(["r.recomendacao = 'avancar'", ...baseJob('a.job_id')], fPre)}
+          GROUP BY a.utm_source`,
+      )
+      .all(...paramsJob, ...fPre.params),
+    'pre_aprovados',
+  );
+
+  // Ordena por relevancia: mais aplicacoes primeiro, desempate por acessos e nome (pt-BR).
+  const origens = [...mapa.values()].sort(
+    (a, b) =>
+      b.aplicacoes - a.aplicacoes ||
+      b.acessos - a.acessos ||
+      a.origem.localeCompare(b.origem, 'pt-BR'),
+  );
+
+  const totais = origens.reduce(
+    (acc, l) => ({
+      acessos: acc.acessos + l.acessos,
+      aplicacoes: acc.aplicacoes + l.aplicacoes,
+      entrevistas_realizadas: acc.entrevistas_realizadas + l.entrevistas_realizadas,
+      pre_aprovados: acc.pre_aprovados + l.pre_aprovados,
+    }),
+    { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 },
+  );
+
+  return { origens, totais };
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1082,6 +1205,7 @@ module.exports = {
   contarAplicacoes,
   contarEntrevistasConcluidas,
   obterFunilConversao,
+  obterOrigemLeads,
   // uso/custo de API (monitoramento de custos)
   registrarUsoApi,
   resumoUsoApi,
