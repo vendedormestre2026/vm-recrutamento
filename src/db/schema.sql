@@ -127,7 +127,11 @@ CREATE TABLE IF NOT EXISTS vaga_acessos (
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_vaga_acessos_job ON vaga_acessos(job_id);
-CREATE INDEX IF NOT EXISTS idx_vaga_acessos_utm ON vaga_acessos(utm_source);
+-- NOTA: o indice de utm_source NAO fica aqui de proposito. Esta coluna e adicionada por
+-- migracao incremental (migrate.js, apos ADD COLUMN); em bancos ja existentes a coluna
+-- so passa a existir depois do ADD COLUMN, entao criar o indice aqui (aplicarSchema roda
+-- ANTES das migracoes) quebraria o boot ("no such column: utm_source"). O indice
+-- idx_vaga_acessos_utm e criado em migrate.js, no lugar correto.
 
 -- Configuracoes gerais (store chave/valor generico). Usado por ora para uma unica
 -- chave: entrevista_automatica_geral. Sem seed: a ausencia de linha significa "usar o
