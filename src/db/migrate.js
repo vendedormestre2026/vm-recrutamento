@@ -89,6 +89,12 @@ function migrar() {
   // sobre_empresa (institucional, voltado ao candidato na pagina da vaga). Opcional/NULL.
   adicionarColunaSeFaltar('jobs', 'cultura_empresa', 'TEXT');
 
+  // B3 - nome da EMPRESA cliente dona da vaga (ex.: "Acme Ltda"). DISTINTO de
+  // sobre_empresa/cultura_empresa (textos livres): e o nome curto usado na mensagem de
+  // WhatsApp ao candidato ("...da empresa {empresa}"). Opcional/NULL: vagas sem empresa
+  // preenchida omitem o trecho. Aditiva, sem CHECK.
+  adicionarColunaSeFaltar('jobs', 'empresa', 'TEXT');
+
   // Item 8 - video introdutorio da vaga (YouTube nao listado), exibido numa etapa do
   // funil ANTES das permissoes. Campo polimorfico (tipo + ref) para permitir upload
   // direto no futuro sem re-migrar. video_intro_tipo: 'youtube' hoje (extensivel para

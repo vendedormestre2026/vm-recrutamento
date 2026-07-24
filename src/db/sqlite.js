@@ -103,13 +103,13 @@ function criarVaga(vaga) {
       (slug, titulo, perfil, faixa_pagamento, potencial_ganhos, skills,
        beneficios, atividades, requisitos, requisitos_obrigatorios, secoes_extras,
        endereco, modalidade, regime, horario,
-       descricao, sobre_empresa, cultura_empresa, video_intro_tipo, video_intro_ref,
+       descricao, sobre_empresa, cultura_empresa, empresa, video_intro_tipo, video_intro_ref,
        roteiro_id, ativo, entrevista_ativa)
     VALUES
       (@slug, @titulo, @perfil, @faixa_pagamento, @potencial_ganhos, @skills,
        @beneficios, @atividades, @requisitos, @requisitos_obrigatorios, @secoes_extras,
        @endereco, @modalidade, @regime, @horario,
-       @descricao, @sobre_empresa, @cultura_empresa, @video_intro_tipo, @video_intro_ref,
+       @descricao, @sobre_empresa, @cultura_empresa, @empresa, @video_intro_tipo, @video_intro_ref,
        @roteiro_id, @ativo, @entrevista_ativa)
   `);
   const info = stmt.run({
@@ -131,6 +131,7 @@ function criarVaga(vaga) {
     descricao: vaga.descricao || null,
     sobre_empresa: vaga.sobre_empresa || null,
     cultura_empresa: vaga.cultura_empresa || null,
+    empresa: vaga.empresa || null,
     // Item 8 — video introdutorio (TEXT simples, sem JSON): tipo + ID canonico.
     video_intro_tipo: vaga.video_intro_tipo || null,
     video_intro_ref: vaga.video_intro_ref || null,
@@ -165,6 +166,7 @@ function atualizarVaga(id, campos) {
          descricao        = @descricao,
          sobre_empresa    = @sobre_empresa,
          cultura_empresa  = @cultura_empresa,
+         empresa          = @empresa,
          video_intro_tipo = @video_intro_tipo,
          video_intro_ref  = @video_intro_ref,
          ativo            = @ativo,
@@ -189,6 +191,7 @@ function atualizarVaga(id, campos) {
       descricao: campos.descricao || null,
       sobre_empresa: campos.sobre_empresa || null,
       cultura_empresa: campos.cultura_empresa || null,
+      empresa: campos.empresa || null,
       // Item 8 — video introdutorio (TEXT simples, sem JSON): tipo + ID canonico.
       video_intro_tipo: campos.video_intro_tipo || null,
       video_intro_ref: campos.video_intro_ref || null,
@@ -759,6 +762,7 @@ function listarAplicacoesComContexto({ status, statusIa, dataDe, dataAte, jobId,
          a.id, a.nome, a.sobrenome, a.email, a.telefone, a.status, a.criado_em,
          a.status_ia, a.status_recrutador,
          j.titulo AS vaga_titulo,
+         j.empresa AS vaga_empresa,
          (SELECT i.id FROM interviews i
             WHERE i.application_id = a.id ORDER BY i.id DESC LIMIT 1) AS interview_id,
          (SELECT i3.video_url FROM interviews i3

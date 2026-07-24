@@ -18,6 +18,7 @@ const llm = require('../providers/llm');
 const { importarVagaDeBriefing } = require('../lib/importar_vaga');
 const { extrairYoutubeId } = require('../lib/youtube');
 const { modoEntrevistaAtivo } = require('../lib/modo');
+const { montarLinkWhatsapp, mensagemWhatsappCandidato } = require('../lib/whatsapp');
 const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
@@ -335,6 +336,18 @@ function nomeCompleto(linha) {
   return nome || linha.email || '—';
 }
 
+// Botao "WhatsApp" (link wa.me com mensagem pre-preenchida ao candidato). Telefone
+// invalido/ausente -> botao desabilitado (btn--off), mesmo padrao dos demais botoes.
+// O link ja vem 100% URL-encoded do helper (montarLinkWhatsapp), entao e seguro no href.
+// `variante` permite ghost no detalhe (linha de acoes) e cheio na lista.
+function botaoWhatsapp({ nome, vaga, empresa, telefone }, variante = '') {
+  const link = montarLinkWhatsapp(telefone, mensagemWhatsappCandidato({ nome, vaga, empresa }));
+  const classe = variante ? `btn ${variante}` : 'btn';
+  return link
+    ? `<a class="${classe}" href="${link}" target="_blank" rel="noopener noreferrer">WhatsApp</a>`
+    : `<span class="btn btn--off">WhatsApp</span>`;
+}
+
 // Inteiro com separador de milhar (pt-BR).
 function fmtInt(n) {
   return Number(n || 0).toLocaleString('pt-BR');
@@ -396,6 +409,12 @@ router.get('/', (req, res) => {
       const video = c.video_url
         ? `<a href="${escapeHtml(c.video_url)}" target="_blank" rel="noopener noreferrer">Abrir</a>`
         : '—';
+      const whatsapp = botaoWhatsapp({
+        nome: c.nome,
+        vaga: c.vaga_titulo,
+        empresa: c.vaga_empresa,
+        telefone: c.telefone,
+      });
       return `
         <tr>
           <td><input type="checkbox" name="ids" value="${c.id}" aria-label="Selecionar ${escapeHtml(nomeCompleto(c))}"></td>
@@ -408,6 +427,7 @@ router.get('/', (req, res) => {
           <td>${badgeStatusRecrutador(c.status_recrutador)}</td>
           <td>${escapeHtml(formatarDataHora(c.criado_em))}</td>
           <td>${video}</td>
+          <td>${whatsapp}</td>
           <td>${acao}</td>
         </tr>`;
     })
@@ -512,11 +532,11 @@ router.get('/', (req, res) => {
             <tr>
               <th><input type="checkbox" data-selecionar-todos aria-label="Selecionar todos"></th>
               <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Vaga</th>
-              <th>Status</th><th>Status IA</th><th>Status Recrutador</th><th>Criado em</th><th>Vídeo</th><th>Ação</th>
+              <th>Status</th><th>Status IA</th><th>Status Recrutador</th><th>Criado em</th><th>Vídeo</th><th>WhatsApp</th><th>Ação</th>
             </tr>
           </thead>
           <tbody>
-            ${linhas || `<tr><td colspan="11">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
+            ${linhas || `<tr><td colspan="12">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -643,6 +663,15 @@ router.get('/candidato/:id', (req, res) => {
     ? `<a class="btn btn--ghost" href="${escapeHtml(videoUrl)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`
     : `<span class="btn btn--off">Abrir vídeo</span>`;
 
+  // Botao de WhatsApp: mensagem pre-preenchida com nome, titulo da vaga e empresa (quando
+  // a vaga tem empresa preenchida). Telefone invalido -> botao desabilitado (no helper).
+  const botaoWhats = botaoWhatsapp({
+    nome: cand.nome,
+    vaga: (vaga && vaga.titulo) || cand.vaga_titulo,
+    empresa: vaga && vaga.empresa,
+    telefone: cand.telefone,
+  });
+
   const linkedin = cand.linkedin_url
     ? `<a href="${escapeHtml(cand.linkedin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(cand.linkedin_url)}</a>`
     : '—';
@@ -741,6 +770,7 @@ router.get('/candidato/:id', (req, res) => {
       <h2>Ações</h2>
       <div class="acoes-linha" style="flex-wrap:wrap;gap:.6rem;">
         ${botaoEditar}
+        ${botaoWhats}
         ${botaoCurriculo}
         ${botaoRelatorio}
         ${botaoVideo}
@@ -1503,6 +1533,13 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
       <input type="text" name="titulo" value="${escapeHtml(vaga.titulo || '')}" required>
     </label>
 
+    <label class="campo">
+      <span>Empresa (cliente)</span>
+      <input type="text" name="empresa" value="${escapeHtml(vaga.empresa || '')}" placeholder="Ex.: Acme Ltda">
+    </label>
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+      Nome da empresa dona da vaga. Usado na mensagem de WhatsApp ao candidato. Deixe vazio para omitir.</p>
+
     ${perfilCampo}
 
     <label class="campo">
@@ -1868,6 +1905,7 @@ router.post('/vagas', (req, res) => {
     faixa_pagamento: String(b.faixa_pagamento || '').trim(),
     descricao: String(b.descricao || '').trim(),
     sobre_empresa: String(b.sobre_empresa || '').trim(),
+    empresa: String(b.empresa || '').trim(),
     roteiro_id: roteiro ? roteiro.id : null,
     ativo: b.ativo === '1' || b.ativo === 'on',
     entrevista_ativa: b.entrevista_ativa === '1' || b.entrevista_ativa === 'on',
@@ -1938,6 +1976,7 @@ router.post('/vagas/:id', (req, res) => {
     faixa_pagamento: String(b.faixa_pagamento || '').trim(),
     descricao: String(b.descricao || '').trim(),
     sobre_empresa: String(b.sobre_empresa || '').trim(),
+    empresa: String(b.empresa || '').trim(),
     ativo: b.ativo === '1' || b.ativo === 'on',
     entrevista_ativa: b.entrevista_ativa === '1' || b.entrevista_ativa === 'on',
     // Item 8 — passa a vaga anterior p/ preservar o video valido se a nova entrada falhar.

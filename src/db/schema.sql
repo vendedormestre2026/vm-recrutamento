@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   skills          TEXT,            -- JSON (array de strings)
   descricao       TEXT,
   sobre_empresa   TEXT,
+  empresa         TEXT,            -- nome da empresa cliente dona da vaga (usado na msg de WhatsApp); NULL = omite
   roteiro_id      INTEGER REFERENCES roteiros(id),
   ativo           INTEGER NOT NULL DEFAULT 1,  -- 0/1 (boolean)
   criado_em       TEXT NOT NULL DEFAULT (datetime('now'))
