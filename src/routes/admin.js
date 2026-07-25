@@ -440,15 +440,13 @@ router.get('/', (req, res) => {
         <tr>
           <td><input type="checkbox" name="ids" value="${c.id}" aria-label="Selecionar ${escapeHtml(nomeCompleto(c))}"></td>
           <td><a href="/admin/candidato/${c.id}">${escapeHtml(nomeCompleto(c))}</a></td>
-          <td>${escapeHtml(c.email || '—')}</td>
-          <td>${escapeHtml(c.telefone || '—')}</td>
+          <td><span class="cel-telefone">${escapeHtml(c.telefone || '—')}</span> ${whatsapp}</td>
           <td>${escapeHtml(c.vaga_titulo || '—')}</td>
           <td>${badgeStatus(c.status)}</td>
           <td>${badgeStatusIa(c.status_ia)}</td>
           <td>${badgeStatusRecrutador(c.status_recrutador)}</td>
           <td>${escapeHtml(formatarDataHora(c.criado_em))}</td>
           <td>${video}</td>
-          <td>${whatsapp}</td>
           <td>${acao}</td>
         </tr>`;
     })
@@ -552,12 +550,12 @@ router.get('/', (req, res) => {
           <thead>
             <tr>
               <th><input type="checkbox" data-selecionar-todos aria-label="Selecionar todos"></th>
-              <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Vaga</th>
-              <th>Status</th><th>Status IA</th><th>Status Recrutador</th><th>Criado em</th><th>Vídeo</th><th>WhatsApp</th><th>Ação</th>
+              <th>Nome</th><th>Telefone</th><th>Vaga</th>
+              <th>Status</th><th>Status IA</th><th>Status Recrutador</th><th>Criado em</th><th>Vídeo</th><th>Ação</th>
             </tr>
           </thead>
           <tbody>
-            ${linhas || `<tr><td colspan="12">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
+            ${linhas || `<tr><td colspan="10">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
           </tbody>
         </table>
       </div>
