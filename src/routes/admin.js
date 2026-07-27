@@ -3273,6 +3273,11 @@ router.get('/uso', (req, res) => {
 // fluxo do candidato ainda (a UI deixa isso explicito para nao enganar o operador).
 const CHAVE_ENTREVISTA_AUTO = 'entrevista_automatica_geral';
 
+// Liga/desliga o e-mail "Nova candidatura" ao recrutador, disparado em POST /api/aplicacao
+// (routes/api.js, onde a MESMA string e lida). Default FALSE: a notificacao nasce
+// desligada e so volta a sair se o recrutador marcar o checkbox abaixo.
+const CHAVE_NOTIFICAR_NOVA_CANDIDATURA = 'notificar_recrutador_nova_candidatura';
+
 // ── GET /admin/config ── tela de configuracoes gerais ──
 router.get('/config', (req, res) => {
   const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
@@ -3281,6 +3286,9 @@ router.get('/config', (req, res) => {
   // Config da mensagem de WhatsApp (B4): nome do recrutador + template editavel.
   const recrutadorNome = db.obterConfig('recrutador_nome', RECRUTADOR_PADRAO);
   const whatsappTemplate = db.obterConfig('whatsapp_template', TEMPLATE_PADRAO);
+
+  // Notificacao de nova candidatura (default desligada).
+  const notificarNovaCandidatura = db.obterConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, false);
 
   const estado = ativo
     ? '<span class="badge badge--ativa">Ligada</span>'
@@ -3337,6 +3345,27 @@ router.get('/config', (req, res) => {
         </p>
         <button type="submit" class="btn">Salvar</button>
       </form>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Notificações por e-mail</h2>
+      <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+        Avisos enviados para <b>${escapeHtml(config.recrutador.email || 'RECRUITER_EMAIL não configurado')}</b>.
+      </p>
+      <form method="POST" action="/admin/config/notificacoes">
+        <label class="campo-check">
+          <input type="checkbox" name="notificar_nova_candidatura" value="1"${notificarNovaCandidatura ? ' checked' : ''}>
+          <span style="color:var(--preto);text-transform:none;">
+            Avisar por e-mail a cada <b>nova candidatura</b>
+          </span>
+        </label>
+        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Desmarcado (padrão), nenhum e-mail é enviado quando alguém se candidata — as
+          candidaturas continuam aparecendo normalmente na lista do painel. O
+          <b>relatório da entrevista</b> é outro e-mail e não é afetado por este ajuste.
+        </p>
+        <button type="submit" class="btn">Salvar</button>
+      </form>
     </section>`;
 
   res.send(paginaAdmin({ titulo: 'Configurações gerais', conteudo }));
@@ -3358,6 +3387,16 @@ router.post('/config/whatsapp', (req, res) => {
   const b = req.body || {};
   db.definirConfig('recrutador_nome', String(b.recrutador_nome || '').trim());
   db.definirConfig('whatsapp_template', String(b.whatsapp_template || '').trim());
+  res.redirect('/admin/config?salvo=1');
+});
+
+// ── POST /admin/config/notificacoes ── liga/desliga o e-mail de nova candidatura ──
+// Checkbox: o navegador NAO envia o campo quando desmarcado, entao ausencia = desligar.
+// definirConfigBool grava '1'/'0'; quem le (routes/api.js) usa default false.
+router.post('/config/notificacoes', (req, res) => {
+  const b = req.body || {};
+  const ativo = b.notificar_nova_candidatura === '1' || b.notificar_nova_candidatura === 'on';
+  db.definirConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, ativo);
   res.redirect('/admin/config?salvo=1');
 });
 

@@ -36,6 +36,12 @@ const router = express.Router();
 // Nao reenviar o e-mail de retomada se ja foi enviado nos ultimos 30 minutos.
 const RETOMADA_THROTTLE_MS = 30 * 60 * 1000;
 
+// Chave que liga/desliga o e-mail "Nova candidatura" ao recrutador (store de
+// configuracoes; editavel em /admin/config). Default FALSE: desligado. A mesma string
+// aparece em routes/admin.js, que expoe o checkbox — mesma convencao ja usada por
+// entrevista_automatica_geral (lida por lib/modo.js, escrita pelo painel).
+const CHAVE_NOTIFICAR_NOVA_CANDIDATURA = 'notificar_recrutador_nova_candidatura';
+
 const MAX_PDF_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // 25 MB (resposta de audio push-to-talk)
 const MAX_VIDEO_BYTES = 300 * 1024 * 1024; // 300 MB (gravacao da entrevista inteira)
@@ -228,36 +234,44 @@ router.post('/aplicacao', (req, res) => {
       }
 
       // ── E-mail ao recrutador (Resend) — fire-and-forget ──────────────────────────
+      // DESLIGADO POR PADRAO. O envio inteiro fica atras da chave de configuracao
+      // notificar_recrutador_nova_candidatura (painel: /admin/config). Default false:
+      // sem nenhuma acao manual, esta notificacao para de sair. O codigo NAO foi
+      // removido — religar a chave restaura o comportamento identico ao de antes
+      // (mesmo destinatario, assunto, corpo e fire-and-forget).
+      //
       // Avisa o recrutador da nova candidatura com todos os campos + link do painel.
       // Falha (ou provider indisponivel) SO loga: nunca quebra nem atrasa a criacao da
       // candidatura nem a resposta ao candidato (mesmo padrao de api_banco_curriculos.js).
       // Destino SO de config.recrutador.email (env RECRUITER_EMAIL); vazio -> pula.
-      const destinoRecrutador = config.recrutador.email;
-      if (destinoRecrutador) {
-        const linkAdmin = `${config.baseUrl}/admin/candidato/${applicationId}`;
-        const linha = (rotulo, valor) =>
-          `<tr><td style="padding:4px 8px;font-weight:bold">${rotulo}</td><td style="padding:4px 8px">${escapeHtml(valor || '—')}</td></tr>`;
-        const assuntoRecrutador = `Nova candidatura — ${vaga.titulo}: ${nome} ${sobrenome}`;
-        const htmlRecrutador = `
-          <h2>Nova candidatura</h2>
-          <p>Vaga: <strong>${escapeHtml(vaga.titulo)}</strong></p>
-          <table style="border-collapse:collapse">
-            ${linha('Nome', `${nome} ${sobrenome}`.trim())}
-            ${linha('E-mail', email)}
-            ${linha('Telefone', telefone)}
-            ${linha('LinkedIn', linkedin)}
-            ${linha('Origem (utm_source)', utmSource)}
-          </table>
-          <p><a href="${linkAdmin}">Abrir candidatura no painel</a></p>`;
-        emailProvider
-          .enviar(destinoRecrutador, assuntoRecrutador, htmlRecrutador)
-          .catch((erroEmail) => {
-            console.error(
-              `[api/aplicacao] falha ao enviar e-mail ao recrutador: ${erroEmail.message}`,
-            );
-          });
-      } else {
-        console.warn('[api/aplicacao] RECRUITER_EMAIL ausente; e-mail ao recrutador nao enviado.');
+      if (db.obterConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, false)) {
+        const destinoRecrutador = config.recrutador.email;
+        if (destinoRecrutador) {
+          const linkAdmin = `${config.baseUrl}/admin/candidato/${applicationId}`;
+          const linha = (rotulo, valor) =>
+            `<tr><td style="padding:4px 8px;font-weight:bold">${rotulo}</td><td style="padding:4px 8px">${escapeHtml(valor || '—')}</td></tr>`;
+          const assuntoRecrutador = `Nova candidatura — ${vaga.titulo}: ${nome} ${sobrenome}`;
+          const htmlRecrutador = `
+            <h2>Nova candidatura</h2>
+            <p>Vaga: <strong>${escapeHtml(vaga.titulo)}</strong></p>
+            <table style="border-collapse:collapse">
+              ${linha('Nome', `${nome} ${sobrenome}`.trim())}
+              ${linha('E-mail', email)}
+              ${linha('Telefone', telefone)}
+              ${linha('LinkedIn', linkedin)}
+              ${linha('Origem (utm_source)', utmSource)}
+            </table>
+            <p><a href="${linkAdmin}">Abrir candidatura no painel</a></p>`;
+          emailProvider
+            .enviar(destinoRecrutador, assuntoRecrutador, htmlRecrutador)
+            .catch((erroEmail) => {
+              console.error(
+                `[api/aplicacao] falha ao enviar e-mail ao recrutador: ${erroEmail.message}`,
+              );
+            });
+        } else {
+          console.warn('[api/aplicacao] RECRUITER_EMAIL ausente; e-mail ao recrutador nao enviado.');
+        }
       }
 
       // Grava a sessao do candidato e bifurca o funil (Func. 2), com a decisao
