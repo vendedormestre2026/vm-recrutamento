@@ -208,6 +208,16 @@ const ESTILO_ADMIN = `
   .funil-barra { height:100%; background:var(--laranja); border-radius:5px 0 0 5px; min-width:0; }
   .funil-taxa { color:var(--cinza); font-size:.78rem; margin-top:.28rem; text-transform:uppercase; letter-spacing:.02em; }
   .funil-taxa b { color:var(--preto); font-weight:700; }
+  /* Botao-icone de WhatsApp (coluna Telefone da lista). Classes DEDICADAS de proposito:
+     .btn/.btn--ghost/.btn--off vestem dezenas de botoes de TEXTO do painel e alterar o
+     padding/display delas para acomodar um icone quebraria todos. Os tres estados viram
+     tratamento do proprio icone (cheio / esmaecido / cinza travado). */
+  .btn-icone-whatsapp { display:inline-flex; align-items:center; justify-content:center; padding:.15rem; border:1px solid transparent; border-radius:6px; background:transparent; line-height:0; vertical-align:middle; text-decoration:none; }
+  .btn-icone-whatsapp .ico-whats { display:block; }
+  .btn-icone-whatsapp:hover { border-color:var(--linha); }
+  .btn-icone-whatsapp--feito { filter:grayscale(.55); opacity:.6; }
+  .btn-icone-whatsapp--feito:hover { filter:none; opacity:1; }
+  .btn-icone-whatsapp--off { filter:grayscale(1); opacity:.3; pointer-events:none; cursor:not-allowed; }
   tr.linha-zero { opacity:.5; }
   td.col-num, th.col-num { text-align:right; font-variant-numeric:tabular-nums; }
   table.admin-tab tbody tr:hover { background:var(--cinza-suave); }
@@ -342,23 +352,50 @@ function nomeCompleto(linha) {
   return nome || linha.email || '—';
 }
 
+// Icone de mensagem para o botao de WhatsApp da lista: SVG inline desenhado aqui, com
+// formas basicas (balao de conversa arredondado + silhueta generica de celular). E um
+// icone de "mensagem/contato" na mesma linguagem visual, NAO uma reproducao da marca
+// oficial. ~21px para caber ao lado do telefone sem alargar a coluna. aria-hidden porque
+// quem anuncia o controle e o aria-label do <a>/<span> ao redor (o SVG e decorativo).
+const ICONE_WHATSAPP = `<svg class="ico-whats" viewBox="0 0 24 24" width="21" height="21" aria-hidden="true" focusable="false">
+  <rect x="2" y="3" width="20" height="15" rx="4.5" fill="#1FA855"/>
+  <polygon points="7.2,16.4 5.6,21.6 12,16.4" fill="#1FA855"/>
+  <rect x="9.6" y="6.2" width="4.8" height="8.6" rx="1.2" fill="#FFFFFF"/>
+  <circle cx="12" cy="13.2" r="0.6" fill="#1FA855"/>
+</svg>`;
+
 // Botao "WhatsApp": aponta para a rota interna GET /admin/candidato/:id/whatsapp, que
 // registra o 1o contato e redireciona (302) para o wa.me montado no servidor. Telefone
-// invalido/ausente -> botao desabilitado (btn--off). Ja contatado (contatadoEm) -> estado
-// DISCRETO (ghost + "✓") com title mostrando a data do 1o contato; o clique ainda abre o
-// wa.me (a data original e preservada). Paleta existente, sem cor nova. `variante` ajusta
-// o estilo do botao "novo" quando preciso.
-function botaoWhatsapp({ id, telefone, contatadoEm }, variante = '') {
+// invalido/ausente -> desabilitado. Ja contatado (contatadoEm) -> estado DISCRETO com
+// title mostrando a data do 1o contato; o clique ainda abre o wa.me (a data original e
+// preservada). `variante` ajusta o estilo do botao "novo" quando preciso.
+//
+// Por padrao renderiza o ICONE (lista de candidatos). `comTexto: true` mantem o rotulo
+// escrito — usado na tela de detalhe, onde o botao vive numa fileira de acoes de texto
+// ("Editar", "Baixar currículo (PDF)", ...) e um icone solto destoaria.
+//
+// Sem texto visivel, o estado passa a ser comunicado por aria-label (leitores de tela) +
+// title (mouse). O href, a rota e os tres estados sao os mesmos de antes.
+function botaoWhatsapp({ id, telefone, contatadoEm, comTexto = false }, variante = '') {
   if (normalizarTelefoneWhatsapp(telefone) == null) {
-    return `<span class="btn btn--off">WhatsApp</span>`;
+    const aria = 'WhatsApp indisponível — telefone inválido ou ausente';
+    return comTexto
+      ? `<span class="btn btn--off" aria-label="${aria}">WhatsApp</span>`
+      : `<span class="btn-icone-whatsapp btn-icone-whatsapp--off" role="img" aria-label="${aria}" title="${aria}">${ICONE_WHATSAPP}</span>`;
   }
   const href = `/admin/candidato/${id}/whatsapp`;
   if (contatadoEm) {
     const quando = escapeHtml(formatarDataHora(contatadoEm));
-    return `<a class="btn btn--ghost" href="${href}" target="_blank" rel="noopener noreferrer" title="Já contatado em ${quando}">✓ WhatsApp</a>`;
+    return comTexto
+      ? `<a class="btn btn--ghost" href="${href}" target="_blank" rel="noopener noreferrer" title="Já contatado em ${quando}" aria-label="Já contatado via WhatsApp em ${quando}">✓ WhatsApp</a>`
+      : `<a class="btn-icone-whatsapp btn-icone-whatsapp--feito" href="${href}" target="_blank" rel="noopener noreferrer" title="Já contatado em ${quando}" aria-label="Já contatado via WhatsApp em ${quando}">${ICONE_WHATSAPP}</a>`;
   }
-  const classe = variante ? `btn ${variante}` : 'btn';
-  return `<a class="${classe}" href="${href}" target="_blank" rel="noopener noreferrer">WhatsApp</a>`;
+  if (comTexto) {
+    const classe = variante ? `btn ${variante}` : 'btn';
+    return `<a class="${classe}" href="${href}" target="_blank" rel="noopener noreferrer" aria-label="Abrir WhatsApp">WhatsApp</a>`;
+  }
+  const classe = variante ? `btn-icone-whatsapp ${variante}` : 'btn-icone-whatsapp';
+  return `<a class="${classe}" href="${href}" target="_blank" rel="noopener noreferrer" title="Abrir WhatsApp" aria-label="Abrir WhatsApp">${ICONE_WHATSAPP}</a>`;
 }
 
 // Le a config da mensagem de WhatsApp (nome do recrutador + template) uma unica vez por
@@ -862,6 +899,7 @@ router.get('/candidato/:id', (req, res) => {
     id: cand.id,
     telefone: cand.telefone,
     contatadoEm: cand.contatado_whatsapp_em,
+    comTexto: true, // fileira de acoes com botoes de texto: aqui o rotulo escrito fica
   });
 
   const linkedin = cand.linkedin_url
