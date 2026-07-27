@@ -398,6 +398,115 @@ function fmtUsd8(n) {
   return `$${Number(n || 0).toFixed(8)}`;
 }
 
+// ── Colunas configuraveis da lista de candidatos ──
+//
+// FONTE UNICA da verdade: o <thead>, cada <td> do corpo e o painel "Colunas" saem TODOS
+// deste array — a lista de colunas nao se repete em lugar nenhum. `chave` e o que vai no
+// JSON da config e no value do checkbox; `rotulo` e o <th>; `celula(c)` monta o conteudo
+// da <td> a partir da linha da listagem.
+//
+// NAO entram aqui as colunas FIXAS (checkbox de selecao, Nome e Acao/"Ver relatorio"):
+// elas sempre aparecem e nao sao togglaveis.
+//
+// `exigeAplicacao`: a query da listagem (listarAplicacoesComContexto) NAO devolve todas
+// as colunas de applications — linkedin_url e utm_source ficam de fora. As colunas que
+// dependem delas marcam esta flag e o handler carrega a aplicacao completa por linha
+// (db.obterAplicacao) SOMENTE quando pelo menos uma dessas colunas esta ativa.
+const COLUNAS_CANDIDATOS = [
+  {
+    chave: 'telefone',
+    rotulo: 'Telefone',
+    // Mesma celula de sempre: telefone + botao de WhatsApp embutido (botaoWhatsapp intacto).
+    celula: (c) =>
+      `<span class="cel-telefone">${escapeHtml(c.telefone || '—')}</span> ${botaoWhatsapp({
+        id: c.id,
+        telefone: c.telefone,
+        contatadoEm: c.contatado_whatsapp_em,
+      })}`,
+  },
+  { chave: 'email', rotulo: 'E-mail', celula: (c) => escapeHtml(c.email || '—') },
+  {
+    chave: 'linkedin',
+    rotulo: 'LinkedIn',
+    exigeAplicacao: true,
+    celula: (c) =>
+      c.linkedin_url
+        ? `<a href="${escapeHtml(c.linkedin_url)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(c.linkedin_url)}">Abrir</a>`
+        : '—',
+  },
+  {
+    chave: 'origem',
+    rotulo: 'Origem (UTM)',
+    exigeAplicacao: true,
+    // Mesma regra da tela de detalhe: NULL (candidaturas antigas) e o literal 'direto'
+    // (acesso sem UTM) exibem "Direto"; qualquer outra origem mostra o valor cru escapado.
+    celula: (c) =>
+      c.utm_source && c.utm_source !== 'direto' ? escapeHtml(c.utm_source) : 'Direto',
+  },
+  { chave: 'vaga', rotulo: 'Vaga', celula: (c) => escapeHtml(c.vaga_titulo || '—') },
+  { chave: 'status', rotulo: 'Status', celula: (c) => badgeStatus(c.status) },
+  { chave: 'status_ia', rotulo: 'Status IA', celula: (c) => badgeStatusIa(c.status_ia) },
+  {
+    chave: 'status_recrutador',
+    rotulo: 'Status Recrutador',
+    celula: (c) => badgeStatusRecrutador(c.status_recrutador),
+  },
+  {
+    chave: 'criado_em',
+    rotulo: 'Aplicou em',
+    celula: (c) => escapeHtml(formatarDataHora(c.criado_em)),
+  },
+  {
+    chave: 'video',
+    rotulo: 'Vídeo',
+    celula: (c) =>
+      c.video_url
+        ? `<a href="${escapeHtml(c.video_url)}" target="_blank" rel="noopener noreferrer">Abrir</a>`
+        : '—',
+  },
+];
+
+// Colunas FIXAS que emolduram as togglaveis: checkbox + Nome antes, Acao depois. O
+// colspan da linha vazia e 3 + <togglaveis ativas>.
+const COLUNAS_FIXAS_CANDIDATOS = 3;
+
+const CHAVE_COLUNAS_CANDIDATOS = 'admin_colunas_candidatos';
+
+// Default = a tabela que ja existia antes desta feature. Sem linha na tabela
+// configuracoes, a lista renderiza exatamente como renderizava.
+const COLUNAS_CANDIDATOS_PADRAO = [
+  'telefone',
+  'vaga',
+  'status',
+  'status_ia',
+  'status_recrutador',
+  'criado_em',
+  'video',
+];
+
+// JSON defensivo (mesma ideia do lerJson privado do sqlite.js, reimplementada aqui):
+// texto invalido/corrompido NUNCA quebra a pagina, cai no padrao.
+function lerJsonAdmin(texto, padrao) {
+  try {
+    const v = JSON.parse(texto);
+    return v == null ? padrao : v;
+  } catch {
+    return padrao;
+  }
+}
+
+// Leitura agrupada da preferencia de colunas (mesmo padrao de configWhatsapp: uma
+// chamada por request). Devolve os OBJETOS de COLUNAS_CANDIDATOS ativos, na ordem
+// canonica do array — a ordem salva/marcada nao altera a ordem das colunas, entao
+// cabecalho e corpo nunca saem de sincronia. Chave ausente -> default; array vazio
+// salvo e um estado VALIDO (so as colunas fixas).
+function colunasCandidatosAtivas() {
+  const cru = db.obterConfig(CHAVE_COLUNAS_CANDIDATOS, null);
+  const lista = cru == null ? COLUNAS_CANDIDATOS_PADRAO : lerJsonAdmin(cru, COLUNAS_CANDIDATOS_PADRAO);
+  const chaves = (Array.isArray(lista) ? lista : COLUNAS_CANDIDATOS_PADRAO).map(String);
+  return COLUNAS_CANDIDATOS.filter((col) => chaves.includes(col.chave));
+}
+
 // ── GET /admin ── lista de candidatos (com filtros por status e data, via query string) ──
 router.get('/', (req, res) => {
   const q = req.query || {};
@@ -422,31 +531,29 @@ router.get('/', (req, res) => {
     jobId: vagaId || undefined,
   });
 
+  // Colunas visiveis (preferencia salva ou default). Uma leitura de config por request.
+  const colunas = colunasCandidatosAtivas();
+
+  // LinkedIn/Origem nao vem na query da listagem: so quando uma delas esta ativa a linha
+  // e completada com a aplicacao inteira (db.obterAplicacao). Com o conjunto padrao de
+  // colunas, nenhuma consulta extra acontece.
+  const precisaAplicacao = colunas.some((col) => col.exigeAplicacao);
+
   const linhas = candidatos
     .map((c) => {
       const podeVerRelatorio = c.status === 'concluido' && c.report_interview_id != null;
       const acao = podeVerRelatorio
         ? `<a class="btn" href="/admin/relatorio/${c.report_interview_id}">Ver relatório</a>`
         : `<span class="btn btn--off">Ver relatório</span>`;
-      const video = c.video_url
-        ? `<a href="${escapeHtml(c.video_url)}" target="_blank" rel="noopener noreferrer">Abrir</a>`
-        : '—';
-      const whatsapp = botaoWhatsapp({
-        id: c.id,
-        telefone: c.telefone,
-        contatadoEm: c.contatado_whatsapp_em,
-      });
+      // A linha da listagem tem precedencia (traz os campos derivados: vaga_titulo,
+      // video_url, report_interview_id); a aplicacao so preenche o que falta.
+      const dados = precisaAplicacao ? { ...(db.obterAplicacao(c.id) || {}), ...c } : c;
+      const celulas = colunas.map((col) => `<td>${col.celula(dados)}</td>`).join('');
       return `
         <tr>
           <td><input type="checkbox" name="ids" value="${c.id}" aria-label="Selecionar ${escapeHtml(nomeCompleto(c))}"></td>
           <td><a href="/admin/candidato/${c.id}">${escapeHtml(nomeCompleto(c))}</a></td>
-          <td><span class="cel-telefone">${escapeHtml(c.telefone || '—')}</span> ${whatsapp}</td>
-          <td>${escapeHtml(c.vaga_titulo || '—')}</td>
-          <td>${badgeStatus(c.status)}</td>
-          <td>${badgeStatusIa(c.status_ia)}</td>
-          <td>${badgeStatusRecrutador(c.status_recrutador)}</td>
-          <td>${escapeHtml(formatarDataHora(c.criado_em))}</td>
-          <td>${video}</td>
+          ${celulas}
           <td>${acao}</td>
         </tr>`;
     })
@@ -506,6 +613,36 @@ router.get('/', (req, res) => {
       ${temFiltro ? '<a class="btn btn--ghost" href="/admin">Limpar</a>' : ''}
     </form>`;
 
+  // Painel "Colunas": um checkbox por coluna togglavel, gerado do MESMO array que monta
+  // a tabela. Form PROPRIO (nao aninhado no form-lote, que ja e um <form> de POST) e com
+  // os hidden dos filtros ativos, para o redirect da rota voltar ao mesmo recorte.
+  const ativas = new Set(colunas.map((col) => col.chave));
+  const opcoesColunas = COLUNAS_CANDIDATOS.map(
+    (col) => `
+        <label style="display:flex;align-items:center;gap:.4rem;white-space:nowrap;">
+          <input type="checkbox" name="colunas" value="${escapeHtml(col.chave)}"${ativas.has(col.chave) ? ' checked' : ''}>
+          <span>${escapeHtml(col.rotulo)}</span>
+        </label>`,
+  ).join('');
+  const painelColunas = `
+    <details class="bloco-card" style="margin-bottom:1rem;">
+      <summary>Colunas</summary>
+      <form method="POST" action="/admin/colunas-candidatos">
+        <input type="hidden" name="status" value="${escapeHtml(status)}">
+        <input type="hidden" name="status_ia" value="${escapeHtml(statusIa)}">
+        <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
+        <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
+        <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
+        <p style="color:var(--cinza);font-size:.85rem;margin:0 0 .7rem;">
+          Escolha as colunas visíveis na tabela. Seleção, <b>Nome</b> e <b>Ação</b> são fixas.
+        </p>
+        <div style="display:flex;gap:.6rem 1.4rem;flex-wrap:wrap;margin-bottom:.9rem;">
+          ${opcoesColunas}
+        </div>
+        <button type="submit" class="btn">Salvar colunas</button>
+      </form>
+    </details>`;
+
   // Aviso pos-acao (arquivar individual/lote, status do recrutador em lote, restaurar,
   // selecao vazia), sinalizado por query string apos o redirect.
   const nArquivados = Number(req.query.arquivados);
@@ -543,6 +680,7 @@ router.get('/', (req, res) => {
       </div>
     </div>
     ${filtros}
+    ${painelColunas}
     <form id="form-lote" method="POST" action="/admin/candidatos/arquivar-lote">
       <input type="hidden" name="status" value="${escapeHtml(status)}">
       <input type="hidden" name="status_ia" value="${escapeHtml(statusIa)}">
@@ -566,12 +704,13 @@ router.get('/', (req, res) => {
           <thead>
             <tr>
               <th><input type="checkbox" data-selecionar-todos aria-label="Selecionar todos"></th>
-              <th>Nome</th><th>Telefone</th><th>Vaga</th>
-              <th>Status</th><th>Status IA</th><th>Status Recrutador</th><th>Criado em</th><th>Vídeo</th><th>Ação</th>
+              <th>Nome</th>
+              ${colunas.map((col) => `<th>${escapeHtml(col.rotulo)}</th>`).join('')}
+              <th>Ação</th>
             </tr>
           </thead>
           <tbody>
-            ${linhas || `<tr><td colspan="10">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
+            ${linhas || `<tr><td colspan="${COLUNAS_FIXAS_CANDIDATOS + colunas.length}">${temFiltro ? 'Nenhum candidato para os filtros aplicados.' : 'Nenhum candidato ainda.'}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1124,6 +1263,31 @@ router.post('/candidatos/status-recrutador-lote', (req, res) => {
   }
   params.set('status_recrutador_aplicados', String(aplicados));
   return res.redirect(`/admin?${params.toString()}`);
+});
+
+// ── POST /admin/colunas-candidatos ── salva quais colunas da lista ficam visiveis ──
+// Recebe `colunas` (um valor por checkbox marcado). Filtra contra as chaves conhecidas de
+// COLUNAS_CANDIDATOS — chave desconhecida e ignorada em SILENCIO (nao 400: e preferencia
+// de UI, nao dado de negocio). Nenhum checkbox marcado grava '[]', um estado valido (so
+// as colunas fixas), diferente de "nunca salvou" (chave ausente -> default). Persistido
+// como JSON no store generico de configuracoes; nao ha mudanca de schema.
+router.post('/colunas-candidatos', (req, res) => {
+  const brutos = req.body && req.body.colunas;
+  const lista = Array.isArray(brutos) ? brutos : brutos != null ? [brutos] : [];
+  const escolhidas = [];
+  for (const v of lista) {
+    const chave = String(v);
+    const conhecida = COLUNAS_CANDIDATOS.some((col) => col.chave === chave);
+    if (conhecida && !escolhidas.includes(chave)) escolhidas.push(chave);
+  }
+
+  db.definirConfig(CHAVE_COLUNAS_CANDIDATOS, JSON.stringify(escolhidas));
+
+  // Filtros ativos: preferencia para os hidden do proprio form (corpo); a query string
+  // entra como fallback. paramsFiltros revalida tudo dos dois jeitos.
+  const params = paramsFiltros({ ...(req.query || {}), ...(req.body || {}) });
+  const qs = params.toString();
+  return res.redirect(qs ? `/admin?${qs}` : '/admin');
 });
 
 // ── GET /admin/relatorio/:interviewId ── relatorio individual ──
