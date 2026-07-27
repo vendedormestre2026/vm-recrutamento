@@ -218,6 +218,17 @@ const ESTILO_ADMIN = `
   .btn-icone-whatsapp--feito { filter:grayscale(.55); opacity:.6; }
   .btn-icone-whatsapp--feito:hover { filter:none; opacity:1; }
   .btn-icone-whatsapp--off { filter:grayscale(1); opacity:.3; pointer-events:none; cursor:not-allowed; }
+  /* Edicao inline do Status Recrutador na lista (select compacto + aviso efemero ao lado).
+     Classes dedicadas: .campo/.admin-filtros vestem os selects das telas de formulario e
+     nao devem valer dentro da tabela. O aviso usa visibility (nao display) p/ a celula
+     nao mudar de largura quando aparece/some. */
+  .cel-status-rec { display:inline-flex; align-items:center; gap:.4rem; }
+  .sel-status-rec { background:var(--campo); color:var(--preto); border:1px solid var(--linha); border-radius:6px; padding:.25rem .4rem; font:inherit; font-size:.85rem; }
+  .sel-status-rec:focus { outline:none; border-color:var(--laranja); }
+  .sel-status-rec:disabled { opacity:.6; cursor:progress; }
+  .aviso-inline { font-size:.8rem; font-weight:700; white-space:nowrap; visibility:hidden; min-width:4.2rem; }
+  .aviso-inline--ok { color:#1FA855; visibility:visible; }
+  .aviso-inline--erro { color:#C0392B; visibility:visible; }
   tr.linha-zero { opacity:.5; }
   td.col-num, th.col-num { text-align:right; font-variant-numeric:tabular-nums; }
   table.admin-tab tbody tr:hover { background:var(--cinza-suave); }
@@ -435,6 +446,34 @@ function fmtUsd8(n) {
   return `$${Number(n || 0).toFixed(8)}`;
 }
 
+// Opcoes do Status Recrutador na edicao inline da lista. '' = "Sem decisao" (a camada de
+// dados grava null). Enum espelha STATUS_RECRUTADOR_VALIDOS; a barra de acao em MASSA tem
+// as suas proprias opcoes e nao foi tocada.
+const OPCOES_STATUS_RECRUTADOR = [
+  ['', 'Sem decisão'],
+  ['em_analise', 'Em análise'],
+  ['aprovado', 'Aprovado'],
+  ['reprovado', 'Reprovado'],
+];
+
+// Celula editavel do Status Recrutador (uma linha da lista). O <select> NAO tem atributo
+// `name` DE PROPOSITO: ele mora dentro do <form id="form-lote"> (a tabela inteira esta la),
+// e sem `name` o navegador nunca o serializa — a acao em massa e os hidden de filtro
+// seguem exatamente com os mesmos campos de antes. O salvamento e 100% via fetch.
+// `data-anterior` guarda o valor vigente para poder reverter quando a gravacao falha.
+function selectStatusRecrutadorLinha(c) {
+  const atual = c.status_recrutador || '';
+  const opcoes = OPCOES_STATUS_RECRUTADOR.map(
+    ([valor, rotulo]) =>
+      `<option value="${escapeHtml(valor)}"${atual === valor ? ' selected' : ''}>${escapeHtml(rotulo)}</option>`,
+  ).join('');
+  return `<span class="cel-status-rec">
+        <select class="sel-status-rec" data-status-recrutador-linha data-id="${c.id}" data-anterior="${escapeHtml(atual)}"
+          aria-label="Status do recrutador de ${escapeHtml(nomeCompleto(c))}">${opcoes}</select>
+        <span class="aviso-inline" data-status-aviso aria-live="polite"></span>
+      </span>`;
+}
+
 // ── Colunas configuraveis da lista de candidatos ──
 //
 // FONTE UNICA da verdade: o <thead>, cada <td> do corpo e o painel "Colunas" saem TODOS
@@ -486,7 +525,7 @@ const COLUNAS_CANDIDATOS = [
   {
     chave: 'status_recrutador',
     rotulo: 'Status Recrutador',
-    celula: (c) => badgeStatusRecrutador(c.status_recrutador),
+    celula: (c) => selectStatusRecrutadorLinha(c),
   },
   {
     chave: 'criado_em',
@@ -804,6 +843,60 @@ router.get('/', (req, res) => {
         if (!confirm(msg)) { e.preventDefault(); }
       });
       atualizar();
+    })();
+
+    // Edicao inline do Status Recrutador: salva por linha, sem sair da lista. Escutamos na
+    // TABELA (nao no form) para nunca cruzar com o <select> da barra de acao em massa, que
+    // fica fora dela. O select da linha nao tem atributo name, entao nada disso interfere
+    // no que o form-lote submete.
+    (function () {
+      var tabela = document.querySelector('table.admin-tab');
+      if (!tabela || !window.fetch) return;
+
+      // Aviso efemero ao lado do select ("✓ Salvo" / "Erro ao salvar"), some sozinho em 2s.
+      function avisar(sel, texto, modificador) {
+        var alvo = sel.parentNode ? sel.parentNode.querySelector('[data-status-aviso]') : null;
+        if (!alvo) return;
+        alvo.textContent = texto;
+        alvo.className = 'aviso-inline ' + modificador;
+        if (alvo.temporizador) { clearTimeout(alvo.temporizador); }
+        alvo.temporizador = setTimeout(function () {
+          alvo.textContent = '';
+          alvo.className = 'aviso-inline';
+        }, 2000);
+      }
+
+      tabela.addEventListener('change', function (e) {
+        var sel = e.target;
+        if (!sel || !sel.hasAttribute || !sel.hasAttribute('data-status-recrutador-linha')) return;
+
+        var anterior = sel.getAttribute('data-anterior') || '';
+        // Desabilitar durante a chamada evita disparos concorrentes no MESMO select.
+        sel.disabled = true;
+
+        fetch('/admin/candidato/' + encodeURIComponent(sel.getAttribute('data-id')) + '/status-recrutador', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'fetch'
+          },
+          body: 'status_recrutador=' + encodeURIComponent(sel.value)
+        })
+          .then(function (r) { return r.json().catch(function () { return null; }); })
+          .then(function (d) {
+            if (!d || d.ok !== true) { throw new Error('falha'); }
+            // Reflete o valor que o servidor REALMENTE gravou (null -> '' = Sem decisão).
+            var salvo = d.status_recrutador || '';
+            sel.value = salvo;
+            sel.setAttribute('data-anterior', salvo);
+            avisar(sel, '✓ Salvo', 'aviso-inline--ok');
+          })
+          .catch(function () {
+            sel.value = anterior; // nunca deixa o select mostrando algo que nao foi gravado
+            avisar(sel, 'Erro ao salvar', 'aviso-inline--erro');
+          })
+          .then(function () { sel.disabled = false; });
+      });
     })();
     </script>`;
 
@@ -1189,19 +1282,36 @@ router.post('/candidato/:id/arquivar', (req, res) => {
 
 // ── POST /admin/candidato/:id/status-recrutador ── registra a decisao humana ──
 // Enum validado na camada de dados (definirStatusRecrutador): valor fora do enum
-// (incluindo '' = "Sem decisao") grava null. Mesmo padrao de id/404/redirect das
-// rotas vizinhas de mutacao.
+// (incluindo '' = "Sem decisao") grava null. Mesmo padrao de id/404 das rotas vizinhas.
+//
+// DUAS respostas para o MESMO trabalho, decididas pelo header X-Requested-With: fetch
+// (escolhido por ser impossivel de um <form> classico mandar por acidente — diferente de
+// Accept, que numa navegacao normal vem com */* e confundiria os dois casos):
+//   com o header  -> JSON { ok: true, status_recrutador } | { ok: false, erro } (edicao
+//                    inline da lista; nunca redireciona)
+//   sem o header  -> redirect de sempre (form classico da tela de detalhe, intacto)
 router.post('/candidato/:id/status-recrutador', (req, res) => {
   const id = Number(req.params.id);
   const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  const ehJson = String(req.get('x-requested-with') || '').toLowerCase() === 'fetch';
+
   if (!cand) {
+    if (ehJson) {
+      return res.status(404).json({ ok: false, erro: 'Candidato não encontrado.' });
+    }
     return avisoAdmin(res, 404, {
       titulo: 'Candidato não encontrado',
       descricao: 'Não há candidatura com este identificador.',
     });
   }
+
   const valor = (req.body && req.body.status_recrutador) || null;
-  db.definirStatusRecrutador(id, valor);
+  // definirStatusRecrutador devolve o valor FINAL gravado (null quando fora do enum) —
+  // e ele que volta no JSON, para a lista refletir o que o banco tem, nao o que pediu.
+  const gravado = db.definirStatusRecrutador(id, valor);
+  if (ehJson) {
+    return res.json({ ok: true, status_recrutador: gravado });
+  }
   return res.redirect(`/admin/candidato/${id}?ok=status_recrutador`);
 });
 
