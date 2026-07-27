@@ -506,19 +506,26 @@ router.get('/', (req, res) => {
       ${temFiltro ? '<a class="btn btn--ghost" href="/admin">Limpar</a>' : ''}
     </form>`;
 
-  // Aviso pos-acao (arquivar individual/lote, restaurar, selecao vazia), sinalizado por
-  // query string apos o redirect.
+  // Aviso pos-acao (arquivar individual/lote, status do recrutador em lote, restaurar,
+  // selecao vazia), sinalizado por query string apos o redirect.
   const nArquivados = Number(req.query.arquivados);
+  const nStatusRecrutador = Number(req.query.status_recrutador_aplicados);
   const flashLista =
     req.query.sem_selecao === '1'
       ? '<div class="aviso-alerta">Nenhum lead válido selecionado.</div>'
-      : req.query.arquivados != null && Number.isInteger(nArquivados) && nArquivados >= 0
-        ? `<div class="aviso-ok">${nArquivados} lead(s) arquivado(s). Eles saíram da listagem, mas o histórico foi preservado.</div>`
-        : req.query.arquivado === '1'
-          ? '<div class="aviso-ok">Lead arquivado. Ele saiu da listagem, mas o histórico foi preservado.</div>'
-          : req.query.restaurado === '1'
-            ? '<div class="aviso-ok">Lead restaurado.</div>'
-            : '';
+      : req.query.sem_status === '1'
+        ? '<div class="aviso-alerta">Nenhum status informado. Escolha um status antes de aplicar.</div>'
+        : req.query.status_recrutador_aplicados != null &&
+            Number.isInteger(nStatusRecrutador) &&
+            nStatusRecrutador >= 0
+          ? `<div class="aviso-ok">Status do recrutador atualizado em ${nStatusRecrutador} candidato(s).</div>`
+          : req.query.arquivados != null && Number.isInteger(nArquivados) && nArquivados >= 0
+            ? `<div class="aviso-ok">${nArquivados} lead(s) arquivado(s). Eles saíram da listagem, mas o histórico foi preservado.</div>`
+            : req.query.arquivado === '1'
+              ? '<div class="aviso-ok">Lead arquivado. Ele saiu da listagem, mas o histórico foi preservado.</div>'
+              : req.query.restaurado === '1'
+                ? '<div class="aviso-ok">Lead restaurado.</div>'
+                : '';
 
   const conteudo = `
     ${flashLista}
@@ -542,8 +549,17 @@ router.get('/', (req, res) => {
       <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
       <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
       <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
-      <div style="margin:0 0 .75rem;">
+      <div style="margin:0 0 .75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
         <button type="submit" class="btn" data-arquivar-lote disabled>Arquivar selecionados</button>
+        <select name="status_recrutador" aria-label="Status do recrutador a aplicar nos selecionados"
+          style="background:var(--campo);color:var(--preto);border:1px solid var(--linha);border-radius:6px;padding:.4rem .6rem;font:inherit;">
+          <option value="">Sem decisão</option>
+          <option value="em_analise">Em análise</option>
+          <option value="aprovado">Aprovado</option>
+          <option value="reprovado">Reprovado</option>
+        </select>
+        <button type="submit" class="btn" formaction="/admin/candidatos/status-recrutador-lote"
+          data-status-lote disabled>Aplicar status aos selecionados</button>
       </div>
       <div class="admin-tab-scroll">
         <table class="admin-tab">
@@ -570,13 +586,23 @@ router.get('/', (req, res) => {
       if (!form) return;
       var todos = form.querySelector('[data-selecionar-todos]');
       var botao = form.querySelector('[data-arquivar-lote]');
+      var botaoStatus = form.querySelector('[data-status-lote]');
       var base = 'Arquivar selecionados';
+      var baseStatus = 'Aplicar status aos selecionados';
+      // Qual botao disparou o submit (o form tem dois: arquivar e aplicar status, este via
+      // formaction). Fallback p/ navegadores sem event.submitter: guarda o ultimo clicado.
+      var ultimoBotao = null;
       function itens() { return Array.prototype.slice.call(form.querySelectorAll('input[name="ids"]')); }
       function marcados() { return itens().filter(function (c) { return c.checked; }); }
+      function rotular(b, texto, n) {
+        if (!b) return;
+        b.disabled = n === 0;
+        b.textContent = n > 0 ? texto + ' (' + n + ')' : texto;
+      }
       function atualizar() {
         var n = marcados().length;
-        botao.disabled = n === 0;
-        botao.textContent = n > 0 ? base + ' (' + n + ')' : base;
+        rotular(botao, base, n);
+        rotular(botaoStatus, baseStatus, n);
         if (todos) { todos.checked = n > 0 && n === itens().length; }
         itens().forEach(function (c) {
           var tr = c.closest('tr');
@@ -587,10 +613,19 @@ router.get('/', (req, res) => {
         if (e.target === todos) { itens().forEach(function (c) { c.checked = todos.checked; }); }
         atualizar();
       });
+      form.addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('button[type="submit"]') : null;
+        if (b) { ultimoBotao = b; }
+      });
       form.addEventListener('submit', function (e) {
         var n = marcados().length;
         if (n === 0) { e.preventDefault(); return; }
-        if (!confirm('Arquivar ' + n + ' lead(s)? Eles saem da listagem, mas o histórico é preservado.')) { e.preventDefault(); }
+        var alvo = e.submitter || ultimoBotao;
+        var ehStatus = Boolean(alvo && alvo.hasAttribute('data-status-lote'));
+        var msg = ehStatus
+          ? 'Aplicar o status escolhido a ' + n + ' candidato(s)?'
+          : 'Arquivar ' + n + ' lead(s)? Eles saem da listagem, mas o histórico é preservado.';
+        if (!confirm(msg)) { e.preventDefault(); }
       });
       atualizar();
     })();
@@ -1044,6 +1079,50 @@ router.post('/candidatos/arquivar-lote', (req, res) => {
   let arquivados = 0;
   for (const id of ids) arquivados += db.arquivarAplicacao(id); // 0 se ja arquivado / inexistente
   params.set('arquivados', String(arquivados));
+  return res.redirect(`/admin?${params.toString()}`);
+});
+
+// ── POST /admin/candidatos/status-recrutador-lote ── decisao do recrutador em lote ──
+// Mesma anatomia de arquivar-lote: saneia ids (inteiros positivos unicos, invalidos
+// ignorados em silencio), reconstroi os filtros de origem com paramsFiltros e volta por
+// redirect com flash na query string. O valor vem do <select> do MESMO form da listagem
+// (submetido por formaction), entao os hidden de filtro sao reaproveitados.
+//
+// Enum validado na camada de dados (definirStatusRecrutador): valor fora de
+// aprovado/reprovado/em_analise vira null. String vazia e uma intencao VALIDA aqui
+// ("Sem decisao" = limpar a decisao) — por isso a guarda abaixo testa AUSENCIA do campo,
+// nao valor vazio: sem o campo no corpo nao ha intencao explicita e nada e aplicado.
+router.post('/candidatos/status-recrutador-lote', (req, res) => {
+  const brutos = req.body && req.body.ids;
+  const lista = Array.isArray(brutos) ? brutos : brutos != null ? [brutos] : [];
+  const ids = [];
+  for (const v of lista) {
+    const n = Number(v);
+    if (Number.isInteger(n) && n > 0 && !ids.includes(n)) ids.push(n);
+  }
+
+  const params = paramsFiltros(req.body);
+
+  const valor = req.body ? req.body.status_recrutador : undefined;
+  if (valor == null) {
+    params.set('sem_status', '1');
+    return res.redirect(`/admin?${params.toString()}`);
+  }
+
+  if (!ids.length) {
+    params.set('sem_selecao', '1');
+    return res.redirect(`/admin?${params.toString()}`);
+  }
+
+  // Conta so os ids que existem de fato (defensivo, mesmo espirito do 0-changes do
+  // arquivar-lote): id forjado nao infla o numero do aviso.
+  let aplicados = 0;
+  for (const id of ids) {
+    if (!db.obterAplicacao(id)) continue;
+    db.definirStatusRecrutador(id, valor);
+    aplicados += 1;
+  }
+  params.set('status_recrutador_aplicados', String(aplicados));
   return res.redirect(`/admin?${params.toString()}`);
 });
 
