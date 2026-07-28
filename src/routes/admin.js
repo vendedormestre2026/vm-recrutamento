@@ -331,6 +331,11 @@ function badgeStatus(status) {
 // sanear o filtro ?status_ia= e para o <select> do painel. Enum do item 2.
 const STATUS_IA_VALIDOS = ['avancar', 'talvez', 'descartar', 'processando', 'indefinido', 'erro'];
 
+// Valores aceitos no FILTRO de Status Recrutador da listagem: o enum de escrita
+// (db.STATUS_RECRUTADOR_VALIDOS) mais o sentinela 'sem_decisao', que nao e gravavel —
+// representa "coluna NULL" e vira IS NULL na query (listarAplicacoesComContexto).
+const STATUS_RECRUTADOR_FILTRAVEIS = [...db.STATUS_RECRUTADOR_VALIDOS, 'sem_decisao'];
+
 // Chip do Status IA (veredito automatico). Reusa a classe base .badge e os modificadores
 // existentes: laranja (positivo), contorno preto (negativo/sobrio), cinza (neutro/transitorio).
 // Os rotulos dizem "pela IA" para nunca confundir com a decisao humana do recrutador.
@@ -592,6 +597,10 @@ router.get('/', (req, res) => {
   const status = STATUS_VALIDOS.includes(q.status) ? q.status : '';
   // Status IA: mesma allowlist da query (sqlite.js). Vazio/invalido = todos.
   const statusIa = STATUS_IA_VALIDOS.includes(q.status_ia) ? q.status_ia : '';
+  // Status Recrutador: enum de escrita + o sentinela 'sem_decisao' (= IS NULL na query).
+  const statusRecrutador = STATUS_RECRUTADOR_FILTRAVEIS.includes(q.status_recrutador)
+    ? q.status_recrutador
+    : '';
   const ehData = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   const dataDe = ehData(q.de) ? q.de : '';
   const dataAte = ehData(q.ate) ? q.ate : '';
@@ -603,6 +612,7 @@ router.get('/', (req, res) => {
   const candidatos = db.listarAplicacoesComContexto({
     status,
     statusIa,
+    statusRecrutador,
     dataDe,
     dataAte,
     jobId: vagaId || undefined,
@@ -641,7 +651,8 @@ router.get('/', (req, res) => {
 
   const sel = (v) => (status === v ? ' selected' : '');
   const selIa = (v) => (statusIa === v ? ' selected' : '');
-  const temFiltro = status || statusIa || dataDe || dataAte || vagaId;
+  const selRec = (v) => (statusRecrutador === v ? ' selected' : '');
+  const temFiltro = status || statusIa || statusRecrutador || dataDe || dataAte || vagaId;
   const opcoesVaga = vagas
     .map(
       (v) =>
@@ -679,6 +690,16 @@ router.get('/', (req, res) => {
         </select>
       </label>
       <label class="filtro">
+        <span>Status Recrutador</span>
+        <select name="status_recrutador">
+          <option value=""${statusRecrutador ? '' : ' selected'}>Todos</option>
+          <option value="sem_decisao"${selRec('sem_decisao')}>Sem decisão</option>
+          <option value="em_analise"${selRec('em_analise')}>Em análise</option>
+          <option value="aprovado"${selRec('aprovado')}>Aprovado</option>
+          <option value="reprovado"${selRec('reprovado')}>Reprovado</option>
+        </select>
+      </label>
+      <label class="filtro">
         <span>De</span>
         <input type="date" name="de" value="${escapeHtml(dataDe)}">
       </label>
@@ -707,6 +728,7 @@ router.get('/', (req, res) => {
       <form method="POST" action="/admin/colunas-candidatos">
         <input type="hidden" name="status" value="${escapeHtml(status)}">
         <input type="hidden" name="status_ia" value="${escapeHtml(statusIa)}">
+        <input type="hidden" name="filtro_status_recrutador" value="${escapeHtml(statusRecrutador)}">
         <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
         <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
         <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
@@ -761,6 +783,10 @@ router.get('/', (req, res) => {
     <form id="form-lote" method="POST" action="/admin/candidatos/arquivar-lote">
       <input type="hidden" name="status" value="${escapeHtml(status)}">
       <input type="hidden" name="status_ia" value="${escapeHtml(statusIa)}">
+      <!-- Nome PROPOSITALMENTE diferente do filtro na query string: dentro deste form ja
+           existe um <select name="status_recrutador"> — o valor que a acao em MASSA aplica.
+           Dois campos com o mesmo name colidiriam no POST. paramsFiltros sabe ler os dois. -->
+      <input type="hidden" name="filtro_status_recrutador" value="${escapeHtml(statusRecrutador)}">
       <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
       <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
       <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
@@ -1336,6 +1362,15 @@ function paramsFiltros(src = {}) {
   const p = new URLSearchParams();
   if (['aplicado', 'em_entrevista', 'concluido'].includes(src.status)) p.set('status', src.status);
   if (STATUS_IA_VALIDOS.includes(src.status_ia)) p.set('status_ia', src.status_ia);
+  // Status Recrutador: nos FORMS o filtro viaja como filtro_status_recrutador, porque
+  // 'status_recrutador' ali e o valor da acao em massa (outro significado). Na query
+  // string o nome e o curto. Preferimos o explicito quando ele existe — assim aplicar
+  // status em lote NUNCA e confundido com filtrar por status.
+  const recrutadorBruto =
+    src.filtro_status_recrutador != null ? src.filtro_status_recrutador : src.status_recrutador;
+  if (STATUS_RECRUTADOR_FILTRAVEIS.includes(recrutadorBruto)) {
+    p.set('status_recrutador', String(recrutadorBruto));
+  }
   const ehData = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
   if (ehData(src.de)) p.set('de', String(src.de));
   if (ehData(src.ate)) p.set('ate', String(src.ate));

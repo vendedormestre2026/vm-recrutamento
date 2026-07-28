@@ -857,7 +857,15 @@ function obterReportEnviadoPorInterview(interviewId) {
 // painel). Interno a esta query; o handler /admin mantem a MESMA allowlist ao sanear a
 // query string (mesmo padrao ja usado para o enum de status).
 const STATUS_IA_VALIDOS = ['avancar', 'talvez', 'descartar', 'processando', 'indefinido', 'erro'];
-function listarAplicacoesComContexto({ status, statusIa, dataDe, dataAte, jobId, incluirArquivados = false } = {}) {
+function listarAplicacoesComContexto({
+  status,
+  statusIa,
+  statusRecrutador,
+  dataDe,
+  dataAte,
+  jobId,
+  incluirArquivados = false,
+} = {}) {
   const where = [];
   const params = [];
 
@@ -876,6 +884,16 @@ function listarAplicacoesComContexto({ status, statusIa, dataDe, dataAte, jobId,
   if (STATUS_IA_VALIDOS.includes(statusIa)) {
     where.push('a.status_ia = ?');
     params.push(statusIa);
+  }
+  // Decisao do recrutador. Alem do enum (STATUS_RECRUTADOR_VALIDOS), aceita o valor
+  // SENTINELA 'sem_decisao', que nao e um status gravavel: vira "IS NULL" (a coluna
+  // nasce NULL e definirStatusRecrutador grava NULL para qualquer valor fora do enum).
+  // O OR com '' e defensivo, para bancos que porventura tenham string vazia gravada.
+  if (statusRecrutador === 'sem_decisao') {
+    where.push("(a.status_recrutador IS NULL OR a.status_recrutador = '')");
+  } else if (STATUS_RECRUTADOR_VALIDOS.includes(statusRecrutador)) {
+    where.push('a.status_recrutador = ?');
+    params.push(statusRecrutador);
   }
   if (jobId) {
     where.push('a.job_id = ?');
