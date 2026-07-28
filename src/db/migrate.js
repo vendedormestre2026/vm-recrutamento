@@ -152,6 +152,16 @@ function migrar() {
   // contato); NULL = ainda nao contatado. Aditiva, sem CHECK.
   adicionarColunaSeFaltar('applications', 'contatado_whatsapp_em', 'TEXT');
 
+  // Follow-up automatico de entrevista NAO concluida (varredura em lib/followupEntrevista).
+  // Momento (ISO/UTC) em que cada um dos DOIS e-mails de follow-up foi enviado; NULL = ainda
+  // nao enviado. Sao o registro de idempotencia da varredura: ela so seleciona quem tem a
+  // coluna da etapa em NULL, entao um e-mail nunca sai duas vezes.
+  // Proposital NAO reaproveitar enviado_retomada_em: aquele e o fluxo REATIVO (o candidato
+  // pede o link quando a camera falha) e tem throttle proprio de 30 min — misturar os dois
+  // faria um suprimir o outro. Aditivas, sem CHECK.
+  adicionarColunaSeFaltar('applications', 'followup_entrevista_1_enviado_em', 'TEXT');
+  adicionarColunaSeFaltar('applications', 'followup_entrevista_2_enviado_em', 'TEXT');
+
   // Origem do lead no TOPO do funil (first-touch): mesma UTM do cookie vm_utm, agora
   // tambem gravada no acesso a Pagina da Vaga (antes so a application guardava). Permite
   // atribuir Acessos a uma origem no dashboard. NULL em bancos antigos e quando nao ha

@@ -18,6 +18,7 @@ const llm = require('../providers/llm');
 const { importarVagaDeBriefing } = require('../lib/importar_vaga');
 const { extrairYoutubeId } = require('../lib/youtube');
 const { modoEntrevistaAtivo } = require('../lib/modo');
+const followup = require('../lib/followupEntrevista');
 const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
@@ -3290,6 +3291,11 @@ router.get('/config', (req, res) => {
   // Notificacao de nova candidatura (default desligada).
   const notificarNovaCandidatura = db.obterConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, false);
 
+  // Horas de espera do 1o follow-up de entrevista nao concluida. Le pelo MESMO helper do
+  // agendador (lib/followupEntrevista.horasEspera), entao painel e varredura nunca
+  // divergem: valor invalido salvo no banco aparece aqui ja como o padrao efetivo.
+  const followupHoras = followup.horasEspera();
+
   const estado = ativo
     ? '<span class="badge badge--ativa">Ligada</span>'
     : '<span class="badge badge--encerrada">Desligada</span>';
@@ -3366,6 +3372,27 @@ router.get('/config', (req, res) => {
         </p>
         <button type="submit" class="btn">Salvar</button>
       </form>
+    </section>
+
+    <section class="rel-sec">
+      <h2>Follow-up de entrevista não concluída</h2>
+      <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+        E-mail automático para quem <b>começou</b> a entrevista e não terminou, com o link
+        para continuar de onde parou. Quem apenas se candidatou (e nunca iniciou) não recebe.
+      </p>
+      <form method="POST" action="/admin/config/followup-entrevista">
+        <label class="campo" style="max-width:320px;">
+          <span>Horas de espera antes do 1º e-mail</span>
+          <input type="number" name="followup_horas" min="1" step="1" value="${escapeHtml(String(followupHoras))}">
+        </label>
+        <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Contadas a partir da <b>última atividade</b> na entrevista (a última resposta
+          dada). O <b>2º e-mail</b> sai <b>24 h após o 1º</b> — prazo fixo, não configurável —
+          e só se a entrevista continuar em aberto. São no máximo <b>2 e-mails</b> por
+          candidato. Valor vazio ou inválido volta ao padrão de ${followup.HORAS_ESPERA_PADRAO} h.
+        </p>
+        <button type="submit" class="btn">Salvar</button>
+      </form>
     </section>`;
 
   res.send(paginaAdmin({ titulo: 'Configurações gerais', conteudo }));
@@ -3397,6 +3424,18 @@ router.post('/config/notificacoes', (req, res) => {
   const b = req.body || {};
   const ativo = b.notificar_nova_candidatura === '1' || b.notificar_nova_candidatura === 'on';
   db.definirConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, ativo);
+  res.redirect('/admin/config?salvo=1');
+});
+
+// ── POST /admin/config/followup-entrevista ── horas de espera do 1o follow-up ──
+// Saneia aqui (inteiro positivo; qualquer outra coisa grava o padrao) E a leitura tambem
+// tem fallback proprio em lib/followupEntrevista.horasEspera — um valor estranho que
+// chegue ao banco por outro caminho nao vira "manda para todo mundo agora".
+router.post('/config/followup-entrevista', (req, res) => {
+  const bruto = Number((req.body && req.body.followup_horas) || '');
+  const horas =
+    Number.isFinite(bruto) && bruto > 0 ? Math.round(bruto) : followup.HORAS_ESPERA_PADRAO;
+  db.definirConfig(followup.CHAVE_HORAS_ESPERA, String(horas));
   res.redirect('/admin/config?salvo=1');
 });
 

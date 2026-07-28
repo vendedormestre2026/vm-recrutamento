@@ -61,6 +61,9 @@ module.exports = {
   registrarConsentGravacao: driver.registrarConsentGravacao,
   marcarContatoWhatsapp: driver.marcarContatoWhatsapp,
   marcarRetomadaEnviada: driver.marcarRetomadaEnviada,
+  // follow-up automatico de entrevista nao concluida (lib/followupEntrevista)
+  listarPendentesFollowupEntrevista: driver.listarPendentesFollowupEntrevista,
+  marcarFollowupEntrevistaEnviado: driver.marcarFollowupEntrevistaEnviado,
 
   // entrevistas
   criarInterview: driver.criarInterview,

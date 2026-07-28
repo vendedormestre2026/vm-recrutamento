@@ -18,6 +18,12 @@ const api = require('./routes/api');
 const admin = require('./routes/admin');
 const { router: bancoCurriculos } = require('./routes/banco_curriculos');
 const apiBancoCurriculos = require('./routes/api_banco_curriculos');
+const followupEntrevista = require('./lib/followupEntrevista');
+
+// Follow-up de entrevistas nao concluidas: de quanto em quanto tempo a varredura roda.
+// Nao e o atraso do e-mail (esse e configuravel no painel, em horas) — e so a resolucao
+// da checagem. 15 min e granularidade suficiente para um limiar medido em horas.
+const INTERVALO_FOLLOWUP_MS = 15 * 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -88,6 +94,32 @@ function iniciar() {
   servidor.keepAliveTimeout = 120000; // 120s
   servidor.headersTimeout = 125000; // deve ser > keepAliveTimeout
   servidor.requestTimeout = 0; // sem limite de duracao total da requisicao (upload pode ser longo)
+
+  agendarFollowupEntrevista();
+}
+
+// Agendador do follow-up de entrevistas nao concluidas.
+//
+// Timer em memoria dentro do proprio processo Express (o app roda como processo unico e
+// de longa duracao no container; nao ha cron nem worker separado no projeto). Por isso a
+// varredura e uma CONSULTA AO BANCO a cada ciclo, nunca um setTimeout agendado por
+// candidato: um deploy/restart derruba qualquer timer em memoria, mas nao perde nada
+// aqui — o proximo ciclo reencontra os pendentes pelas colunas de controle.
+//
+// A trava contra sobreposicao mora em lib/followupEntrevista (varrerSeOcioso), para ser
+// a MESMA para a varredura do boot e para as do intervalo.
+function agendarFollowupEntrevista() {
+  // Primeira passada logo no boot: depois de um deploy, quem ja estava vencido nao
+  // espera mais 15 min. `void` porque e fire-and-forget — varrerSeOcioso nunca rejeita.
+  void followupEntrevista.varrerSeOcioso();
+
+  setInterval(() => {
+    void followupEntrevista.varrerSeOcioso();
+  }, INTERVALO_FOLLOWUP_MS);
+
+  console.log(
+    `[followup] varredura agendada a cada ${INTERVALO_FOLLOWUP_MS / 60000} min (1a passada no boot).`,
+  );
 }
 
 if (require.main === module) {

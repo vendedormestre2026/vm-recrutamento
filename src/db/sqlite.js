@@ -552,6 +552,92 @@ function marcarRetomadaEnviada(id) {
     .run(id);
 }
 
+// ── Follow-up automatico de entrevista nao concluida (lib/followupEntrevista) ──
+//
+// Colunas de controle da etapa (1 e 2). O nome NUNCA vem do chamador: e escolhido aqui
+// por um mapa fechado, entao nao ha como injetar SQL pela numeracao da etapa.
+const COLUNAS_FOLLOWUP_ENTREVISTA = {
+  1: 'followup_entrevista_1_enviado_em',
+  2: 'followup_entrevista_2_enviado_em',
+};
+
+// Candidatos elegiveis a um dos e-mails de follow-up. Uma linha por application, ja com
+// o token (link de retomada), o e-mail e a vaga — quem chama nao precisa de query extra.
+//
+// Regras comuns as duas etapas:
+//   - a.status = 'em_entrevista' (comecou e nao concluiu; quem esta 'aplicado' NAO entra)
+//   - a.deleted_at IS NULL (candidatura arquivada nao recebe nada)
+//   - e-mail presente (sem destinatario nao ha o que enviar)
+//   - vaga em modo COMPLETO: j.entrevista_ativa <> 0. Filtro REDUNDANTE de proposito —
+//     em tese so se chega a 'em_entrevista' por esse caminho, mas dado inconsistente
+//     (vaga que virou Simples depois) nao pode gerar e-mail de entrevista. O outro lado
+//     da regra (o toggle GERAL) nao e coluna e fica com modoEntrevistaAtivo, no chamador.
+//   - a coluna da etapa ainda NULL (idempotencia: nunca reenvia)
+//
+// Etapa 1: ultima atividade ha >= `horasEspera` horas. "Ultima atividade" = criado_em do
+// turno mais recente da entrevista; sem nenhum turno, cai em interviews.iniciado_em.
+// Etapa 2: exatamente 24h FIXAS apos o envio do 1o (regra de negocio, nao configuravel).
+//
+// A entrevista considerada e sempre a MAIS RECENTE da application (mesmo criterio do
+// painel). Datas comparadas em UTC pelo proprio SQLite (datetime('now', ?)), sem
+// aritmetica de fuso no JS.
+function listarPendentesFollowupEntrevista({ etapa, horasEspera } = {}) {
+  if (etapa !== 1 && etapa !== 2) return [];
+
+  const ultimaAtividade = `COALESCE(
+       (SELECT MAX(t.criado_em) FROM interview_turns t WHERE t.interview_id = i.id),
+       i.iniciado_em
+     )`;
+
+  const condicaoEtapa =
+    etapa === 1
+      ? `a.followup_entrevista_1_enviado_em IS NULL
+         AND datetime(${ultimaAtividade}) <= datetime('now', ?)`
+      : `a.followup_entrevista_1_enviado_em IS NOT NULL
+         AND a.followup_entrevista_2_enviado_em IS NULL
+         AND datetime(a.followup_entrevista_1_enviado_em) <= datetime('now', ?)`;
+
+  // Horas viram um modificador do SQLite ('-24 hours'), passado como PARAMETRO.
+  const horas = etapa === 1 ? Number(horasEspera) : 24;
+  if (!Number.isFinite(horas) || horas <= 0) return [];
+  const modificador = `-${horas} hours`;
+
+  return getDb()
+    .prepare(
+      `SELECT
+         a.id, a.nome, a.sobrenome, a.email, a.token, a.job_id,
+         i.id AS interview_id,
+         i.iniciado_em,
+         ${ultimaAtividade} AS ultima_atividade
+       FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN interviews i
+         ON i.id = (SELECT i2.id FROM interviews i2
+                     WHERE i2.application_id = a.id ORDER BY i2.id DESC LIMIT 1)
+       WHERE a.status = 'em_entrevista'
+         AND a.deleted_at IS NULL
+         AND a.email IS NOT NULL AND TRIM(a.email) <> ''
+         AND (j.entrevista_ativa IS NULL OR j.entrevista_ativa <> 0)
+         AND ${condicaoEtapa}
+       ORDER BY a.id`,
+    )
+    .all(modificador);
+}
+
+// Marca o envio do follow-up da etapa (1 ou 2). Condicional (`IS NULL`): se duas
+// varreduras se cruzarem, a segunda grava 0 linhas e o e-mail nao e contado de novo.
+// Retorna o nº de linhas afetadas (0 = etapa invalida, id inexistente ou ja marcado).
+function marcarFollowupEntrevistaEnviado(id, etapa) {
+  const coluna = COLUNAS_FOLLOWUP_ENTREVISTA[etapa];
+  if (!coluna) return 0;
+  const info = getDb()
+    .prepare(
+      `UPDATE applications SET ${coluna} = datetime('now') WHERE id = ? AND ${coluna} IS NULL`,
+    )
+    .run(id);
+  return info.changes;
+}
+
 // Entrevistas
 function criarInterview(entrevista) {
   const info = getDb().prepare(`
@@ -1267,6 +1353,8 @@ module.exports = {
   registrarConsentGravacao,
   marcarContatoWhatsapp,
   marcarRetomadaEnviada,
+  listarPendentesFollowupEntrevista,
+  marcarFollowupEntrevistaEnviado,
   // entrevistas
   criarInterview,
   obterInterview,
