@@ -336,6 +336,12 @@ const STATUS_IA_VALIDOS = ['avancar', 'talvez', 'descartar', 'processando', 'ind
 // representa "coluna NULL" e vira IS NULL na query (listarAplicacoesComContexto).
 const STATUS_RECRUTADOR_FILTRAVEIS = [...db.STATUS_RECRUTADOR_VALIDOS, 'sem_decisao'];
 
+// Modos de visibilidade de arquivados na listagem (parametro `visibilidade`). O nome do
+// parametro NAO e 'arquivados' porque este ja significa outra coisa na query string: e a
+// CONTAGEM devolvida pelo flash de arquivar-lote (?arquivados=3). Na camada de dados o
+// argumento se chama `arquivados`, onde nao ha ambiguidade.
+const VISIBILIDADES_LISTA = ['ativos', 'arquivados', 'todos'];
+
 // Chip do Status IA (veredito automatico). Reusa a classe base .badge e os modificadores
 // existentes: laranja (positivo), contorno preto (negativo/sobrio), cinza (neutro/transitorio).
 // Os rotulos dizem "pela IA" para nunca confundir com a decisao humana do recrutador.
@@ -607,6 +613,9 @@ router.get('/', (req, res) => {
   // Vaga: id inteiro positivo; vazio = todas. O <select> so oferece ids existentes.
   const vagaIdNum = Number(q.vaga);
   const vagaId = Number.isInteger(vagaIdNum) && vagaIdNum > 0 ? vagaIdNum : '';
+  // Visibilidade de arquivados. NAO se chama 'arquivados' de proposito: esse nome ja e
+  // usado na query string como CONTAGEM do flash de arquivar-lote (?arquivados=3).
+  const visibilidade = VISIBILIDADES_LISTA.includes(q.visibilidade) ? q.visibilidade : 'ativos';
 
   const vagas = db.listarVagas();
   const candidatos = db.listarAplicacoesComContexto({
@@ -616,6 +625,7 @@ router.get('/', (req, res) => {
     dataDe,
     dataAte,
     jobId: vagaId || undefined,
+    arquivados: visibilidade,
   });
 
   // Colunas visiveis (preferencia salva ou default). Uma leitura de config por request.
@@ -636,10 +646,17 @@ router.get('/', (req, res) => {
       // video_url, report_interview_id); a aplicacao so preenche o que falta.
       const dados = precisaAplicacao ? { ...(db.obterAplicacao(c.id) || {}), ...c } : c;
       const celulas = colunas.map((col) => `<td>${col.celula(dados)}</td>`).join('');
+      // Arquivado: so aparece nos modos 'arquivados'/'todos' (no modo padrao a query ja
+      // filtrou). Distingue por DOIS sinais reusando CSS existente — linha esmaecida
+      // (.linha-zero) e chip cinza (.badge--encerrada) —, para nao depender so da cor.
+      const arquivado = Boolean(c.deleted_at);
+      const marcaArquivado = arquivado
+        ? ` <span class="badge badge--encerrada" title="Arquivado em ${escapeHtml(formatarDataHora(c.deleted_at))}">Arquivado</span>`
+        : '';
       return `
-        <tr>
+        <tr${arquivado ? ' class="linha-zero"' : ''}>
           <td><input type="checkbox" name="ids" value="${c.id}" aria-label="Selecionar ${escapeHtml(nomeCompleto(c))}"></td>
-          <td><a href="/admin/candidato/${c.id}">${escapeHtml(nomeCompleto(c))}</a></td>
+          <td><a href="/admin/candidato/${c.id}">${escapeHtml(nomeCompleto(c))}</a>${marcaArquivado}</td>
           ${celulas}
           <td>${acao}</td>
         </tr>`;
@@ -652,7 +669,15 @@ router.get('/', (req, res) => {
   const sel = (v) => (status === v ? ' selected' : '');
   const selIa = (v) => (statusIa === v ? ' selected' : '');
   const selRec = (v) => (statusRecrutador === v ? ' selected' : '');
-  const temFiltro = status || statusIa || statusRecrutador || dataDe || dataAte || vagaId;
+  const selVis = (v) => (visibilidade === v ? ' selected' : '');
+  const temFiltro =
+    status ||
+    statusIa ||
+    statusRecrutador ||
+    dataDe ||
+    dataAte ||
+    vagaId ||
+    visibilidade !== 'ativos';
   const opcoesVaga = vagas
     .map(
       (v) =>
@@ -700,6 +725,14 @@ router.get('/', (req, res) => {
         </select>
       </label>
       <label class="filtro">
+        <span>Exibir</span>
+        <select name="visibilidade">
+          <option value="ativos"${selVis('ativos')}>Ativos</option>
+          <option value="arquivados"${selVis('arquivados')}>Arquivados</option>
+          <option value="todos"${selVis('todos')}>Todos</option>
+        </select>
+      </label>
+      <label class="filtro">
         <span>De</span>
         <input type="date" name="de" value="${escapeHtml(dataDe)}">
       </label>
@@ -732,6 +765,7 @@ router.get('/', (req, res) => {
         <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
         <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
         <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
+        <input type="hidden" name="visibilidade" value="${escapeHtml(visibilidade)}">
         <p style="color:var(--cinza);font-size:.85rem;margin:0 0 .7rem;">
           Escolha as colunas visíveis na tabela. Seleção, <b>Nome</b> e <b>Ação</b> são fixas.
         </p>
@@ -790,6 +824,7 @@ router.get('/', (req, res) => {
       <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
       <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
       <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
+        <input type="hidden" name="visibilidade" value="${escapeHtml(visibilidade)}">
       <div style="margin:0 0 .75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
         <button type="submit" class="btn" data-arquivar-lote disabled>Arquivar selecionados</button>
         <select name="status_recrutador" aria-label="Status do recrutador a aplicar nos selecionados"
@@ -1376,6 +1411,10 @@ function paramsFiltros(src = {}) {
   if (ehData(src.ate)) p.set('ate', String(src.ate));
   const vn = Number(src.vaga);
   if (Number.isInteger(vn) && vn > 0) p.set('vaga', String(vn));
+  // Visibilidade de arquivados: 'ativos' e o default, entao nao precisa viajar na URL.
+  if (src.visibilidade === 'arquivados' || src.visibilidade === 'todos') {
+    p.set('visibilidade', String(src.visibilidade));
+  }
   return p;
 }
 

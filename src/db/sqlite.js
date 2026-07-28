@@ -865,16 +865,30 @@ function listarAplicacoesComContexto({
   dataAte,
   jobId,
   incluirArquivados = false,
+  arquivados,
 } = {}) {
   const where = [];
   const params = [];
 
-  // Soft-delete: por padrao esconde os arquivados (deleted_at != NULL). Isto afeta SO
-  // esta lista do painel; o funil (obterFunilConversao) tem query propria e mantem os
-  // arquivados nas metricas historicas. O parametro permite reincluir se algum dia
-  // precisarmos de uma visao "com arquivados".
-  if (!incluirArquivados) {
+  // Soft-delete, tres modos de visibilidade (parametro `arquivados`):
+  //   'ativos'     (default) -> deleted_at IS NULL
+  //   'arquivados'           -> deleted_at IS NOT NULL (SO os arquivados)
+  //   'todos'                -> sem condicao
+  // Isto afeta SO esta lista do painel; o funil (obterFunilConversao) tem query propria
+  // e mantem os arquivados nas metricas historicas.
+  //
+  // Retrocompatibilidade: o antigo booleano incluirArquivados continua valendo quando
+  // `arquivados` nao vem — true equivalia a "sem condicao", ou seja, 'todos'.
+  const VISIBILIDADES = ['ativos', 'arquivados', 'todos'];
+  const modo = VISIBILIDADES.includes(arquivados)
+    ? arquivados
+    : incluirArquivados
+      ? 'todos'
+      : 'ativos';
+  if (modo === 'ativos') {
     where.push('a.deleted_at IS NULL');
+  } else if (modo === 'arquivados') {
+    where.push('a.deleted_at IS NOT NULL');
   }
 
   if (status === 'aplicado' || status === 'em_entrevista' || status === 'concluido') {
@@ -915,6 +929,7 @@ function listarAplicacoesComContexto({
       `SELECT
          a.id, a.nome, a.sobrenome, a.email, a.telefone, a.status, a.criado_em,
          a.status_ia, a.status_recrutador, a.contatado_whatsapp_em,
+         a.deleted_at,
          j.titulo AS vaga_titulo,
          j.empresa AS vaga_empresa,
          (SELECT i.id FROM interviews i
