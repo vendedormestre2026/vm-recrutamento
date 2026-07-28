@@ -779,17 +779,20 @@ router.get('/', (req, res) => {
   // Aviso pos-acao (arquivar individual/lote, status do recrutador em lote, restaurar,
   // selecao vazia), sinalizado por query string apos o redirect.
   const nArquivados = Number(req.query.arquivados);
+  const nRestaurados = Number(req.query.restaurados);
   const nStatusRecrutador = Number(req.query.status_recrutador_aplicados);
   const flashLista =
     req.query.sem_selecao === '1'
       ? '<div class="aviso-alerta">Nenhum lead válido selecionado.</div>'
       : req.query.sem_status === '1'
         ? '<div class="aviso-alerta">Nenhum status informado. Escolha um status antes de aplicar.</div>'
-        : req.query.status_recrutador_aplicados != null &&
-            Number.isInteger(nStatusRecrutador) &&
-            nStatusRecrutador >= 0
-          ? `<div class="aviso-ok">Status do recrutador atualizado em ${nStatusRecrutador} candidato(s).</div>`
-          : req.query.arquivados != null && Number.isInteger(nArquivados) && nArquivados >= 0
+        : req.query.restaurados != null && Number.isInteger(nRestaurados) && nRestaurados >= 0
+          ? `<div class="aviso-ok">${nRestaurados} candidato(s) restaurado(s). Eles voltaram para a listagem de ativos.</div>`
+          : req.query.status_recrutador_aplicados != null &&
+              Number.isInteger(nStatusRecrutador) &&
+              nStatusRecrutador >= 0
+            ? `<div class="aviso-ok">Status do recrutador atualizado em ${nStatusRecrutador} candidato(s).</div>`
+            : req.query.arquivados != null && Number.isInteger(nArquivados) && nArquivados >= 0
             ? `<div class="aviso-ok">${nArquivados} lead(s) arquivado(s). Eles saíram da listagem, mas o histórico foi preservado.</div>`
             : req.query.arquivado === '1'
               ? '<div class="aviso-ok">Lead arquivado. Ele saiu da listagem, mas o histórico foi preservado.</div>'
@@ -827,6 +830,8 @@ router.get('/', (req, res) => {
         <input type="hidden" name="visibilidade" value="${escapeHtml(visibilidade)}">
       <div style="margin:0 0 .75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
         <button type="submit" class="btn" data-arquivar-lote disabled>Arquivar selecionados</button>
+        <button type="submit" class="btn btn--ghost" formaction="/admin/candidatos/restaurar-lote"
+          data-restaurar-lote disabled>Restaurar selecionados</button>
         <select name="status_recrutador" aria-label="Status do recrutador a aplicar nos selecionados"
           style="background:var(--campo);color:var(--preto);border:1px solid var(--linha);border-radius:6px;padding:.4rem .6rem;font:inherit;">
           <option value="">Sem decisão</option>
@@ -864,8 +869,10 @@ router.get('/', (req, res) => {
       var todos = form.querySelector('[data-selecionar-todos]');
       var botao = form.querySelector('[data-arquivar-lote]');
       var botaoStatus = form.querySelector('[data-status-lote]');
+      var botaoRestaurar = form.querySelector('[data-restaurar-lote]');
       var base = 'Arquivar selecionados';
       var baseStatus = 'Aplicar status aos selecionados';
+      var baseRestaurar = 'Restaurar selecionados';
       // Qual botao disparou o submit (o form tem dois: arquivar e aplicar status, este via
       // formaction). Fallback p/ navegadores sem event.submitter: guarda o ultimo clicado.
       var ultimoBotao = null;
@@ -880,6 +887,7 @@ router.get('/', (req, res) => {
         var n = marcados().length;
         rotular(botao, base, n);
         rotular(botaoStatus, baseStatus, n);
+        rotular(botaoRestaurar, baseRestaurar, n);
         if (todos) { todos.checked = n > 0 && n === itens().length; }
         itens().forEach(function (c) {
           var tr = c.closest('tr');
@@ -898,10 +906,14 @@ router.get('/', (req, res) => {
         var n = marcados().length;
         if (n === 0) { e.preventDefault(); return; }
         var alvo = e.submitter || ultimoBotao;
-        var ehStatus = Boolean(alvo && alvo.hasAttribute('data-status-lote'));
-        var msg = ehStatus
-          ? 'Aplicar o status escolhido a ' + n + ' candidato(s)?'
-          : 'Arquivar ' + n + ' lead(s)? Eles saem da listagem, mas o histórico é preservado.';
+        var msg;
+        if (alvo && alvo.hasAttribute('data-status-lote')) {
+          msg = 'Aplicar o status escolhido a ' + n + ' candidato(s)?';
+        } else if (alvo && alvo.hasAttribute('data-restaurar-lote')) {
+          msg = 'Restaurar ' + n + ' candidato(s)? Eles voltam para a listagem de ativos.';
+        } else {
+          msg = 'Arquivar ' + n + ' lead(s)? Eles saem da listagem, mas o histórico é preservado.';
+        }
         if (!confirm(msg)) { e.preventDefault(); }
       });
       atualizar();
@@ -1441,6 +1453,42 @@ router.post('/candidatos/arquivar-lote', (req, res) => {
   let arquivados = 0;
   for (const id of ids) arquivados += db.arquivarAplicacao(id); // 0 se ja arquivado / inexistente
   params.set('arquivados', String(arquivados));
+  return res.redirect(`/admin?${params.toString()}`);
+});
+
+// ── POST /admin/candidatos/restaurar-lote ── reverte o soft-delete em lote ──
+// Mesma anatomia de arquivar-lote: saneia ids (inteiros positivos unicos, invalidos
+// ignorados em silencio), reconstroi os filtros com paramsFiltros (inclusive a
+// visibilidade, para o recrutador continuar na visao "Arquivados" de onde agiu) e volta
+// por redirect com flash.
+//
+// Diferenca de contagem: arquivarAplicacao tem "AND deleted_at IS NULL" e devolve 0 para
+// quem ja estava arquivado, entao la basta somar o retorno. restaurarAplicacao NAO tem a
+// guarda simetrica — o UPDATE casa com a linha mesmo ja ativa e devolve 1. Somar direto
+// contaria ativos como "restaurados". Por isso confirmamos deleted_at antes: restaurar um
+// candidato ativo continua sendo inofensivo (no-op), so nao entra no numero do aviso.
+router.post('/candidatos/restaurar-lote', (req, res) => {
+  const brutos = req.body && req.body.ids;
+  const lista = Array.isArray(brutos) ? brutos : brutos != null ? [brutos] : [];
+  const ids = [];
+  for (const v of lista) {
+    const n = Number(v);
+    if (Number.isInteger(n) && n > 0 && !ids.includes(n)) ids.push(n);
+  }
+
+  const params = paramsFiltros(req.body);
+  if (!ids.length) {
+    params.set('sem_selecao', '1');
+    return res.redirect(`/admin?${params.toString()}`);
+  }
+
+  let restaurados = 0;
+  for (const id of ids) {
+    const cand = db.obterAplicacao(id);
+    if (!cand || !cand.deleted_at) continue; // inexistente ou ja ativo: nada a fazer
+    restaurados += db.restaurarAplicacao(id);
+  }
+  params.set('restaurados', String(restaurados));
   return res.redirect(`/admin?${params.toString()}`);
 });
 
