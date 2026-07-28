@@ -11,6 +11,7 @@ const session = require('../lib/session');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const { extrairUtmDaQuery, lerUtmDoCookie, serializarUtmParaCookie } = require('../lib/utm');
+const { mensagemPosEntrevista } = require('../lib/whatsapp');
 const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
@@ -857,13 +858,32 @@ router.get('/finalizacao', exigirCandidato, bloquearSeModoSimples, (req, res) =>
   const statusIa = db.obterStatusIaPorApplication(req.candidato.id) || null;
   const ap = apresentacaoFinal(statusIa);
 
-  // WhatsApp: MESMA fonte da tela Simples (config.recrutador.whatsapp, so digitos) e o
-  // MESMO texto pre-preenchido de antes. O <a> e SEMPRE renderizado quando ha numero;
-  // hidden quando o estado inicial o oculta. O client so alterna 'hidden' (nunca
-  // reconstroi a URL, que depende da env). Sem numero na env: o <a> nao existe.
+  // WhatsApp: MESMA fonte da tela Simples (config.recrutador.whatsapp, so digitos). O <a>
+  // e SEMPRE renderizado quando ha numero; hidden quando o estado inicial o oculta. O
+  // client so alterna 'hidden' (nunca reconstroi a URL, que depende da env). Sem numero
+  // na env: o <a> nao existe.
+  //
+  // O texto agora carrega o CONTEXTO do processo (vaga + empresa) — antes era uma frase
+  // generica e o recrutador recebia a mensagem sem saber de qual vaga o candidato veio.
+  // A vaga e carregada aqui, no handler (bloquearSeModoSimples tambem a le, mas nao a
+  // expoe; nao mexemos nele para nao afetar as outras rotas que o usam).
+  //
+  // vaga null (job_id orfao) NAO quebra: mensagemPosEntrevista degrada sozinha, omitindo
+  // vaga e empresa e devolvendo uma frase valida. Por isso nao ha texto generico aqui.
   const numero = String(config.recrutador.whatsapp || '').replace(/\D/g, '');
-  const mensagem =
-    'Me candidatei no processo seletivo para área comercial e quero falar com o recrutador';
+  const vaga = db.obterVaga(req.candidato.job_id);
+  // Nome proprio para a 1a pessoa da frase: nome + sobrenome, SEM o fallback de e-mail de
+  // nomeCandidato ("Sou ana@exemplo.com" ficaria estranho). Vazio -> a funcao pura usa a
+  // abertura sem nome.
+  const nomeMensagem = [req.candidato.nome, req.candidato.sobrenome]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  const mensagem = mensagemPosEntrevista({
+    nome: nomeMensagem,
+    vaga: vaga && vaga.titulo,
+    empresa: vaga && vaga.empresa,
+  });
   const href = numero ? `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}` : '';
   let whatsappHtml = '';
   if (numero) {
