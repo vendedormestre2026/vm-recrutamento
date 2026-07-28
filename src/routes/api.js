@@ -532,6 +532,28 @@ function payloadEstadoAtual(interviewRow) {
   });
 }
 
+// Fecha a pausa de uma entrevista que esta sendo RETOMADA agora.
+//
+// Hiato = agora - ultima atividade (ultimo turno gravado; sem turnos, iniciado_em).
+// Acima de LIMIAR_PAUSA_MS entendemos que o candidato saiu, e o hiato inteiro entra no
+// acumulador tempo_pausado_ms; abaixo disso nada e somado (pensar meio minuto antes de
+// responder NAO e pausa). Retorna o total de pausa ja acumulado — inclusive quando nada
+// foi somado, que e o caso da sessao continua (segue 0, comportamento historico).
+//
+// So e chamada AQUI, no momento da retomada. As respostas seguintes nao recalculam hiato:
+// enquanto o candidato esta em entrevista, o tempo conta normalmente.
+function registrarPausaDaRetomada(interviewRow) {
+  const ultima = db.ultimaAtividadeInterview(interviewRow.id) || interviewRow.iniciado_em;
+  const hiato = entrevista.decorridoMs(ultima);
+  const incremento = hiato > entrevista.LIMIAR_PAUSA_MS ? hiato : 0;
+  if (incremento > 0) {
+    console.log(
+      `[interview/start] retomada da entrevista ${interviewRow.id} apos ${Math.round(incremento / 60000)} min parada; descontado da duracao.`,
+    );
+  }
+  return db.acumularTempoPausado(interviewRow.id, incremento);
+}
+
 // ── POST /api/interview/start ── inicia a entrevista e devolve a 1a pergunta
 router.post('/interview/start', async (req, res) => {
   const candidato = candidatoApi(req, res);
@@ -556,11 +578,16 @@ router.post('/interview/start', async (req, res) => {
     // vazio: criamos uma entrevista nova, como no inicio normal.
     const emAndamento = db.obterInterviewEmAndamentoPorAplicacao(candidato.id);
     if (emAndamento && db.contarTurnos(emAndamento.id, 'agente') > 0) {
+      // Retomada: fecha a pausa que acabou de terminar ANTES de montar a resposta, e
+      // devolve o cronometro em tempo ATIVO. Sem isto, quem volta horas/dias depois
+      // (ex.: pelo link do e-mail de follow-up) recebia decorrido_ms gigante, com o
+      // timer ja marcado como esgotado no front.
+      const tempoPausado = registrarPausaDaRetomada(emAndamento);
       return res.json({
         ...payloadEstadoAtual(emAndamento),
         agente: config.agente.nome,
         max_duracao_min: config.entrevista.maxDuracaoMin,
-        decorrido_ms: entrevista.decorridoMs(emAndamento.iniciado_em),
+        decorrido_ms: entrevista.decorridoAtivoMs(emAndamento.iniciado_em, tempoPausado),
         mock: config.entrevista.mock,
         retomada: true,
       });
@@ -678,11 +705,16 @@ router.post('/interview/answer', (req, res) => {
     // Quantas perguntas a Vera ja fez -> proxima e o indice seguinte (0-based).
     const proximoIndice = db.contarTurnos(interviewId, 'agente');
 
-    // Teto de tempo real: se ja estourou MAX_DURACAO_MIN, esta resposta encerra
-    // graciosamente. Teto de perguntas (MAX_PERGUNTAS) e o segundo limite; o que
-    // vier primeiro encerra.
-    const tempoEstourou = entrevista.excedeuDuracao(
+    // Teto de tempo: se ja estourou MAX_DURACAO_MIN, esta resposta encerra graciosamente.
+    // Teto de perguntas (MAX_PERGUNTAS) e o segundo limite; o que vier primeiro encerra.
+    //
+    // Medido em duracao ATIVA: relogio desde iniciado_em menos tempo_pausado_ms (ja
+    // persistido na retomada). Aqui NAO se recalcula hiato — quem esta respondendo esta
+    // em entrevista, e o tempo conta. Entrevista sem pausa tem tempo_pausado_ms = 0 e o
+    // resultado e identico ao de antes.
+    const tempoEstourou = entrevista.excedeuDuracaoAtiva(
       entrevistaRow.iniciado_em,
+      entrevistaRow.tempo_pausado_ms,
       config.entrevista.maxDuracaoMin,
     );
 

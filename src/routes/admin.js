@@ -3295,6 +3295,7 @@ router.get('/config', (req, res) => {
   // agendador (lib/followupEntrevista.horasEspera), entao painel e varredura nunca
   // divergem: valor invalido salvo no banco aparece aqui ja como o padrao efetivo.
   const followupHoras = followup.horasEspera();
+  const followupAtivo = followup.ativo();
 
   const estado = ativo
     ? '<span class="badge badge--ativa">Ligada</span>'
@@ -3370,6 +3371,17 @@ router.get('/config', (req, res) => {
           candidaturas continuam aparecendo normalmente na lista do painel. O
           <b>relatório da entrevista</b> é outro e-mail e não é afetado por este ajuste.
         </p>
+        <label class="campo-check">
+          <input type="checkbox" name="followup_ativo" value="1"${followupAtivo ? ' checked' : ''}>
+          <span style="color:var(--preto);text-transform:none;">
+            Enviar <b>follow-up</b> de entrevista não concluída
+          </span>
+        </label>
+        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Ativa os e-mails de follow-up para entrevistas não concluídas.
+          <b>Mantenha desligado até confirmar o funcionamento.</b> Os prazos ficam na seção
+          abaixo; com esta caixa desmarcada, nada é enviado, independentemente deles.
+        </p>
         <button type="submit" class="btn">Salvar</button>
       </form>
     </section>
@@ -3422,8 +3434,9 @@ router.post('/config/whatsapp', (req, res) => {
 // definirConfigBool grava '1'/'0'; quem le (routes/api.js) usa default false.
 router.post('/config/notificacoes', (req, res) => {
   const b = req.body || {};
-  const ativo = b.notificar_nova_candidatura === '1' || b.notificar_nova_candidatura === 'on';
-  db.definirConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, ativo);
+  const marcado = (campo) => b[campo] === '1' || b[campo] === 'on';
+  db.definirConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, marcado('notificar_nova_candidatura'));
+  db.definirConfigBool(followup.CHAVE_ATIVO, marcado('followup_ativo'));
   res.redirect('/admin/config?salvo=1');
 });
 

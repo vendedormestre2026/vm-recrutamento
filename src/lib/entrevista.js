@@ -67,9 +67,34 @@ function decorridoMs(iniciadoEm, agora = Date.now()) {
 }
 
 // Teto de duracao real: true se ja passou de maxMin minutos desde iniciado_em.
+// ATENCAO: conta tempo de RELOGIO (inclui hiatos). Para o teto da entrevista use a
+// variante ...Ativa abaixo; esta fica intacta para os chamadores que ja a usam.
 function excedeuDuracao(iniciadoEm, maxMin, agora = Date.now()) {
   if (!maxMin || maxMin <= 0) return false;
   return decorridoMs(iniciadoEm, agora) >= maxMin * 60 * 1000;
+}
+
+// ── Duracao ATIVA (descontando pausas) ──
+//
+// Hiato a partir do qual consideramos que o candidato saiu (e nao apenas pensou um
+// pouco antes de responder). Abaixo disso, o tempo continua contando normalmente — a
+// entrevista nao vira "pausavel" por silencio curto.
+const LIMIAR_PAUSA_MS = 10 * 60 * 1000; // 10 minutos
+
+// Tempo efetivamente gasto na entrevista: relogio desde iniciado_em MENOS o tempo
+// acumulado em pausas (interviews.tempo_pausado_ms). Nunca negativo. Com
+// tempoPausadoMs = 0 (sessao continua, o caso normal) e identico a decorridoMs.
+function decorridoAtivoMs(iniciadoEm, tempoPausadoMs, agora = Date.now()) {
+  const pausado = Number(tempoPausadoMs);
+  const desconto = Number.isFinite(pausado) && pausado > 0 ? pausado : 0;
+  return Math.max(0, decorridoMs(iniciadoEm, agora) - desconto);
+}
+
+// Mesma regra de excedeuDuracao, porem sobre a duracao ATIVA. E esta que decide se a
+// entrevista encerra por tempo: uma retomada tardia nao pode nascer estourada.
+function excedeuDuracaoAtiva(iniciadoEm, tempoPausadoMs, maxMin, agora = Date.now()) {
+  if (!maxMin || maxMin <= 0) return false;
+  return decorridoAtivoMs(iniciadoEm, tempoPausadoMs, agora) >= maxMin * 60 * 1000;
 }
 
 // Trunca texto preservando o inicio (suficiente para contexto sem estourar tokens).
@@ -604,6 +629,9 @@ module.exports = {
   FALA_TRANSICAO,
   decorridoMs,
   excedeuDuracao,
+  LIMIAR_PAUSA_MS,
+  decorridoAtivoMs,
+  excedeuDuracaoAtiva,
   normalizarEstrutura,
   montarPerguntas,
   topicosUnicos,

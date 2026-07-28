@@ -694,6 +694,43 @@ function atualizarProgressoInterview(interviewId, indice, trocas) {
     .run(Number(indice) || 0, Number(trocas) || 0, interviewId);
 }
 
+// Momento da ultima ATIVIDADE da entrevista: criado_em do turno mais recente ou, se ela
+// ainda nao tem nenhum turno, iniciado_em. Mesma definicao usada pela varredura de
+// follow-up (listarPendentesFollowupEntrevista) — as duas precisam concordar sobre o que
+// e "parado desde quando". null se a entrevista nao existir.
+function ultimaAtividadeInterview(interviewId) {
+  const linha = getDb()
+    .prepare(
+      `SELECT COALESCE(
+                (SELECT MAX(t.criado_em) FROM interview_turns t WHERE t.interview_id = i.id),
+                i.iniciado_em
+              ) AS ultima_atividade
+         FROM interviews i
+        WHERE i.id = ?`,
+    )
+    .get(interviewId);
+  return linha ? linha.ultima_atividade : null;
+}
+
+// Soma `incrementoMs` ao tempo pausado da entrevista e devolve o TOTAL atualizado (para
+// quem chama nao precisar de uma segunda consulta). Incremento <= 0 / invalido nao grava
+// nada, mas o total atual continua sendo devolvido. Soma no proprio SQL (nao le-modifica-
+// escreve no JS), entao chamadas concorrentes nao se perdem.
+function acumularTempoPausado(interviewId, incrementoMs) {
+  const inc = Math.floor(Number(incrementoMs));
+  if (Number.isFinite(inc) && inc > 0) {
+    getDb()
+      .prepare(
+        'UPDATE interviews SET tempo_pausado_ms = COALESCE(tempo_pausado_ms, 0) + ? WHERE id = ?',
+      )
+      .run(inc, interviewId);
+  }
+  const linha = getDb()
+    .prepare('SELECT tempo_pausado_ms FROM interviews WHERE id = ?')
+    .get(interviewId);
+  return linha ? Number(linha.tempo_pausado_ms) || 0 : 0;
+}
+
 function finalizarInterview(id) {
   getDb()
     .prepare("UPDATE interviews SET status = 'concluido', finalizado_em = datetime('now') WHERE id = ?")
@@ -1362,6 +1399,8 @@ module.exports = {
   obterUltimaInterviewPorAplicacao,
   definirUltimoRespId,
   atualizarProgressoInterview,
+  ultimaAtividadeInterview,
+  acumularTempoPausado,
   finalizarInterview,
   definirVideoUrl,
   criarTurno,

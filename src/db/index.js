@@ -72,6 +72,9 @@ module.exports = {
   obterUltimaInterviewPorAplicacao: driver.obterUltimaInterviewPorAplicacao,
   definirUltimoRespId: driver.definirUltimoRespId,
   atualizarProgressoInterview: driver.atualizarProgressoInterview,
+  // duracao ativa: ultima atividade + acumulador de pausa (retomadas tardias)
+  ultimaAtividadeInterview: driver.ultimaAtividadeInterview,
+  acumularTempoPausado: driver.acumularTempoPausado,
   finalizarInterview: driver.finalizarInterview,
   definirVideoUrl: driver.definirVideoUrl,
   criarTurno: driver.criarTurno,

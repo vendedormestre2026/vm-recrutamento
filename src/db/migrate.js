@@ -83,6 +83,14 @@ function migrar() {
   adicionarColunaSeFaltar('interviews', 'progresso_indice', 'INTEGER DEFAULT 0');
   adicionarColunaSeFaltar('interviews', 'progresso_trocas', 'INTEGER DEFAULT 0');
 
+  // Tempo (ms) que a entrevista passou PARADA e que NAO deve contar como duracao.
+  // O teto MAX_DURACAO_MIN sempre foi medido em tempo de relogio desde iniciado_em, entao
+  // uma retomada horas/dias depois ja nascia estourada e encerrava na 1a resposta. Agora o
+  // hiato detectado na retomada (acima de LIMIAR_PAUSA_MS) e acumulado aqui e descontado.
+  // iniciado_em segue IMUTAVEL — continua sendo o inicio real, exibido no relatorio.
+  // Sessao continua normal nunca sai de 0, preservando o comportamento historico.
+  adicionarColunaSeFaltar('interviews', 'tempo_pausado_ms', 'INTEGER NOT NULL DEFAULT 0');
+
   // Item 7.4 - cultura/rotinas do dia a dia da empresa (ex.: "reuniao diaria as 8h com
   // oracao", "atendimento sempre formal com o cliente"). Usado para contextualizar a
   // pergunta de Principios na entrevista (system prompt da conducao). Diferente de

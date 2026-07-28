@@ -32,6 +32,15 @@ const { escapeHtml } = require('../views');
 const CHAVE_HORAS_ESPERA = 'followup_entrevista_horas_espera';
 const HORAS_ESPERA_PADRAO = 24;
 
+// Interruptor GERAL do subsistema (painel: /admin/config). Default FALSE: o follow-up
+// nasce desligado e nao envia nada ate alguem ligar conscientemente. A varredura segue
+// agendada — so vira no-op enquanto estiver desligado.
+const CHAVE_ATIVO = 'followup_entrevista_ativo';
+
+function ativo() {
+  return db.obterConfigBool(CHAVE_ATIVO, false);
+}
+
 // Espera fixa entre o 1o e o 2o e-mail.
 const HORAS_ETAPA_2 = 24;
 
@@ -141,6 +150,14 @@ async function enviarParaCandidato(linha, etapa) {
 async function varrer() {
   const resumo = { etapa1: 0, etapa2: 0, falhas: 0 };
 
+  // Interruptor geral: desligado (default) -> nenhuma consulta, nenhum envio. Checado
+  // ANTES de qualquer acesso ao banco de candidatos, para o ciclo custar praticamente
+  // nada enquanto o subsistema estiver dormindo.
+  if (!ativo()) {
+    console.log('[followup] desativado em /admin/config; ciclo pulado.');
+    return { ...resumo, desativado: true };
+  }
+
   const etapas = [
     { etapa: 1, horas: horasEspera() },
     { etapa: 2, horas: HORAS_ETAPA_2 },
@@ -206,6 +223,8 @@ module.exports = {
   montarEmailFollowup,
   assuntoFollowup,
   horasEspera,
+  ativo,
+  CHAVE_ATIVO,
   CHAVE_HORAS_ESPERA,
   HORAS_ESPERA_PADRAO,
   HORAS_ETAPA_2,
