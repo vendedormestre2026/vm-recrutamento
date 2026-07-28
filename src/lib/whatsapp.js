@@ -58,6 +58,50 @@ function primeiroNomeDe(nome) {
   return String(nome || '').trim().split(/\s+/)[0] || '';
 }
 
+// ── Helpers internos de montagem de mensagem ────────────────────────────────────
+// Extraidos de dentro de mensagemWhatsappCandidato para que as mensagens do sentido
+// CANDIDATO -> recrutador reusem EXATAMENTE a mesma regra de omissao de empresa e a
+// mesma limpeza final, em vez de reimplementar. O comportamento de
+// mensagemWhatsappCandidato nao muda: ela passou a chamar os helpers.
+
+// Texto saneado da empresa: '' quando ausente/nula/em branco. E o UNICO teste de
+// "tem empresa?" em todo o arquivo — as tres mensagens perguntam por aqui.
+function textoEmpresa(empresa) {
+  return String(empresa || '').trim();
+}
+
+// Remove o trecho " da empresa {empresa}" do template. Usado quando nao ha empresa,
+// para nao sobrar "da empresa" pendurado nem espaco duplo no lugar.
+function removerTrechoEmpresa(texto) {
+  return texto.replace(/\s*da empresa \{empresa\}/gi, '');
+}
+
+// Remove o trecho " para a vaga de {vaga}" (mesma ideia do de empresa). Usado quando a
+// vaga nao pode ser resolvida — a frase continua valida sem ela.
+function removerTrechoVaga(texto) {
+  return texto.replace(/\s*para a vaga de \{vaga\}/gi, '');
+}
+
+// Troca os placeholders {chave} pelos valores. Placeholder DESCONHECIDO fica intacto
+// de proposito (nao quebra a mensagem).
+function aplicarPlaceholders(texto, valores) {
+  let saida = texto;
+  for (const [ph, val] of Object.entries(valores)) {
+    saida = saida.split(ph).join(val);
+  }
+  return saida;
+}
+
+// Limpeza final de mensagem de UMA LINHA: " ," / " ." colados, espacos repetidos e
+// bordas. Mesma semantica de antes (\s inclui \n) — por isso NAO serve para as
+// mensagens estruturadas em varias linhas, que sao montadas linha a linha.
+function limparEspacos(texto) {
+  return texto
+    .replace(/\s+([,.])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 // Monta a mensagem ao candidato aplicando um TEMPLATE (configuravel) com placeholders:
 //   {primeiro_nome}, {vaga}, {empresa}, {recrutador}.
 // Regras:
@@ -70,33 +114,98 @@ function primeiroNomeDe(nome) {
 // primeiro nome vem vazio, "Olá , " -> "Olá, ").
 function mensagemWhatsappCandidato({ nome, vaga, empresa, recrutador, template } = {}) {
   const tpl = typeof template === 'string' && template.trim() ? template : TEMPLATE_PADRAO;
-  const empresaTxt = String(empresa || '').trim();
+  const empresaTxt = textoEmpresa(empresa);
 
   let texto = tpl;
   if (!empresaTxt) {
-    texto = texto.replace(/\s*da empresa \{empresa\}/gi, '');
+    texto = removerTrechoEmpresa(texto);
   }
 
-  const valores = {
+  texto = aplicarPlaceholders(texto, {
     '{primeiro_nome}': primeiroNomeDe(nome),
     '{vaga}': String(vaga || '').trim(),
     '{empresa}': empresaTxt,
     '{recrutador}': String(recrutador || '').trim() || RECRUTADOR_PADRAO,
-  };
-  for (const [ph, val] of Object.entries(valores)) {
-    texto = texto.split(ph).join(val);
+  });
+
+  return limparEspacos(texto);
+}
+
+// ── Mensagens do sentido CANDIDATO -> recrutador ────────────────────────────────
+// Duas funcoes separadas (e nao uma com parametro "tipo") porque os dois textos tem
+// FORMATOS diferentes — uma frase corrida e um resumo em linhas —, sem nada em comum
+// alem dos helpers acima; um switch interno so esconderia dois templates distintos.
+//
+// Nenhuma das duas monta URL nem chama encodeURIComponent: a montagem do link wa.me
+// continua no handler que renderiza a tela, preservando a separacao atual.
+
+// Ponto A — tela de finalizacao (pos-entrevista). Duas variantes de abertura porque,
+// sem nome, "Sou , acabei" ficaria quebrado; a frase sem nome e uma frase inteira.
+const TEMPLATE_POS_ENTREVISTA =
+  'Olá! Sou {nome}, acabei de concluir a entrevista para a vaga de {vaga} ' +
+  'da empresa {empresa} e gostaria de falar com o recrutador.';
+const TEMPLATE_POS_ENTREVISTA_SEM_NOME =
+  'Olá! Acabei de concluir a entrevista para a vaga de {vaga} ' +
+  'da empresa {empresa} e gostaria de falar com o recrutador.';
+
+// Mensagem que o CANDIDATO envia ao recrutador ao final da entrevista.
+// Regras de degradacao (a frase precisa continuar valida em qualquer combinacao):
+//   - empresa vazia -> some " da empresa {empresa}".
+//   - vaga vazia    -> some " para a vaga de {vaga}" E TAMBEM a empresa (empresa sozinha,
+//                      sem a vaga que ela qualifica, viraria "a entrevista da empresa X").
+//   - nome vazio    -> usa a abertura sem nome.
+function mensagemPosEntrevista({ nome, vaga, empresa } = {}) {
+  const nomeTxt = String(nome || '').trim();
+  const vagaTxt = String(vaga || '').trim();
+  const empresaTxt = textoEmpresa(empresa);
+
+  let texto = nomeTxt ? TEMPLATE_POS_ENTREVISTA : TEMPLATE_POS_ENTREVISTA_SEM_NOME;
+  if (!vagaTxt || !empresaTxt) {
+    texto = removerTrechoEmpresa(texto);
+  }
+  if (!vagaTxt) {
+    texto = removerTrechoVaga(texto);
   }
 
-  return texto
-    .replace(/\s+([,.])/g, '$1')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+  texto = aplicarPlaceholders(texto, {
+    '{nome}': nomeTxt,
+    '{vaga}': vagaTxt,
+    '{empresa}': empresaTxt,
+  });
+
+  return limparEspacos(texto);
+}
+
+// Ponto B — tela de confirmacao (modo Simples), logo apos a candidatura. Resumo
+// estruturado: o recrutador recebe os dados de contato ja prontos. Montada linha a
+// linha (e nao por template + limpeza) justamente para as quebras de linha
+// sobreviverem — limparEspacos colapsaria \n em espaco.
+// Empresa ausente -> a LINHA INTEIRA "🏢 Empresa:" nao e emitida (sem rotulo vazio).
+function mensagemNovaCandidatura({ nome, email, telefone, vaga, empresa } = {}) {
+  const ou = (valor, padrao) => String(valor || '').trim() || padrao;
+  const empresaTxt = textoEmpresa(empresa);
+
+  const linhas = [
+    `📋 Candidatura de ${ou(nome, 'Candidato')}`,
+    '',
+    `📧 E-mail: ${ou(email, 'não informado')}`,
+    `📱 WhatsApp: ${ou(telefone, 'não informado')}`,
+    `💼 Vaga: ${ou(vaga, 'não informada')}`,
+  ];
+  if (empresaTxt) {
+    linhas.push(`🏢 Empresa: ${empresaTxt}`);
+  }
+
+  return linhas.join('\n');
 }
 
 module.exports = {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
   mensagemWhatsappCandidato,
+  // candidato -> recrutador
+  mensagemPosEntrevista,
+  mensagemNovaCandidatura,
   RECRUTADOR_PADRAO,
   TEMPLATE_PADRAO,
 };

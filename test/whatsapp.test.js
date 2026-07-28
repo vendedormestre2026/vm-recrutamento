@@ -11,6 +11,8 @@ const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
   mensagemWhatsappCandidato,
+  mensagemPosEntrevista,
+  mensagemNovaCandidatura,
   RECRUTADOR_PADRAO,
   TEMPLATE_PADRAO,
 } = require('../src/lib/whatsapp');
@@ -153,4 +155,142 @@ test('mensagemWhatsappCandidato: empresa vazia remove " da empresa {empresa}" do
     template: 'Vaga de {vaga} da empresa {empresa} aberta.',
   });
   assert.equal(msg, 'Vaga de SDR aberta.');
+});
+
+// ── Mensagens do sentido CANDIDATO -> recrutador ────────────────────────────────
+// mensagemPosEntrevista (ponto A: tela de finalizacao)
+
+test('mensagemPosEntrevista: com empresa -> cita vaga E empresa', () => {
+  const msg = mensagemPosEntrevista({
+    nome: 'Ana Souza',
+    vaga: 'Closer',
+    empresa: 'Vendedor Mestre',
+  });
+  assert.equal(
+    msg,
+    'Olá! Sou Ana Souza, acabei de concluir a entrevista para a vaga de Closer ' +
+      'da empresa Vendedor Mestre e gostaria de falar com o recrutador.',
+  );
+});
+
+test('mensagemPosEntrevista: empresa vazia -> omite o trecho inteiro, sem sobra', () => {
+  const msg = mensagemPosEntrevista({ nome: 'Ana Souza', vaga: 'Closer', empresa: '' });
+  assert.equal(
+    msg,
+    'Olá! Sou Ana Souza, acabei de concluir a entrevista para a vaga de Closer ' +
+      'e gostaria de falar com o recrutador.',
+  );
+  assert.ok(!/empresa/i.test(msg), 'nao pode sobrar a palavra "empresa"');
+  assert.ok(!/ {2,}/.test(msg), 'nao pode sobrar espaco duplo');
+});
+
+test('mensagemPosEntrevista: empresa null e empresa so com espacos -> mesmo resultado', () => {
+  const esperado = mensagemPosEntrevista({ nome: 'Ana', vaga: 'SDR', empresa: '' });
+  assert.equal(mensagemPosEntrevista({ nome: 'Ana', vaga: 'SDR', empresa: null }), esperado);
+  assert.equal(mensagemPosEntrevista({ nome: 'Ana', vaga: 'SDR', empresa: '   ' }), esperado);
+  assert.equal(mensagemPosEntrevista({ nome: 'Ana', vaga: 'SDR' }), esperado);
+});
+
+test('mensagemPosEntrevista: aplica trim em nome, vaga e empresa', () => {
+  const msg = mensagemPosEntrevista({
+    nome: '  Ana Souza  ',
+    vaga: '  Closer  ',
+    empresa: '  Vendedor Mestre  ',
+  });
+  assert.equal(
+    msg,
+    'Olá! Sou Ana Souza, acabei de concluir a entrevista para a vaga de Closer ' +
+      'da empresa Vendedor Mestre e gostaria de falar com o recrutador.',
+  );
+});
+
+test('mensagemPosEntrevista: sem nome -> abertura alternativa, sem "Sou ,"', () => {
+  const msg = mensagemPosEntrevista({ nome: '', vaga: 'Closer', empresa: 'Vendedor Mestre' });
+  assert.equal(
+    msg,
+    'Olá! Acabei de concluir a entrevista para a vaga de Closer ' +
+      'da empresa Vendedor Mestre e gostaria de falar com o recrutador.',
+  );
+  assert.ok(!msg.includes('Sou'), 'sem nome, nao deve restar "Sou"');
+});
+
+test('mensagemPosEntrevista: sem vaga -> some vaga E empresa, frase continua valida', () => {
+  const msg = mensagemPosEntrevista({ nome: 'Ana', vaga: '', empresa: 'Vendedor Mestre' });
+  assert.equal(
+    msg,
+    'Olá! Sou Ana, acabei de concluir a entrevista e gostaria de falar com o recrutador.',
+  );
+});
+
+test('mensagemPosEntrevista: sem nenhum dado -> frase minima, sem quebrar', () => {
+  const msg = mensagemPosEntrevista();
+  assert.equal(msg, 'Olá! Acabei de concluir a entrevista e gostaria de falar com o recrutador.');
+});
+
+// mensagemNovaCandidatura (ponto B: tela de confirmacao, modo Simples)
+
+test('mensagemNovaCandidatura: com empresa -> inclui a linha da empresa', () => {
+  const msg = mensagemNovaCandidatura({
+    nome: 'Ana Souza',
+    email: 'ana@exemplo.com',
+    telefone: '+55 11 90000-0000',
+    vaga: 'Closer',
+    empresa: 'Vendedor Mestre',
+  });
+  assert.equal(
+    msg,
+    '📋 Candidatura de Ana Souza\n\n' +
+      '📧 E-mail: ana@exemplo.com\n' +
+      '📱 WhatsApp: +55 11 90000-0000\n' +
+      '💼 Vaga: Closer\n' +
+      '🏢 Empresa: Vendedor Mestre',
+  );
+});
+
+test('mensagemNovaCandidatura: empresa vazia -> a LINHA inteira some', () => {
+  const msg = mensagemNovaCandidatura({
+    nome: 'Ana Souza',
+    email: 'ana@exemplo.com',
+    telefone: '+55 11 90000-0000',
+    vaga: 'Closer',
+    empresa: null,
+  });
+  assert.equal(
+    msg,
+    '📋 Candidatura de Ana Souza\n\n' +
+      '📧 E-mail: ana@exemplo.com\n' +
+      '📱 WhatsApp: +55 11 90000-0000\n' +
+      '💼 Vaga: Closer',
+  );
+  assert.ok(!msg.includes('🏢'), 'nao pode sobrar o rotulo de empresa');
+  assert.ok(!msg.endsWith('\n'), 'nao pode sobrar linha em branco no fim');
+});
+
+test('mensagemNovaCandidatura: preserva as quebras de linha (nao colapsa em espaco)', () => {
+  const msg = mensagemNovaCandidatura({ nome: 'Ana', vaga: 'SDR', empresa: 'Acme' });
+  assert.equal(msg.split('\n').length, 6);
+});
+
+test('mensagemNovaCandidatura: aplica trim nos campos', () => {
+  const msg = mensagemNovaCandidatura({
+    nome: '  Ana Souza  ',
+    email: '  ana@exemplo.com  ',
+    telefone: '  +55 11 90000-0000  ',
+    vaga: '  Closer  ',
+    empresa: '  Acme  ',
+  });
+  assert.ok(msg.includes('📋 Candidatura de Ana Souza\n'));
+  assert.ok(msg.includes('📧 E-mail: ana@exemplo.com\n'));
+  assert.ok(msg.endsWith('🏢 Empresa: Acme'));
+});
+
+test('mensagemNovaCandidatura: campos ausentes -> rotulos com "não informado"', () => {
+  const msg = mensagemNovaCandidatura();
+  assert.equal(
+    msg,
+    '📋 Candidatura de Candidato\n\n' +
+      '📧 E-mail: não informado\n' +
+      '📱 WhatsApp: não informado\n' +
+      '💼 Vaga: não informada',
+  );
 });
