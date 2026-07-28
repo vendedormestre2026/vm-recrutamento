@@ -11,7 +11,7 @@ const session = require('../lib/session');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const { extrairUtmDaQuery, lerUtmDoCookie, serializarUtmParaCookie } = require('../lib/utm');
-const { mensagemPosEntrevista } = require('../lib/whatsapp');
+const { mensagemPosEntrevista, mensagemNovaCandidatura } = require('../lib/whatsapp');
 const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
@@ -494,19 +494,25 @@ router.get('/video/:slug', exigirCandidato, bloquearSeModoSimples, (req, res) =>
 // desabilitado + aviso no log (a pagina ainda renderiza).
 function paginaConfirmacaoSimples({ candidato, vaga }) {
   const nome = nomeCandidato(candidato); // ja junta nome + sobrenome (fallback: e-mail)
-  const tituloVaga = (vaga && vaga.titulo) || 'a vaga';
-  const telefone = (candidato && candidato.telefone) || 'não informado';
-  const email = (candidato && candidato.email) || 'não informado';
+  const tituloVaga = (vaga && vaga.titulo) || 'a vaga'; // texto da TELA (o da mensagem vai cru)
 
   const numero = String(config.recrutador.whatsapp || '').replace(/\D/g, ''); // wa.me: so digitos
-  // Resumo da candidatura para o recrutador. Sem "empresa" (sistema mono-empresa, sem
-  // valor dinamico a puxar) e sem inventar campos que a application nao tem. \n vira
-  // quebra de linha no WhatsApp apos o encodeURIComponent.
-  const mensagem =
-    `👋 Candidatura de ${nome}\n\n` +
-    `📧 E-mail: ${email}\n` +
-    `📱 WhatsApp: ${telefone}\n` +
-    `💼 Vaga: ${tituloVaga}`;
+  // Resumo da candidatura para o recrutador, montado por mensagemNovaCandidatura
+  // (lib/whatsapp). Agora COM a empresa da vaga: jobs.empresa passou a existir e o
+  // recrutador precisa saber de qual processo veio a mensagem. Empresa vazia -> a linha
+  // inteira nao e emitida (regra na propria funcao). \n vira quebra de linha no WhatsApp
+  // apos o encodeURIComponent.
+  //
+  // Campos vao CRUS: os fallbacks ("não informado", "não informada") sao da funcao. Em
+  // especial o titulo, que aqui NAO usa tituloVaga — "Vaga: a vaga" ficaria estranho no
+  // resumo; sem vaga, a funcao escreve "não informada".
+  const mensagem = mensagemNovaCandidatura({
+    nome,
+    email: candidato && candidato.email,
+    telefone: candidato && candidato.telefone,
+    vaga: vaga && vaga.titulo,
+    empresa: vaga && vaga.empresa,
+  });
 
   let botao;
   let autoAbrir = '';
