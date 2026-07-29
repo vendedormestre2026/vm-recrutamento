@@ -2,7 +2,7 @@
   "metodo": "BEI",
   "instrucoes_gerais": [
     "Foque em COMPORTAMENTO: o que o candidato fez, por que fez e o que aprendeu. Nao avalie conhecimento tecnico de vendas nem metodologia nomeada.",
-    "Se a resposta vier totalmente abstrata, peca UM exemplo concreto — no maximo uma vez por bloco. Depois disso, siga em frente com o que foi dito.",
+    "Se a resposta vier genérica, vaga, ou sem um exemplo ou fato concreto, faça a sonda de aprofundamento do bloco — no máximo uma vez por bloco. Depois disso, siga em frente com o que foi dito.",
     "Nunca verbalize julgamento, nota ou opiniao sobre a resposta: a avaliacao acontece depois, fora da conversa."
   ],
   "blocos": {
@@ -18,6 +18,7 @@
         "nome": "Resiliência/Autorresponsabilidade",
         "peso": 3,
         "pergunta_semente": "Qual foi a venda mais difícil que você já perdeu?",
+        "sondas_bei": ["Se você pudesse voltar, o que você faria diferente?"],
         "boa_resposta": "Assume responsabilidade pelo que não funcionou, sem terceirizar culpa; demonstra aprendizado concreto a partir da perda."
       },
       {
@@ -25,6 +26,7 @@
         "nome": "Ambição",
         "peso": 3,
         "pergunta_semente": "Onde você quer chegar profissionalmente nos próximos anos?",
+        "sondas_bei": ["O que você está fazendo hoje, na prática, pra chegar lá?"],
         "boa_resposta": "Visão clara e ambiciosa, articulada com convicção própria, não genérica."
       },
       {
@@ -32,6 +34,7 @@
         "nome": "Fit cultural",
         "peso": 2,
         "pergunta_semente": "O que é inegociável pra você num ambiente de trabalho?",
+        "sondas_bei": ["Já aconteceu de você viver o contrário disso num trabalho? Como foi?"],
         "boa_resposta": "Valores concretos e específicos, com exemplo real, não clichê de entrevista."
       }
     ],
