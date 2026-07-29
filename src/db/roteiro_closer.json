@@ -43,10 +43,9 @@
       "avaliado": false,
       "perguntas": [
         "Qual é sua disponibilidade para início?",
-        "Qual é sua expectativa de remuneração?",
         "Por que deveríamos te escolher entre os candidatos?"
       ],
-      "observacao": "3 perguntas, 3 turnos separados — nunca despejar juntas."
+      "observacao": "2 perguntas, 2 turnos separados — nunca despejar juntas."
     }
   },
   "rubrica": {
