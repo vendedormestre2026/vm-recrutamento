@@ -93,7 +93,9 @@ CREATE TABLE IF NOT EXISTS reports (
   destaque_atencao       TEXT,
   recomendacao           TEXT,   -- 'avancar' | 'talvez' | 'descartar' (pre-aprovacao pela IA); enum validado no app
   enviado_em             TEXT,
-  destinatario           TEXT
+  destinatario           TEXT,
+  erro_mensagem          TEXT,   -- mensagem da excecao que impediu a avaliacao (truncada); NULL quando deu certo
+  erro_em                TEXT    -- momento (ISO/UTC) da falha; NULL quando deu certo
 );
 
 -- Log de uso/custo das chamadas ao LLM (DeepSeek). custo_usd ja calculado na gravacao

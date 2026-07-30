@@ -792,12 +792,15 @@ function reportDeLinha(linha) {
   };
 }
 
+// erro_mensagem/erro_em sao ADITIVOS: so o caminho de falha da avaliacao os preenche
+// (status='erro', sem resumo/pontuacoes). Quem chama no caminho feliz omite os dois e
+// grava NULL, exatamente como antes.
 function criarReport(report) {
   const info = getDb().prepare(`
     INSERT INTO reports
-      (interview_id, token, status, resumo, pontuacoes, destaque_pontos_fortes, destaque_atencao, recomendacao, requisitos)
+      (interview_id, token, status, resumo, pontuacoes, destaque_pontos_fortes, destaque_atencao, recomendacao, requisitos, erro_mensagem, erro_em)
     VALUES
-      (@interview_id, @token, @status, @resumo, @pontuacoes, @destaque_pontos_fortes, @destaque_atencao, @recomendacao, @requisitos)
+      (@interview_id, @token, @status, @resumo, @pontuacoes, @destaque_pontos_fortes, @destaque_atencao, @recomendacao, @requisitos, @erro_mensagem, @erro_em)
   `).run({
     interview_id: report.interview_id,
     token: report.token,
@@ -809,6 +812,8 @@ function criarReport(report) {
     destaque_atencao: report.destaque_atencao != null ? JSON.stringify(report.destaque_atencao) : null,
     recomendacao: report.recomendacao != null ? String(report.recomendacao) : null,
     requisitos: report.requisitos != null ? JSON.stringify(report.requisitos) : null,
+    erro_mensagem: report.erro_mensagem != null ? String(report.erro_mensagem) : null,
+    erro_em: report.erro_em != null ? String(report.erro_em) : null,
   });
   return Number(info.lastInsertRowid);
 }
@@ -847,7 +852,14 @@ function obterReportEnviadoPorInterview(interviewId) {
 
 // Lista as aplicacoes com o contexto que o painel precisa: titulo da vaga, video_url
 // da ultima entrevista, a ultima entrevista da aplicacao e, se houver, o interview_id
-// do ultimo relatorio gerado (para habilitar/linkar o botao "Ver relatorio").
+// do ultimo relatorio EXIBIVEL (para habilitar/linkar o botao "Ver relatorio").
+// "Exibivel" exclui status='erro': essa linha existe so para guardar o rastro da falha
+// (erro_mensagem/erro_em) e nao tem resumo/pontuacoes para mostrar — o botao apontaria
+// para uma pagina vazia. O descarte acontece ANTES do ORDER BY, entao uma reprocessagem
+// bem-sucedida depois de uma falha volta a acender o botao normalmente.
+// Proposital NAO mexer em obterReportPorInterview: aquele continua trazendo QUALQUER
+// status (inclusive 'erro'), que e o que o detalhe do candidato usa para exibir a
+// mensagem da falha. O filtro daqui vale so para este campo, que so alimenta o botao.
 // Ordena por criado_em DESC. Filtros opcionais (Fase 5, inc 5):
 //   status -> filtra a.status (so um dos valores validos; ignorado caso contrario)
 //   statusIa -> filtra a.status_ia (veredito da IA; enum abaixo; ignorado caso contrario)
@@ -938,7 +950,8 @@ function listarAplicacoesComContexto({
             WHERE i3.application_id = a.id ORDER BY i3.id DESC LIMIT 1) AS video_url,
          (SELECT r.interview_id FROM reports r
             JOIN interviews i2 ON i2.id = r.interview_id
-            WHERE i2.application_id = a.id ORDER BY r.id DESC LIMIT 1) AS report_interview_id
+            WHERE i2.application_id = a.id AND r.status <> 'erro'
+            ORDER BY r.id DESC LIMIT 1) AS report_interview_id
        FROM applications a
        LEFT JOIN jobs j ON j.id = a.job_id
        ${clausula}

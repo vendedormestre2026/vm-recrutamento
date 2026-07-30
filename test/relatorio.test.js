@@ -27,7 +27,7 @@ const assert = require('node:assert/strict');
 
 const db = require('../src/db');
 const { semear, ROTEIRO_SDR } = require('../src/db/seed');
-const { gerarRelatorio } = require('../src/lib/relatorio');
+const { gerarRelatorio, MAX_ERRO_MENSAGEM } = require('../src/lib/relatorio');
 const { normalizarEstrutura } = require('../src/lib/entrevista');
 const { criarApp } = require('../src/server');
 
@@ -199,7 +199,12 @@ test('gerarRelatorio: falha no envio de e-mail -> report gravado com status "err
   assert.equal(naBase.resumo, 'Avaliacao de teste.');
 });
 
-test('gerarRelatorio: JSON de avaliacao invalido -> lanca erro e NAO grava report', async () => {
+// Antes este teste exigia que NENHUM report fosse gravado quando o parse falhava. Era
+// justamente o buraco que fez a interview 84 se perder: a excecao subia, o status_ia
+// virava 'erro' e nao restava rastro nenhum no banco — so no stdout do Railway, que some
+// a cada redeploy. Agora o caminho de falha grava uma linha com status='erro' + a
+// mensagem, e continua relancando (quem seta status_ia segue sendo finalizarEntrevista).
+test('gerarRelatorio: JSON de avaliacao invalido -> lanca erro E grava report de erro', async () => {
   const iid = novaInterview('json-invalido');
 
   const deps = {
@@ -218,12 +223,82 @@ test('gerarRelatorio: JSON de avaliacao invalido -> lanca erro e NAO grava repor
 
   await assert.rejects(() => gerarRelatorio(iid, deps), /JSON|pontuacoes/i);
 
-  // Nenhum report deve ter sido gravado para esta interview (consulta direta).
-  const n = db
+  // Exatamente UMA linha, com o rastro da falha (consulta direta).
+  const linhas = db
     .getDb()
-    .prepare('SELECT COUNT(*) AS n FROM reports WHERE interview_id = ?')
-    .get(iid).n;
-  assert.equal(n, 0);
+    .prepare('SELECT * FROM reports WHERE interview_id = ?')
+    .all(iid);
+  assert.equal(linhas.length, 1);
+  const linha = linhas[0];
+  assert.equal(linha.status, 'erro');
+  assert.equal(linha.token, null, 'report de erro nao tem pagina publica; token fica NULL');
+  assert.match(linha.erro_mensagem, /JSON|pontuacoes/i);
+  assert.ok(linha.erro_em, 'erro_em deveria estar preenchido');
+  assert.ok(linha.erro_mensagem.length <= MAX_ERRO_MENSAGEM + 1, 'mensagem truncada');
+  // Nada de conteudo de avaliacao: a linha existe so para registrar a falha.
+  assert.equal(linha.resumo, null);
+  assert.equal(linha.pontuacoes, null);
+});
+
+// O timeout do LLM (a falha REAL da interview 84) segue o mesmo caminho do parse invalido.
+test('gerarRelatorio: falha na chamada ao LLM -> report de erro com a mensagem da excecao', async () => {
+  const iid = novaInterview('llm-indisponivel');
+
+  const deps = {
+    usarMockDeterministico: false,
+    llm: {
+      async completar() {
+        throw new Error('Tempo esgotado ao chamar LLM (relatorio) (> 120000ms).');
+      },
+    },
+    email: {
+      async enviar() {
+        throw new Error('e-mail NAO deveria ser tentado quando o LLM falha');
+      },
+    },
+  };
+
+  await assert.rejects(() => gerarRelatorio(iid, deps), /Tempo esgotado/i);
+
+  const linha = db
+    .getDb()
+    .prepare('SELECT * FROM reports WHERE interview_id = ?')
+    .get(iid);
+  assert.ok(linha, 'report de erro deveria existir');
+  assert.equal(linha.status, 'erro');
+  assert.match(linha.erro_mensagem, /Tempo esgotado/i);
+});
+
+// O report de erro NAO pode ser confundido com um relatorio pronto: a idempotencia so
+// considera 'enviado', entao uma nova tentativa depois da falha gera o relatorio normal.
+test('gerarRelatorio: report de erro nao bloqueia uma nova tentativa bem-sucedida', async () => {
+  const iid = novaInterview('erro-depois-sucesso');
+
+  await assert.rejects(
+    () =>
+      gerarRelatorio(iid, {
+        usarMockDeterministico: false,
+        llm: {
+          async completar() {
+            throw new Error('falha transitoria');
+          },
+        },
+        email: { async enviar() {} },
+      }),
+    /falha transitoria/i,
+  );
+
+  const segundo = await gerarRelatorio(iid, depsSemRede());
+  assert.equal(segundo.status, 'enviado');
+
+  const linhas = db
+    .getDb()
+    .prepare('SELECT status FROM reports WHERE interview_id = ? ORDER BY id')
+    .all(iid);
+  assert.deepEqual(
+    linhas.map((l) => l.status),
+    ['erro', 'enviado'],
+  );
 });
 
 test('GET /relatorio/:token — quatro cenarios', async (t) => {

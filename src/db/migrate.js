@@ -38,6 +38,17 @@ function migrar() {
   // recomendacao) e nao quebram nada.
   adicionarColunaSeFaltar('reports', 'recomendacao', 'TEXT');
 
+  // Rastro da falha de avaliacao. Ate aqui, quando a chamada ao LLM avaliador estourava
+  // o timeout (ou o parse da resposta lancava), a excecao subia ate finalizarEntrevista,
+  // que so fazia console.error + status_ia='erro': NENHUMA linha era criada em reports e
+  // a mensagem do erro so existia no stdout do Railway, que some a cada redeploy.
+  // Agora o caminho de erro grava uma linha com status='erro' (valor JA previsto no CHECK
+  // da coluna status, criado na Fase 4 — nao ha coluna de status nova aqui) mais estas
+  // duas: a mensagem truncada e o momento da falha. Ambas nullable, sem CHECK; reports
+  // bem-sucedidos e os anteriores a esta migracao ficam NULL e nao mudam de comportamento.
+  adicionarColunaSeFaltar('reports', 'erro_mensagem', 'TEXT');
+  adicionarColunaSeFaltar('reports', 'erro_em', 'TEXT');
+
   // Item 7.6 - formato Victoria. jobs.requisitos_obrigatorios: JSON array de strings,
   // requisitos "must-have" da vaga (ex.: "Experiencia em vendas", "Perfil SDR"),
   // DISTINTOS de skills/requisitos (desejaveis/informativos). reports.requisitos: JSON

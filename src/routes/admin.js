@@ -358,6 +358,28 @@ function badgeStatusIa(statusIa) {
   return `<span class="badge ${classe}">${escapeHtml(rotulo)}</span>`;
 }
 
+// Detalhe da falha de avaliacao, exibido logo abaixo do badge "Erro na avaliação" no
+// detalhe do candidato. Antes essa mensagem so existia no stdout do Railway (que some a
+// cada redeploy) e o recrutador via apenas o badge, sem saber se foi timeout do LLM,
+// resposta fora do formato ou outra coisa. Somente leitura: nenhuma acao nesta etapa.
+//
+// Devolve '' quando nao ha report ou quando ele nao esta em 'erro' — inclusive para as
+// falhas ANTERIORES a esta mudanca, que nao deixaram linha nenhuma em reports (o caso da
+// interview 84). Nesses o painel segue exatamente como hoje: so o badge.
+function falhaAvaliacaoHtml(report) {
+  if (!report || report.status !== 'erro') return '';
+  const mensagem = report.erro_mensagem || 'Sem detalhe registrado.';
+  const quando = report.erro_em ? formatarDataHora(report.erro_em) : '—';
+  return `
+        <div>
+          <dt>Falha na avaliação</dt>
+          <dd>
+            <span style="color:#555;font-size:13px">${escapeHtml(quando)}</span><br>
+            <span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-word">${escapeHtml(mensagem)}</span>
+          </dd>
+        </div>`;
+}
+
 // Chip do Status Recrutador (decisao humana). null/desconhecido -> "Sem decisao" (cinza).
 // Rotulos dizem "pelo recrutador" para diferenciar do veredito da IA (mesmas cores).
 function badgeStatusRecrutador(statusRecrutador) {
@@ -1045,8 +1067,15 @@ router.get('/candidato/:id', (req, res) => {
   const report = interviewId ? db.obterReportPorInterview(interviewId) : null;
   const videoUrl = ultimaInterview ? ultimaInterview.video_url : null;
 
-  // Mesmo criterio da lista: relatorio so quando a entrevista concluiu e ha report.
-  const podeVerRelatorio = cand.status === 'concluido' && interviewId != null && report != null;
+  // Mesmo criterio da lista: relatorio so quando a entrevista concluiu e ha report
+  // EXIBIVEL. Report com status='erro' e so o rastro da falha (erro_mensagem/erro_em),
+  // sem resumo/pontuacoes — abrir a pagina mostraria um relatorio vazio, entao o botao
+  // fica desabilitado e a mensagem do erro aparece junto ao badge de Status IA, abaixo.
+  const podeVerRelatorio =
+    cand.status === 'concluido' &&
+    interviewId != null &&
+    report != null &&
+    report.status !== 'erro';
   const botaoRelatorio = podeVerRelatorio
     ? `<a class="btn" href="/admin/relatorio/${interviewId}">Ver relatório</a>`
     : `<span class="btn btn--off">Ver relatório</span>`;
@@ -1137,6 +1166,7 @@ router.get('/candidato/:id', (req, res) => {
         <div><dt>Vaga</dt><dd>${escapeHtml((vaga && vaga.titulo) || cand.vaga_titulo || '—')}</dd></div>
         <div><dt>Status</dt><dd>${badgeStatus(cand.status)}</dd></div>
         <div><dt>Status IA</dt><dd>${badgeStatusIa(cand.status_ia)}</dd></div>
+        ${falhaAvaliacaoHtml(report)}
         <div><dt>Status Recrutador</dt><dd>${badgeStatusRecrutador(cand.status_recrutador)}</dd></div>
         <div><dt>Aplicou em</dt><dd>${escapeHtml(formatarDataHora(cand.criado_em))}</dd></div>
       </dl>

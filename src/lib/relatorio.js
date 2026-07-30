@@ -559,6 +559,42 @@ function agoraSqlite() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
+// Teto do texto guardado em reports.erro_mensagem. Suficiente para identificar a causa
+// (a mensagem de timeout e o trecho do JSON invalido que parseAvaliacao anexa cabem
+// folgados) sem inflar o banco com stack trace inteiro.
+const MAX_ERRO_MENSAGEM = 500;
+
+// ── Rastro persistido da falha de avaliacao ──
+// Ate aqui, uma falha na chamada ao LLM avaliador (timeout/rede) ou no parse da resposta
+// nao deixava NENHUM registro: a excecao subia ate finalizarEntrevista, que so fazia
+// console.error + status_ia='erro'. A mensagem vivia apenas no stdout do Railway, que
+// some a cada redeploy — foi assim que a interview 84 se perdeu sem diagnostico.
+//
+// A linha nasce com token NULL (nao ha relatorio para abrir; o indice UNIQUE de token
+// aceita multiplos NULL) e sem resumo/pontuacoes/destaques — reportDeLinha ja converte
+// esses NULL em [] via lerJson, entao quem le a tabela nao quebra. status='erro' ja era
+// um valor previsto no CHECK da coluna desde a Fase 4.
+//
+// NUNCA lanca: se o proprio INSERT falhar, loga e devolve null. Um erro ao salvar o erro
+// nao pode substituir a excecao original nem derrubar o processo.
+function criarReportComErro(interviewId, mensagem) {
+  const texto = truncar(mensagem || 'Erro desconhecido ao gerar o relatorio.', MAX_ERRO_MENSAGEM);
+  try {
+    return db.criarReport({
+      interview_id: interviewId,
+      token: null,
+      status: 'erro',
+      erro_mensagem: texto,
+      erro_em: agoraSqlite(),
+    });
+  } catch (e) {
+    console.error(
+      `[relatorio] falha ao PERSISTIR o erro da entrevista ${interviewId}: ${e.message}`,
+    );
+    return null;
+  }
+}
+
 async function gerarRelatorio(interviewId, deps = {}) {
   const llm = deps.llm || require('../providers/llm');
   const email = deps.email || require('../providers/email');
@@ -590,30 +626,42 @@ async function gerarRelatorio(interviewId, deps = {}) {
   if (mock) {
     avaliacao = avaliacaoMock(roteiro);
   } else {
-    const mensagens = montarMensagensAvaliacao({ roteiro, vaga, candidato, turns, agente });
-    const resp = await comTimeout(
-      llm.completar(mensagens, { temperatura: 0.2, maxTokens: 1500 }),
-      relatorioTimeoutMs,
-      'LLM (relatorio)',
-    );
-
-    // Log de uso/custo (best-effort: NUNCA interrompe a geracao do relatorio).
+    // Tudo que pode falhar por causa EXTERNA (LLM lento/fora do ar, resposta fora do
+    // formato) fica dentro deste try. O montarMensagensAvaliacao entra junto porque
+    // normalizarEstrutura tambem pode lancar num roteiro malformado — o objetivo e que
+    // nenhum caminho chegue ao chamador sem ter deixado rastro em reports.
     try {
-      const custo = calcularCustoDeepSeek(resp && resp.uso);
-      db.registrarUsoApi({
-        provedor: 'openrouter',
-        modelo: resp && resp.modelo,
-        origem: 'relatorio',
-        interview_id: interviewId,
-        uso: resp && resp.uso,
-        custo_usd: custo,
-      });
-    } catch (e) {
-      console.error('[custos] erro ao registrar uso (relatorio):', e);
-    }
+      const mensagens = montarMensagensAvaliacao({ roteiro, vaga, candidato, turns, agente });
+      const resp = await comTimeout(
+        llm.completar(mensagens, { temperatura: 0.2, maxTokens: 1500 }),
+        relatorioTimeoutMs,
+        'LLM (relatorio)',
+      );
 
-    // Passa os turns REAIS para validar a evidencia citada nos requisitos (item 7.6).
-    avaliacao = parseAvaliacao(resp && resp.texto, { turns });
+      // Log de uso/custo (best-effort: NUNCA interrompe a geracao do relatorio).
+      try {
+        const custo = calcularCustoDeepSeek(resp && resp.uso);
+        db.registrarUsoApi({
+          provedor: 'openrouter',
+          modelo: resp && resp.modelo,
+          origem: 'relatorio',
+          interview_id: interviewId,
+          uso: resp && resp.uso,
+          custo_usd: custo,
+        });
+      } catch (e) {
+        console.error('[custos] erro ao registrar uso (relatorio):', e);
+      }
+
+      // Passa os turns REAIS para validar a evidencia citada nos requisitos (item 7.6).
+      avaliacao = parseAvaliacao(resp && resp.texto, { turns });
+    } catch (err) {
+      // Grava o rastro e RELANCA: quem seta status_ia='erro' continua sendo o .catch de
+      // finalizarEntrevista (entrevista.js), dono unico dessa transicao. Aqui so
+      // garantimos que agora existe uma linha em reports para o painel encontrar.
+      criarReportComErro(interviewId, err && err.message);
+      throw err;
+    }
   }
 
   // ── Persiste o report (gera token, status 'gerado') ──
@@ -661,6 +709,8 @@ async function gerarRelatorio(interviewId, deps = {}) {
 
 module.exports = {
   gerarRelatorio,
+  criarReportComErro,
+  MAX_ERRO_MENSAGEM,
   montarMensagensAvaliacao,
   parseAvaliacao,
   avaliacaoMock,
