@@ -106,8 +106,8 @@ async function resolverPastaId(drive) {
   return _pastaIdCache;
 }
 
-// Sobe o arquivo e devolve { id, link } com link compartilhavel (leitura por qualquer
-// pessoa com o link). deps injetavel ({ drive }) para teste sem rede.
+// Sobe o arquivo e devolve { id, link }. O link (webViewLink) abre para quem tem acesso
+// ao Shared Drive de destino — NAO e publico. deps injetavel ({ drive }) para teste sem rede.
 async function enviarVideo({ caminho, nomeArquivo, mimeType } = {}, deps = {}) {
   if (!caminho || !fs.existsSync(caminho)) {
     throw new Error(`Arquivo de video nao encontrado para upload: ${caminho}`);
@@ -130,18 +130,16 @@ async function enviarVideo({ caminho, nomeArquivo, mimeType } = {}, deps = {}) {
 
   const fileId = criado.data.id;
 
-  // Link compartilhavel: leitura por qualquer pessoa com o link (o painel exibe o link
-  // ao recrutador). Best-effort: se a permissao falhar, ainda devolvemos o link interno.
-  try {
-    await drive.permissions.create({
-      fileId,
-      requestBody: { role: 'reader', type: 'anyone' },
-      supportsAllDrives: true,
-    });
-  } catch (err) {
-    console.error(`[drive] falha ao tornar o video ${fileId} compartilhavel: ${err.message}`);
-  }
-
+  // NENHUMA permissao e criada aqui, de proposito. Ate aqui o upload adicionava
+  // { role: 'reader', type: 'anyone' } em cada video — qualquer pessoa com o link
+  // assistia a entrevista de um candidato sem autenticar. Era redundante: a pasta-destino
+  // e um Shared Drive onde o recrutador ja e organizer, entao ele enxerga todo video
+  // gravado sem precisar de link publico. O arquivo HERDA as permissoes do Shared Drive
+  // no momento do create; nao ha nada a conceder depois.
+  //
+  // O webViewLink NAO depende dessa permissao: ele e devolvido pelo files.create (campo
+  // pedido em `fields`) e continua igual. O que muda e so quem consegue abri-lo — agora
+  // exige estar logado numa conta com acesso ao Shared Drive.
   const link = criado.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
   return { id: fileId, link };
 }
