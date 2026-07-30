@@ -380,6 +380,53 @@ function falhaAvaliacaoHtml(report) {
         </div>`;
 }
 
+// ── Reprocessamento manual da avaliacao ──
+// Uma avaliacao leva ~18s (pode chegar aos 120s do timeout). Dois cliques no botao — ou
+// dois recrutadores ao mesmo tempo — gerariam DUAS chamadas pagas e DOIS e-mails, porque
+// a linha em reports so e gravada no fim. Este Map fecha essa janela: a entrada e criada
+// ANTES de qualquer await, entao a segunda requisicao ja encontra o lock.
+//
+// Por que em memoria e nao no banco: status_ia='processando' e o estado VISIVEL (badge
+// "Avaliando…"), mas nao existe coluna que registre QUANDO ele mudou — sem timestamp nao
+// da para expirar um 'processando' preso. O Map guarda esse momento. Efeito colateral
+// desejado: se o processo reiniciar no meio, o Map se esvazia e o 'processando' orfao
+// volta a ser reprocessavel, em vez de travar o candidato para sempre.
+//
+// Premissa: instancia unica (o projeto roda um container no Railway). Com mais de uma
+// instancia este lock deixa de valer e precisaria migrar para o banco.
+const JANELA_REPROCESSAMENTO_MS = 5 * 60 * 1000;
+const reprocessamentosEmCurso = new Map(); // interviewId -> inicio (ms)
+
+function reprocessamentoEmCurso(interviewId) {
+  const inicio = reprocessamentosEmCurso.get(interviewId);
+  if (inicio == null) return false;
+  if (Date.now() - inicio > JANELA_REPROCESSAMENTO_MS) {
+    reprocessamentosEmCurso.delete(interviewId); // execucao morreu sem limpar; libera
+    return false;
+  }
+  return true;
+}
+
+// Estado dos DOIS botoes de relatorio, derivado de uma fonte so para que nunca divirjam.
+// "Ver relatorio" exige um report EXIBIVEL (existe e nao esta em 'erro'). "Reprocessar
+// avaliacao" e exatamente o complemento disso dentro do universo "entrevista concluida":
+// nenhum report, ou o ultimo em 'erro'.
+//
+// status_ia NAO entra na condicao de proposito: quem manda e o lock. Um 'processando'
+// COM execucao viva bloqueia (o lock esta la); um 'processando' SEM execucao viva e
+// orfao e deve liberar — checar a coluna sozinha travaria o candidato para sempre.
+//
+// v1 trata os dois sentidos de status='erro' igual: falha de avaliacao (sem resumo, com
+// erro_mensagem) e falha so no envio do e-mail (avaliacao salva, erro_mensagem NULL).
+// No segundo caso reprocessar refaz uma avaliacao que ja existia — desperdicio de alguns
+// decimos de centavo, aceito para nao criar dois fluxos agora.
+function estadoBotoesRelatorio(cand, interviewId, report) {
+  const concluida = cand.status === 'concluido' && interviewId != null;
+  const podeVerRelatorio = concluida && report != null && report.status !== 'erro';
+  const emCurso = interviewId != null && reprocessamentoEmCurso(interviewId);
+  return { podeVerRelatorio, podeReprocessar: concluida && !podeVerRelatorio && !emCurso };
+}
+
 // Chip do Status Recrutador (decisao humana). null/desconhecido -> "Sem decisao" (cinza).
 // Rotulos dizem "pelo recrutador" para diferenciar do veredito da IA (mesmas cores).
 function badgeStatusRecrutador(statusRecrutador) {
@@ -1071,14 +1118,20 @@ router.get('/candidato/:id', (req, res) => {
   // EXIBIVEL. Report com status='erro' e so o rastro da falha (erro_mensagem/erro_em),
   // sem resumo/pontuacoes — abrir a pagina mostraria um relatorio vazio, entao o botao
   // fica desabilitado e a mensagem do erro aparece junto ao badge de Status IA, abaixo.
-  const podeVerRelatorio =
-    cand.status === 'concluido' &&
-    interviewId != null &&
-    report != null &&
-    report.status !== 'erro';
+  // O botao de reprocessar e o complemento exato deste (ver estadoBotoesRelatorio).
+  const { podeVerRelatorio, podeReprocessar } = estadoBotoesRelatorio(cand, interviewId, report);
   const botaoRelatorio = podeVerRelatorio
     ? `<a class="btn" href="/admin/relatorio/${interviewId}">Ver relatório</a>`
     : `<span class="btn btn--off">Ver relatório</span>`;
+
+  // Reprocessar avaliacao: so aparece quando ha o que reprocessar. POST (nunca GET, igual
+  // a arquivar/restaurar) + confirm, porque a acao gasta uma chamada paga e dispara e-mail.
+  const botaoReprocessar = podeReprocessar
+    ? `<form method="POST" action="/admin/candidato/${cand.id}/reprocessar" style="margin:0;display:inline;"
+             onsubmit="return confirm('Gerar uma nova avaliação desta entrevista com a IA? Isso consome uma chamada paga e envia um novo e-mail ao recrutador.')">
+         <button type="submit" class="btn btn--ghost">Reprocessar avaliação</button>
+       </form>`
+    : '';
 
   const temCurriculo = Boolean(cand.curriculo_path);
   const botaoCurriculo = temCurriculo
@@ -1118,13 +1171,18 @@ router.get('/candidato/:id', (req, res) => {
         ? '<div class="aviso-ok">Lead restaurado.</div>'
         : req.query.ok === 'status_recrutador'
           ? '<div class="aviso-ok">Decisão do recrutador registrada.</div>'
-          : '';
+          : req.query.ok === 'reprocessando'
+            ? '<div class="aviso-ok">Reavaliação iniciada. Ela leva alguns segundos; atualize a página para ver o resultado.</div>'
+            : '';
 
-  // Erro pos-acao: telefone invalido ao tentar abrir o WhatsApp (redirect da rota).
+  // Erro pos-acao: telefone invalido ao tentar abrir o WhatsApp (redirect da rota), ou
+  // reprocessamento recusado (pagina velha: ja ha relatorio, ou outra reavaliacao em curso).
   const flashErro =
     req.query.erro === 'whatsapp_telefone'
       ? '<div class="aviso-alerta">Não foi possível abrir o WhatsApp: o telefone do candidato é inválido ou está incompleto. Edite o contato e tente novamente.</div>'
-      : '';
+      : req.query.erro === 'reprocessar_estado'
+        ? '<div class="aviso-alerta">Não foi possível reprocessar: já existe relatório para esta entrevista ou uma reavaliação está em andamento.</div>'
+        : '';
 
   const avisoArquivado = arquivado
     ? `<div class="aviso-alerta">Lead arquivado em ${escapeHtml(formatarDataHora(cand.deleted_at))}. Ele não aparece na listagem, mas o histórico foi preservado.</div>`
@@ -1208,6 +1266,7 @@ router.get('/candidato/:id', (req, res) => {
         ${botaoWhats}
         ${botaoCurriculo}
         ${botaoRelatorio}
+        ${botaoReprocessar}
         ${botaoVideo}
         ${botaoArquivarRestaurar}
       </div>
@@ -1382,6 +1441,74 @@ router.post('/candidato/:id/arquivar', (req, res) => {
   }
   db.arquivarAplicacao(id);
   return res.redirect('/admin?arquivado=1');
+});
+
+// ── POST /admin/candidato/:id/reprocessar ── nova tentativa de avaliacao ──
+// Promove para o painel o que antes exigia `node -e` via shell: reinvoca gerarRelatorio
+// sobre uma entrevista JA concluida (a transcricao continua salva; nada e re-entrevistado).
+// Sem auth propria — herda o adminAuth do router.use, igual as demais rotas daqui.
+//
+// Fire-and-forget, espelhando finalizarEntrevista: a avaliacao leva ~18s (ate 120s no
+// timeout) e prender a resposta HTTP tanto tempo daria uma aba travada sem retorno. O
+// recrutador ve o badge "Avaliando…" (status_ia='processando', que ja existia) e atualiza
+// a pagina. Nenhum estado ou tela nova.
+router.post('/candidato/:id/reprocessar', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  const ehJson = String(req.get('x-requested-with') || '').toLowerCase() === 'fetch';
+
+  if (!cand) {
+    if (ehJson) {
+      return res.status(404).json({ ok: false, erro: 'Candidato não encontrado.' });
+    }
+    return avisoAdmin(res, 404, {
+      titulo: 'Candidato não encontrado',
+      descricao: 'Não há candidatura com este identificador.',
+    });
+  }
+
+  // Estado RECARREGADO do banco. Nada vindo do formulario e considerado: a pagina pode
+  // estar velha (o relatorio ficou pronto entre o render e o clique) ou forjada.
+  const ultimaInterview = db.obterUltimaInterviewPorAplicacao(cand.id);
+  const interviewId = ultimaInterview ? ultimaInterview.id : null;
+  const report = interviewId ? db.obterReportPorInterview(interviewId) : null;
+  const { podeReprocessar } = estadoBotoesRelatorio(cand, interviewId, report);
+
+  if (!podeReprocessar) {
+    if (ehJson) {
+      return res.status(409).json({
+        ok: false,
+        erro: 'Não há o que reprocessar: já existe relatório ou uma reavaliação está em andamento.',
+      });
+    }
+    return res.redirect(`/admin/candidato/${id}?erro=reprocessar_estado`);
+  }
+
+  // Lock ANTES de qualquer trabalho assincrono: a partir daqui, uma segunda requisicao
+  // (duplo clique, dois recrutadores) reprova em estadoBotoesRelatorio e cai no 409.
+  reprocessamentosEmCurso.set(interviewId, Date.now());
+  db.definirStatusIa(cand.id, 'processando');
+
+  // require tardio: mantem o modulo substituivel nos testes (que trocam gerarRelatorio por
+  // um fake) e evita carregar a cadeia do LLM no boot de quem so serve paginas.
+  const { gerarRelatorio } = require('../lib/relatorio');
+  gerarRelatorio(interviewId)
+    .catch((err) => {
+      console.error(
+        `[admin] falha ao reprocessar o relatorio da entrevista ${interviewId}: ${err.message}`,
+      );
+      // gerarRelatorio ja persiste a linha de erro em reports, mas o status_ia so sai de
+      // 'processando' aqui — sem isto o candidato ficaria preso no badge "Avaliando…".
+      db.definirStatusIa(cand.id, 'erro');
+    })
+    .finally(() => {
+      reprocessamentosEmCurso.delete(interviewId);
+    });
+
+  if (ehJson) {
+    return res.json({ ok: true, status: 'processando' });
+  }
+  return res.redirect(`/admin/candidato/${id}?ok=reprocessando`);
 });
 
 // ── POST /admin/candidato/:id/status-recrutador ── registra a decisao humana ──
