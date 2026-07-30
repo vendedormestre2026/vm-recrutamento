@@ -1,0 +1,44 @@
+# O que NAO sobe no `railway up`. Sintaxe igual a do .gitignore.
+#
+# Este arquivo repete as exclusoes criticas do .gitignore de proposito: nao ha
+# garantia documentada de que o CLI aplique os DOIS arquivos (em vez de o
+# .railwayignore substituir o .gitignore). Se ele substituir, um arquivo so com
+# a linha do PDF faria .env e node_modules subirem junto — segredo no contexto
+# de build e uma imagem gigante. Duplicar e barato; o modo de falha nao e.
+
+# Segredos — NUNCA no contexto de build (producao le tudo das env vars do Railway).
+.env
+.env.local
+*service-account*.json
+*gserviceaccount*.json
+google-credentials*.json
+gcp-credentials*.json
+
+# Dependencias: o Dockerfile roda `npm install` no estagio de build. Subir o
+# node_modules local so engorda o upload — e traz binario nativo compilado para
+# macOS, incompativel com a imagem Debian.
+node_modules
+
+# Dados do volume persistente (banco, curriculos, audios). Vivem em /data no
+# servidor; a copia local nao tem nada a fazer na imagem.
+/data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+/uploads
+
+# Historico do git: o deploy e por upload de diretorio, nao por clone.
+.git
+
+# Documentos de trabalho (atas, anotacoes de reuniao) que ficam soltos na raiz do
+# repo. Nao ha nenhum PDF rastreado no projeto — os curriculos dos candidatos
+# vivem em /data, ja excluido acima —, entao a regra ampla e segura.
+*.pdf
+
+# Ruido local.
+*.mp3
+*.log
+npm-debug.log*
+.DS_Store
