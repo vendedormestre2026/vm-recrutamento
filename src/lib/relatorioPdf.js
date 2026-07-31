@@ -68,35 +68,39 @@ function slugNome(texto) {
 
 // ── Blocos de desenho ──
 
-// Rodape com numeracao, redesenhado a cada pagina nova. Registrado ANTES do conteudo para
-// funcionar em streaming (nao da para voltar e numerar depois, ja que quem fecha o
-// documento e o caller). Posicao absoluta + lineBreak:false para nao disparar paginacao;
-// a trava `desenhando` protege contra recursao caso o pdfkit gere um pageAdded aqui.
-function instalarRodape(doc) {
-  let pagina = 0;
-  let desenhando = false;
-
-  const desenhar = () => {
-    if (desenhando) return;
-    desenhando = true;
-    pagina += 1;
-    const yAnterior = doc.y;
+// Rodape com numeracao, escrito DEPOIS que todo o conteudo ja existe.
+//
+// A versao anterior desenhava dentro de um listener de 'pageAdded' e produzia paginas em
+// branco alternadas, com o rodape aparecendo no topo da pagina seguinte, colado a frase
+// que tinha sido cortada. A causa: passar `width` faz o texto passar pelo LineWrapper do
+// pdfkit, que testa `y + altura da linha > page.maxY()` e chama addPage() sozinho — e o y
+// do rodape fica, por definicao, ABAIXO de maxY (ele mora na faixa da margem inferior).
+// Ou seja, o proprio rodape paginava o documento. Salvar/restaurar doc.y nao resolveria:
+// o problema nao era o cursor, era a paginacao disparada por ele.
+//
+// Aqui o documento e criado com bufferPages, entao as paginas ficam retidas ate o
+// doc.end() do caller. Como TODO o conteudo e escrito de forma sincrona, na hora em que
+// esta funcao roda todas as paginas ja existem e da para percorre-las com switchToPage —
+// o que permite ate numerar "X de Y". Zerar margins.bottom durante a escrita impede o
+// LineWrapper de considerar o rodape "fora da pagina" e criar outra.
+function numerarPaginas(doc) {
+  const faixa = doc.bufferedPageRange(); // { start, count }
+  for (let i = 0; i < faixa.count; i++) {
+    doc.switchToPage(faixa.start + i);
+    const margemInferior = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
     doc
       .font(FONTE)
       .fontSize(8)
       .fillColor(CINZA)
       .text(
-        `Vendedor Mestre · Relatório de entrevista · página ${pagina}`,
+        `Vendedor Mestre · Relatório de entrevista · página ${i + 1} de ${faixa.count}`,
         doc.page.margins.left,
-        doc.page.height - doc.page.margins.bottom + 14,
+        doc.page.height - margemInferior + 14,
         { width: larguraUtil(doc), align: 'center', lineBreak: false },
       );
-    doc.y = yAnterior;
-    desenhando = false;
-  };
-
-  doc.on('pageAdded', desenhar);
-  desenhar(); // a primeira pagina ja existe quando o documento e criado
+    doc.page.margins.bottom = margemInferior;
+  }
 }
 
 // Titulo de secao: rotulo em caixa alta + fio laranja. O pdfkit quebra a pagina sozinho
@@ -160,14 +164,15 @@ function gerarRelatorioPdf({ interview, report, candidato, vaga, turns, roteiro,
   const doc = new PDFDocument({
     size: 'A4',
     margins: { top: MARGEM, bottom: MARGEM, left: MARGEM, right: MARGEM },
+    // Retem as paginas ate o end() do caller, para numerarPaginas() poder percorre-las
+    // com switchToPage depois que o conteudo todo estiver escrito.
+    bufferPages: true,
     info: {
       Title: `Relatório de entrevista — ${nomeCand}`,
       Author: 'Vendedor Mestre',
       Subject: tituloVaga,
     },
   });
-
-  instalarRodape(doc);
 
   // ── Cabecalho ──
   doc.font(FONTE).fontSize(9).fillColor(LARANJA).text('VENDEDOR MESTRE');
@@ -327,6 +332,10 @@ function gerarRelatorioPdf({ interview, report, candidato, vaga, turns, roteiro,
     'Documento gerado automaticamente pelo sistema de recrutamento da Vendedor Mestre.',
     { cor: CINZA, tamanho: 8 },
   );
+
+  // Numeracao por ultimo: todo o conteudo ja foi escrito, entao a contagem de paginas
+  // esta fechada. O doc.end() do caller e quem faz o flush das paginas retidas.
+  numerarPaginas(doc);
 
   // NAO chamamos doc.end(): quem consome faz o pipe e fecha.
   return doc;
