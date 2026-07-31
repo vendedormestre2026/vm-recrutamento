@@ -33,6 +33,7 @@ const {
   textoGap,
   badgeVereditoHtml,
 } = require('../lib/relatorio');
+const { gerarRelatorioPdf, slugNome } = require('../lib/relatorioPdf');
 const { escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -1718,25 +1719,16 @@ router.post('/colunas-candidatos', (req, res) => {
   return res.redirect(qs ? `/admin?${qs}` : '/admin');
 });
 
-// ── GET /admin/relatorio/:interviewId ── relatorio individual ──
-router.get('/relatorio/:interviewId', (req, res) => {
-  const interviewId = Number(req.params.interviewId);
+// ── Carga dos dados do relatorio ──
+// Fonte UNICA das duas rotas de relatorio (pagina HTML e download em PDF): as mesmas
+// queries, na mesma ordem, com o mesmo criterio de indisponibilidade. Extraido para que
+// o PDF nunca mostre um conjunto de dados diferente do que a tela mostra.
+// Devolve null quando nao ha entrevista ou nao ha report — cada rota decide como responder.
+function carregarRelatorio(interviewIdBruto) {
+  const interviewId = Number(interviewIdBruto);
   const interview = Number.isFinite(interviewId) ? db.obterInterview(interviewId) : null;
   const report = interview ? db.obterReportPorInterview(interviewId) : null;
-
-  if (!interview || !report) {
-    return res.status(404).send(
-      paginaAdmin({
-        titulo: 'Relatório não disponível',
-        conteudo: `
-          <section class="rel-sec">
-            <h1>Relatório não disponível</h1>
-            <p>Não há relatório gerado para esta entrevista.</p>
-            <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
-          </section>`,
-      }),
-    );
-  }
+  if (!interview || !report) return null;
 
   const candidato = db.obterAplicacao(interview.application_id);
   const vaga = candidato ? db.obterVaga(candidato.job_id) : null;
@@ -1746,6 +1738,31 @@ router.get('/relatorio/:interviewId', (req, res) => {
 
   // Score ponderado calculado on-the-fly (sem coluna no banco).
   const geral = calcularPontuacaoGeral(report.pontuacoes, roteiro);
+
+  return { interviewId, interview, report, candidato, vaga, perfil, turns, roteiro, geral };
+}
+
+// Pagina 404 compartilhada pelas duas rotas de relatorio.
+function respostaRelatorioIndisponivel(res) {
+  return res.status(404).send(
+    paginaAdmin({
+      titulo: 'Relatório não disponível',
+      conteudo: `
+          <section class="rel-sec">
+            <h1>Relatório não disponível</h1>
+            <p>Não há relatório gerado para esta entrevista.</p>
+            <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
+          </section>`,
+    }),
+  );
+}
+
+// ── GET /admin/relatorio/:interviewId ── relatorio individual ──
+router.get('/relatorio/:interviewId', (req, res) => {
+  const dados = carregarRelatorio(req.params.interviewId);
+  if (!dados) return respostaRelatorioIndisponivel(res);
+
+  const { interviewId, interview, report, candidato, vaga, perfil, turns, geral } = dados;
 
   // Pontuacoes (array de { competencia, nota, justificativa, coberta }) — coberta vem
   // de dentro do JSON, nao de coluna.
@@ -1812,7 +1829,10 @@ router.get('/relatorio/:interviewId', (req, res) => {
     .join('');
 
   const conteudo = `
-    <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
+    <div class="acoes-linha" style="flex-wrap:wrap;gap:.6rem;margin-bottom:1rem;">
+      <a class="btn btn--ghost" href="/admin">← Voltar ao painel</a>
+      <a class="btn" href="/admin/relatorio/${interviewId}/pdf">Baixar PDF</a>
+    </div>
 
     <section class="rel-sec">
       <h1 style="margin:0 0 .8rem;">${escapeHtml(nomeCand)}</h1>
@@ -1880,6 +1900,26 @@ router.get('/relatorio/:interviewId', (req, res) => {
     <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>`;
 
   res.send(paginaAdmin({ titulo: `Relatório — ${nomeCand}`, conteudo }));
+});
+
+// ── GET /admin/relatorio/:interviewId/pdf ── mesmo relatorio, para download ──
+// Reusa carregarRelatorio (mesmas queries da pagina HTML) e o mesmo 404. GET porque
+// gerar o PDF e idempotente e sem efeito colateral — diferente das acoes de escrita do
+// painel, que sao POST de proposito. Auth herdada do router.use(adminAuth).
+router.get('/relatorio/:interviewId/pdf', (req, res) => {
+  const dados = carregarRelatorio(req.params.interviewId);
+  if (!dados) return respostaRelatorioIndisponivel(res);
+
+  const { interviewId, interview, report, candidato, vaga, turns, roteiro, geral } = dados;
+  const arquivo = `relatorio-${slugNome(nomeCompleto(candidato || {}))}-${interviewId}.pdf`;
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${arquivo}"`);
+
+  // O modulo monta o documento e devolve sem fechar; o pipe/end e responsabilidade daqui.
+  const doc = gerarRelatorioPdf({ interview, report, candidato, vaga, turns, roteiro, geral });
+  doc.pipe(res);
+  doc.end();
 });
 
 // ── GET /admin/api/funil ── endpoint JSON do funil de conversao (Func. 3, sub-commit 2) ──
