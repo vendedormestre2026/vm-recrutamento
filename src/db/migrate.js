@@ -191,6 +191,16 @@ function migrar() {
   // demais notificacoes ao candidato (enviado_retomada_em, followup_entrevista_*). Aditiva.
   adicionarColunaSeFaltar('applications', 'email_recusa_enviado_em', 'TEXT');
 
+  // Lembrete de INICIO de entrevista: momento (ISO/UTC) em que avisamos o candidato que
+  // se candidatou mas nunca abriu a entrevista; NULL = ainda nao lembrado. E o registro de
+  // idempotencia da varredura de lib/lembreteInicio — ela so seleciona quem tem esta
+  // coluna em NULL, entao ninguem recebe o lembrete duas vezes.
+  // Publico DISTINTO do followup_entrevista_*: aquelas colunas sao de quem COMECOU a
+  // entrevista e parou no meio; esta e de quem nunca chegou a comecar (status 'aplicado',
+  // sem nenhuma linha em interviews). Coluna separada de proposito — sao dois e-mails
+  // diferentes, para dois momentos diferentes, e um nao pode suprimir o outro. Aditiva.
+  adicionarColunaSeFaltar('applications', 'lembrete_inicio_enviado_em', 'TEXT');
+
   // Origem do lead no TOPO do funil (first-touch): mesma UTM do cookie vm_utm, agora
   // tambem gravada no acesso a Pagina da Vaga (antes so a application guardava). Permite
   // atribuir Acessos a uma origem no dashboard. NULL em bancos antigos e quando nao ha
