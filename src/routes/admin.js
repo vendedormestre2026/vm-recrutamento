@@ -20,6 +20,7 @@ const { extrairYoutubeId } = require('../lib/youtube');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const followup = require('../lib/followupEntrevista');
 const emailRecusa = require('../lib/emailRecusa');
+const lembreteInicio = require('../lib/lembreteInicio');
 const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
@@ -3605,6 +3606,12 @@ const CHAVE_NOTIFICAR_NOVA_CANDIDATURA = 'notificar_recrutador_nova_candidatura'
 // para o recrutador conseguir desligar na hora, sem redeploy, se algum e-mail sair errado.
 const CHAVE_EMAIL_RECUSA_ATIVO = emailRecusa.CHAVE_ATIVO;
 
+// Liga/desliga o LEMBRETE de inicio de entrevista (quem se candidatou e nunca abriu a
+// entrevista). Mesma logica de propriedade das outras: a chave mora em lib/lembreteInicio,
+// dono do subsistema, e painel e varredura leem a MESMA constante. Kill switch no painel,
+// nao em env, para desligar na hora sem redeploy.
+const CHAVE_LEMBRETE_INICIO_ATIVO = lembreteInicio.CHAVE_ATIVO;
+
 // ── GET /admin/config ── tela de configuracoes gerais ──
 router.get('/config', (req, res) => {
   const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
@@ -3619,6 +3626,9 @@ router.get('/config', (req, res) => {
 
   // E-mail automatico de recusa ao candidato (default desligado).
   const emailRecusaAtivo = db.obterConfigBool(CHAVE_EMAIL_RECUSA_ATIVO, false);
+
+  // Lembrete de inicio de entrevista (default desligado).
+  const lembreteInicioAtivo = db.obterConfigBool(CHAVE_LEMBRETE_INICIO_ATIVO, false);
 
   // Horas de espera do 1o follow-up de entrevista nao concluida. Le pelo MESMO helper do
   // agendador (lib/followupEntrevista.horasEspera), entao painel e varredura nunca
@@ -3701,6 +3711,19 @@ router.get('/config', (req, res) => {
           <b>relatório da entrevista</b> é outro e-mail e não é afetado por este ajuste.
         </p>
         <label class="campo-check">
+          <input type="checkbox" name="lembrete_inicio_ativo" value="1"${lembreteInicioAtivo ? ' checked' : ''}>
+          <span style="color:var(--preto);text-transform:none;">
+            Enviar <b>lembrete de início</b> de entrevista
+          </span>
+        </label>
+        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Lembra, por e-mail, quem se candidatou e <b>nunca abriu a entrevista</b>, com o link
+          para fazê-la. Sai <b>${lembreteInicio.HORAS_ESPERA_LEMBRETE} h depois</b> da
+          candidatura, <b>uma única vez</b> por candidato. É outro público do follow-up
+          abaixo: aqui é quem <b>nunca começou</b>; lá, quem começou e parou no meio.
+          <b>Mantenha desligado até confirmar o funcionamento.</b>
+        </p>
+        <label class="campo-check">
           <input type="checkbox" name="followup_ativo" value="1"${followupAtivo ? ' checked' : ''}>
           <span style="color:var(--preto);text-transform:none;">
             Enviar <b>follow-up</b> de entrevista não concluída
@@ -3780,6 +3803,7 @@ router.post('/config/notificacoes', (req, res) => {
   const b = req.body || {};
   const marcado = (campo) => b[campo] === '1' || b[campo] === 'on';
   db.definirConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, marcado('notificar_nova_candidatura'));
+  db.definirConfigBool(CHAVE_LEMBRETE_INICIO_ATIVO, marcado('lembrete_inicio_ativo'));
   db.definirConfigBool(followup.CHAVE_ATIVO, marcado('followup_ativo'));
   db.definirConfigBool(CHAVE_EMAIL_RECUSA_ATIVO, marcado('email_recusa_ativo'));
   res.redirect('/admin/config?salvo=1');
