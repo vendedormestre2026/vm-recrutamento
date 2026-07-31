@@ -16,6 +16,7 @@
     "seed": "node src/db/seed.js",
     "smoke:providers": "node src/scripts/smoke.js",
     "recusa:dry-run": "node src/scripts/recusa-dry-run.js",
+    "lembrete:dry-run": "node src/scripts/lembrete-dry-run.js",
     "test": "node --test"
   },
   "dependencies": {
