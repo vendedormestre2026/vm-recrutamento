@@ -682,6 +682,58 @@ function listarPendentesEmailRecusa({ horasCarencia, limite } = {}) {
     .all(`-${horas} hours`, max);
 }
 
+// ── Lembrete de INICIO de entrevista (lib/lembreteInicio) ──
+// Candidatos que se candidataram e NUNCA abriram a entrevista.
+//
+// Publico oposto ao do follow-up: la o filtro e status='em_entrevista' + JOIN interviews
+// (quem comecou e parou no meio); aqui e status='aplicado' + NOT EXISTS interviews (quem
+// nunca chegou a comecar). Sao 174 de 227 candidaturas em vagas com entrevista ativa —
+// o grosso do vazamento do funil, e um publico que hoje nao recebe nada.
+//
+// Ancora de tempo: a.criado_em. E o unico timestamp que existe para quem nunca iniciou —
+// nao ha entrevista, logo nao ha "ultima atividade" como no follow-up.
+//
+// Mesmo tratamento de horas do follow-up: o modificador do SQLite ('-3 hours') e montado
+// aqui e passado como PARAMETRO, sem aritmetica de fuso no JS. LIMIT tambem parametrizado,
+// como em listarPendentesEmailRecusa — o teto vive na query, nao no laco de quem chama.
+function listarPendentesLembreteInicio({ horasEspera, limite } = {}) {
+  const horas = Number(horasEspera);
+  if (!Number.isFinite(horas) || horas <= 0) return [];
+  const modificador = `-${horas} hours`;
+  const max = Number.isFinite(Number(limite)) && Number(limite) > 0 ? Math.floor(Number(limite)) : 20;
+
+  return getDb()
+    .prepare(
+      `SELECT
+         a.id, a.nome, a.sobrenome, a.email, a.token, a.job_id, a.criado_em
+       FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       WHERE a.status = 'aplicado'
+         AND NOT EXISTS (SELECT 1 FROM interviews i WHERE i.application_id = a.id)
+         AND a.deleted_at IS NULL
+         AND a.email IS NOT NULL AND TRIM(a.email) <> ''
+         AND (j.entrevista_ativa IS NULL OR j.entrevista_ativa <> 0)
+         AND a.lembrete_inicio_enviado_em IS NULL
+         AND datetime(a.criado_em) <= datetime('now', ?)
+       ORDER BY a.id
+       LIMIT ?`,
+    )
+    .all(modificador, max);
+}
+
+// Marca o envio do lembrete de inicio. Condicional (`IS NULL`), igual aos outros dois:
+// se duas varreduras se cruzarem, a segunda grava 0 linhas e o candidato nao recebe um
+// segundo e-mail. Retorna o nº de linhas afetadas (0 = id inexistente ou ja marcado).
+function marcarLembreteInicioEnviado(id) {
+  const info = getDb()
+    .prepare(
+      `UPDATE applications SET lembrete_inicio_enviado_em = datetime('now')
+        WHERE id = ? AND lembrete_inicio_enviado_em IS NULL`,
+    )
+    .run(id);
+  return info.changes;
+}
+
 // Marca o envio da recusa. Condicional (`IS NULL`), igual ao follow-up: se duas varreduras
 // se cruzarem, a segunda grava 0 linhas e o candidato nao recebe um segundo e-mail.
 // Retorna o nº de linhas afetadas (0 = id inexistente ou ja marcado).
@@ -1497,6 +1549,8 @@ module.exports = {
   marcarFollowupEntrevistaEnviado,
   listarPendentesEmailRecusa,
   marcarEmailRecusaEnviado,
+  listarPendentesLembreteInicio,
+  marcarLembreteInicioEnviado,
   // entrevistas
   criarInterview,
   obterInterview,

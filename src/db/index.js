@@ -66,6 +66,9 @@ module.exports = {
   marcarFollowupEntrevistaEnviado: driver.marcarFollowupEntrevistaEnviado,
   listarPendentesEmailRecusa: driver.listarPendentesEmailRecusa,
   marcarEmailRecusaEnviado: driver.marcarEmailRecusaEnviado,
+  // lembrete de inicio de entrevista (lib/lembreteInicio)
+  listarPendentesLembreteInicio: driver.listarPendentesLembreteInicio,
+  marcarLembreteInicioEnviado: driver.marcarLembreteInicioEnviado,
 
   // entrevistas
   criarInterview: driver.criarInterview,
