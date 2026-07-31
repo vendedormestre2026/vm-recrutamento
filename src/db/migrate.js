@@ -181,6 +181,16 @@ function migrar() {
   adicionarColunaSeFaltar('applications', 'followup_entrevista_1_enviado_em', 'TEXT');
   adicionarColunaSeFaltar('applications', 'followup_entrevista_2_enviado_em', 'TEXT');
 
+  // E-mail automatico de recusa: momento (ISO/UTC) em que o candidato foi avisado de que
+  // nao seguimos com a candidatura; NULL = ainda nao avisado. E o registro de idempotencia
+  // da varredura de lib/emailRecusa — ela so seleciona quem tem esta coluna em NULL, entao
+  // ninguem recebe a recusa duas vezes.
+  // Mora em applications (e nao em reports) de proposito: a garantia que interessa e "este
+  // CANDIDATO nao recebe duas recusas". Um reprocessamento de relatorio cria uma linha nova
+  // em reports; com o controle aqui, isso nao dispara um segundo e-mail. Segue o padrao das
+  // demais notificacoes ao candidato (enviado_retomada_em, followup_entrevista_*). Aditiva.
+  adicionarColunaSeFaltar('applications', 'email_recusa_enviado_em', 'TEXT');
+
   // Origem do lead no TOPO do funil (first-touch): mesma UTM do cookie vm_utm, agora
   // tambem gravada no acesso a Pagina da Vaga (antes so a application guardava). Permite
   // atribuir Acessos a uma origem no dashboard. NULL em bancos antigos e quando nao ha

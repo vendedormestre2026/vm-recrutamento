@@ -19,11 +19,18 @@ const admin = require('./routes/admin');
 const { router: bancoCurriculos } = require('./routes/banco_curriculos');
 const apiBancoCurriculos = require('./routes/api_banco_curriculos');
 const followupEntrevista = require('./lib/followupEntrevista');
+const emailRecusa = require('./lib/emailRecusa');
 
 // Follow-up de entrevistas nao concluidas: de quanto em quanto tempo a varredura roda.
 // Nao e o atraso do e-mail (esse e configuravel no painel, em horas) — e so a resolucao
 // da checagem. 15 min e granularidade suficiente para um limiar medido em horas.
 const INTERVALO_FOLLOWUP_MS = 15 * 60 * 1000;
+
+// E-mail de recusa: mesma resolucao de 15 min, pela mesma razao — a carencia real e
+// medida em horas (lib/emailRecusa.HORAS_CARENCIA). Constante SEPARADA da do follow-up,
+// mesmo com o valor igual hoje: os dois subsistemas sao independentes e mudar a cadencia
+// de um nao pode mexer no outro por acidente.
+const INTERVALO_RECUSA_MS = 15 * 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -96,6 +103,7 @@ function iniciar() {
   servidor.requestTimeout = 0; // sem limite de duracao total da requisicao (upload pode ser longo)
 
   agendarFollowupEntrevista();
+  agendarEmailRecusa();
 }
 
 // Agendador do follow-up de entrevistas nao concluidas.
@@ -119,6 +127,28 @@ function agendarFollowupEntrevista() {
 
   console.log(
     `[followup] varredura agendada a cada ${INTERVALO_FOLLOWUP_MS / 60000} min (1a passada no boot).`,
+  );
+}
+
+// Agendador do e-mail automatico de recusa. Mesmo desenho do follow-up (timer em memoria,
+// consulta ao banco a cada ciclo, trava em lib/emailRecusa.varrerSeOcioso), mas com
+// setInterval PROPRIO: os dois subsistemas sao independentes — um ciclo lento da recusa
+// nao pode atrasar o follow-up, e desligar um no painel nao afeta o outro.
+//
+// Enquanto o interruptor do painel estiver desligado (default), cada ciclo so loga
+// "[recusa] desativado" e nao toca no banco de candidatos.
+function agendarEmailRecusa() {
+  // Primeira passada no boot, igual ao follow-up: depois de um deploy, quem ja venceu a
+  // carencia nao espera mais 15 min. `void` porque e fire-and-forget — varrerSeOcioso
+  // nunca rejeita.
+  void emailRecusa.varrerSeOcioso();
+
+  setInterval(() => {
+    void emailRecusa.varrerSeOcioso();
+  }, INTERVALO_RECUSA_MS);
+
+  console.log(
+    `[recusa] varredura agendada a cada ${INTERVALO_RECUSA_MS / 60000} min (1a passada no boot).`,
   );
 }
 

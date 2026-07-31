@@ -64,6 +64,8 @@ module.exports = {
   // follow-up automatico de entrevista nao concluida (lib/followupEntrevista)
   listarPendentesFollowupEntrevista: driver.listarPendentesFollowupEntrevista,
   marcarFollowupEntrevistaEnviado: driver.marcarFollowupEntrevistaEnviado,
+  listarPendentesEmailRecusa: driver.listarPendentesEmailRecusa,
+  marcarEmailRecusaEnviado: driver.marcarEmailRecusaEnviado,
 
   // entrevistas
   criarInterview: driver.criarInterview,

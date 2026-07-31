@@ -638,6 +638,63 @@ function marcarFollowupEntrevistaEnviado(id, etapa) {
   return info.changes;
 }
 
+// ── E-mail automatico de recusa (lib/emailRecusa) ──
+// Candidatos elegiveis a receber o aviso de que nao seguimos com a candidatura.
+//
+// Ancora de tempo = reports.enviado_em (a tabela nao tem coluna de criacao). E tambem a
+// ancora SEMANTICAMENTE certa: a carencia existe para o recrutador poder intervir, e o
+// relogio dele so comeca quando ele recebe o e-mail do relatorio. Consequencia desejada:
+// se o e-mail ao recrutador falhou (enviado_em NULL), ninguem e avisado — ele nunca teve
+// a chance de revisar.
+//
+// Exige recomendacao='descartar' NO REPORT **e** status_ia='descartar' NA APPLICATION.
+// As duas sao escritas do mesmo valor em relatorio.js, entao concordam sempre; exigir as
+// duas faz o filtro se autocorrigir se um reprocessamento mudar o veredito, e faz o caso
+// inconsistente (existe hoje 1 report 'descartar' com status_ia NULL) NAO receber e-mail.
+// Para uma acao irreversivel que sai para fora, discordancia = nao envia.
+//
+// GROUP BY a.id: um e-mail por CANDIDATO, mesmo que existam varios reports para ele.
+function listarPendentesEmailRecusa({ horasCarencia, limite } = {}) {
+  const horas = Number(horasCarencia);
+  if (!Number.isFinite(horas) || horas < 0) return [];
+  const max = Number.isFinite(Number(limite)) && Number(limite) > 0 ? Math.floor(Number(limite)) : 20;
+
+  return getDb()
+    .prepare(
+      `SELECT
+         a.id, a.nome, a.sobrenome, a.email, a.job_id,
+         MAX(r.enviado_em) AS relatorio_enviado_em
+       FROM reports r
+       JOIN interviews i ON i.id = r.interview_id
+       JOIN applications a ON a.id = i.application_id
+       WHERE r.recomendacao = 'descartar'
+         AND a.status_ia = 'descartar'
+         AND r.enviado_em IS NOT NULL
+         AND datetime(r.enviado_em) <= datetime('now', ?)
+         AND a.email_recusa_enviado_em IS NULL
+         AND (a.status_recrutador IS NULL OR a.status_recrutador = 'reprovado')
+         AND a.email IS NOT NULL AND TRIM(a.email) <> ''
+         AND a.deleted_at IS NULL
+       GROUP BY a.id
+       ORDER BY a.id
+       LIMIT ?`,
+    )
+    .all(`-${horas} hours`, max);
+}
+
+// Marca o envio da recusa. Condicional (`IS NULL`), igual ao follow-up: se duas varreduras
+// se cruzarem, a segunda grava 0 linhas e o candidato nao recebe um segundo e-mail.
+// Retorna o nº de linhas afetadas (0 = id inexistente ou ja marcado).
+function marcarEmailRecusaEnviado(id) {
+  const info = getDb()
+    .prepare(
+      `UPDATE applications SET email_recusa_enviado_em = datetime('now')
+        WHERE id = ? AND email_recusa_enviado_em IS NULL`,
+    )
+    .run(id);
+  return info.changes;
+}
+
 // Entrevistas
 function criarInterview(entrevista) {
   const info = getDb().prepare(`
@@ -1438,6 +1495,8 @@ module.exports = {
   marcarRetomadaEnviada,
   listarPendentesFollowupEntrevista,
   marcarFollowupEntrevistaEnviado,
+  listarPendentesEmailRecusa,
+  marcarEmailRecusaEnviado,
   // entrevistas
   criarInterview,
   obterInterview,

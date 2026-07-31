@@ -19,6 +19,7 @@ const { importarVagaDeBriefing } = require('../lib/importar_vaga');
 const { extrairYoutubeId } = require('../lib/youtube');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const followup = require('../lib/followupEntrevista');
+const emailRecusa = require('../lib/emailRecusa');
 const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
@@ -3598,6 +3599,12 @@ const CHAVE_ENTREVISTA_AUTO = 'entrevista_automatica_geral';
 // desligada e so volta a sair se o recrutador marcar o checkbox abaixo.
 const CHAVE_NOTIFICAR_NOVA_CANDIDATURA = 'notificar_recrutador_nova_candidatura';
 
+// Liga/desliga o e-mail automatico de RECUSA ao candidato. A chave e o default moram em
+// lib/emailRecusa (dono do subsistema), igual ao follow-up — painel e varredura leem a
+// MESMA constante e nao tem como divergir. E o kill switch: vive no painel (nao em env)
+// para o recrutador conseguir desligar na hora, sem redeploy, se algum e-mail sair errado.
+const CHAVE_EMAIL_RECUSA_ATIVO = emailRecusa.CHAVE_ATIVO;
+
 // ── GET /admin/config ── tela de configuracoes gerais ──
 router.get('/config', (req, res) => {
   const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
@@ -3609,6 +3616,9 @@ router.get('/config', (req, res) => {
 
   // Notificacao de nova candidatura (default desligada).
   const notificarNovaCandidatura = db.obterConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, false);
+
+  // E-mail automatico de recusa ao candidato (default desligado).
+  const emailRecusaAtivo = db.obterConfigBool(CHAVE_EMAIL_RECUSA_ATIVO, false);
 
   // Horas de espera do 1o follow-up de entrevista nao concluida. Le pelo MESMO helper do
   // agendador (lib/followupEntrevista.horasEspera), entao painel e varredura nunca
@@ -3701,6 +3711,21 @@ router.get('/config', (req, res) => {
           <b>Mantenha desligado até confirmar o funcionamento.</b> Os prazos ficam na seção
           abaixo; com esta caixa desmarcada, nada é enviado, independentemente deles.
         </p>
+        <label class="campo-check">
+          <input type="checkbox" name="email_recusa_ativo" value="1"${emailRecusaAtivo ? ' checked' : ''}>
+          <span style="color:var(--preto);text-transform:none;">
+            Enviar <b>e-mail de recusa</b> a quem não avançou
+          </span>
+        </label>
+        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Avisa automaticamente, por e-mail, o candidato cujo relatório recomendou
+          <b>não avançar</b>. A mensagem é padrão e discreta: agradece a participação e diz
+          que seguiremos com outros perfis — <b>não menciona a avaliação, nota ou o uso de
+          IA</b>. O envio só acontece <b>6 h depois</b> do relatório ficar pronto, e é
+          cancelado se você marcar o candidato como <b>Aprovado</b> ou <b>Em análise</b>
+          nesse intervalo. Cada candidato recebe no máximo <b>um</b> e-mail destes.
+          <b>Mantenha desligado até confirmar o funcionamento.</b>
+        </p>
         <button type="submit" class="btn">Salvar</button>
       </form>
     </section>
@@ -3756,6 +3781,7 @@ router.post('/config/notificacoes', (req, res) => {
   const marcado = (campo) => b[campo] === '1' || b[campo] === 'on';
   db.definirConfigBool(CHAVE_NOTIFICAR_NOVA_CANDIDATURA, marcado('notificar_nova_candidatura'));
   db.definirConfigBool(followup.CHAVE_ATIVO, marcado('followup_ativo'));
+  db.definirConfigBool(CHAVE_EMAIL_RECUSA_ATIVO, marcado('email_recusa_ativo'));
   res.redirect('/admin/config?salvo=1');
 });
 
