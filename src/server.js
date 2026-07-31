@@ -20,6 +20,7 @@ const { router: bancoCurriculos } = require('./routes/banco_curriculos');
 const apiBancoCurriculos = require('./routes/api_banco_curriculos');
 const followupEntrevista = require('./lib/followupEntrevista');
 const emailRecusa = require('./lib/emailRecusa');
+const lembreteInicio = require('./lib/lembreteInicio');
 
 // Follow-up de entrevistas nao concluidas: de quanto em quanto tempo a varredura roda.
 // Nao e o atraso do e-mail (esse e configuravel no painel, em horas) — e so a resolucao
@@ -31,6 +32,11 @@ const INTERVALO_FOLLOWUP_MS = 15 * 60 * 1000;
 // mesmo com o valor igual hoje: os dois subsistemas sao independentes e mudar a cadencia
 // de um nao pode mexer no outro por acidente.
 const INTERVALO_RECUSA_MS = 15 * 60 * 1000;
+
+// Lembrete de inicio de entrevista: mesma resolucao de 15 min. Terceira constante
+// separada pela mesma razao das outras duas — as tres varreduras sao subsistemas
+// independentes, e mudar a cadencia de uma nao pode mexer nas outras por acidente.
+const INTERVALO_LEMBRETE_MS = 15 * 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -104,6 +110,7 @@ function iniciar() {
 
   agendarFollowupEntrevista();
   agendarEmailRecusa();
+  agendarLembreteInicio();
 }
 
 // Agendador do follow-up de entrevistas nao concluidas.
@@ -149,6 +156,28 @@ function agendarEmailRecusa() {
 
   console.log(
     `[recusa] varredura agendada a cada ${INTERVALO_RECUSA_MS / 60000} min (1a passada no boot).`,
+  );
+}
+
+// Agendador do lembrete de inicio de entrevista. Mesmo desenho dos outros dois (timer em
+// memoria, consulta ao banco a cada ciclo, trava em lib/lembreteInicio.varrerSeOcioso),
+// com setInterval PROPRIO: as tres varreduras sao independentes — um ciclo lento de uma
+// nao pode atrasar as outras, e desligar uma no painel nao afeta as demais.
+//
+// Enquanto o interruptor do painel estiver desligado (default), cada ciclo so loga
+// "[lembrete] desativado" e nao toca no banco de candidatos.
+function agendarLembreteInicio() {
+  // Primeira passada no boot, igual as outras: depois de um deploy, quem ja venceu a
+  // espera nao aguarda mais 15 min. `void` porque e fire-and-forget — varrerSeOcioso
+  // nunca rejeita.
+  void lembreteInicio.varrerSeOcioso();
+
+  setInterval(() => {
+    void lembreteInicio.varrerSeOcioso();
+  }, INTERVALO_LEMBRETE_MS);
+
+  console.log(
+    `[lembrete] varredura agendada a cada ${INTERVALO_LEMBRETE_MS / 60000} min (1a passada no boot).`,
   );
 }
 
