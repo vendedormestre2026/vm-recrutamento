@@ -696,6 +696,35 @@ function listarPendentesEmailRecusa({ horasCarencia, limite } = {}) {
 // Mesmo tratamento de horas do follow-up: o modificador do SQLite ('-3 hours') e montado
 // aqui e passado como PARAMETRO, sem aritmetica de fuso no JS. LIMIT tambem parametrizado,
 // como em listarPendentesEmailRecusa — o teto vive na query, nao no laco de quem chama.
+//
+// ── DEDUPE POR E-MAIL ──
+// A idempotencia por coluna e por APPLICATION, mas o e-mail chega numa PESSOA. E comum a
+// mesma pessoa se candidatar duas vezes (a duas vagas, ou a mesma vaga em dois momentos):
+// no dry-run de producao apareceram ~7 casos, alguns com minutos de diferenca. Sem dedupe,
+// essa pessoa receberia dois lembretes iguais — o que parece spam e nao ajuda em nada.
+//
+// MAX(id) e nao MIN: entre duas candidaturas da mesma pessoa, a MAIS RECENTE e a que
+// reflete o interesse atual dela (pode ser outra vaga, ou uma segunda tentativa). E o
+// token dessa linha e o que leva a candidatura certa em /retomar.
+//
+// A subquery NAO repete o filtro de status, e isso e proposital — resolve um caso de borda
+// que a versao ingenua erraria. Se a candidatura mais recente ja virou 'em_entrevista'
+// (a pessoa comecou por ela) e existe uma mais antiga ainda em 'aplicado', filtrar por
+// status faria o MAX "pular" a que comecou e eleger a antiga, mandando lembrete para quem
+// ja esta na entrevista. Sem o filtro, o MAX aponta para a que comecou, a antiga nao casa
+// com `a.id =` e NINGUEM recebe — que e o comportamento correto: a pessoa ja entrou.
+// `deleted_at IS NULL` fica na subquery para que uma candidatura arquivada nao bloqueie o
+// lembrete de uma ativa do mesmo e-mail.
+//
+// A application "perdedora" nunca e marcada como enviada (a marcacao so acontece para quem
+// a varredura processou). Se a vencedora sair da elegibilidade depois — por exemplo, a
+// pessoa comeca a entrevista por ela —, a perdedora volta a ser a MAX entre as vivas e
+// pode reaparecer numa varredura futura. Isso e desejado: o estado de elegibilidade e
+// sempre recalculado, nunca congelado.
+//
+// LOWER(TRIM(...)) nos dois lados: as duplicatas observadas tem e-mail identico, mas
+// variacao de caixa ou espaco em branco nao pode furar o dedupe. Sem indice em email, mas
+// o volume da tabela e de centenas de linhas — o custo e irrelevante.
 function listarPendentesLembreteInicio({ horasEspera, limite } = {}) {
   const horas = Number(horasEspera);
   if (!Number.isFinite(horas) || horas <= 0) return [];
@@ -715,6 +744,11 @@ function listarPendentesLembreteInicio({ horasEspera, limite } = {}) {
          AND (j.entrevista_ativa IS NULL OR j.entrevista_ativa <> 0)
          AND a.lembrete_inicio_enviado_em IS NULL
          AND datetime(a.criado_em) <= datetime('now', ?)
+         AND a.id = (
+               SELECT MAX(a2.id) FROM applications a2
+                WHERE LOWER(TRIM(a2.email)) = LOWER(TRIM(a.email))
+                  AND a2.deleted_at IS NULL
+             )
        ORDER BY a.id
        LIMIT ?`,
     )

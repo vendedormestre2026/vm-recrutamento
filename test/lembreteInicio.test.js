@@ -173,6 +173,59 @@ test('NAO elegivel: vaga em modo Simples (entrevista_ativa = 0)', () => {
   assert.ok(!elegiveis().includes(appId), 'vaga sem entrevista nao manda ninguem para a entrevista');
 });
 
+// ──────────────────── dedupe por e-mail ────────────────────
+// A idempotencia e por application, mas o e-mail chega numa PESSOA: a mesma pessoa se
+// candidatando duas vezes receberia dois lembretes iguais sem este dedupe.
+
+test('dedupe: duas candidaturas do mesmo e-mail -> so a mais recente e elegivel', () => {
+  const email = 'duplicada@exemplo.com';
+  const antiga = criarCaso({ email, horasAtras: 20 });
+  const recente = criarCaso({ email, horasAtras: 10 });
+
+  const lista = elegiveis();
+  assert.ok(lista.includes(recente), 'a mais recente (MAX id) e a que recebe');
+  assert.ok(!lista.includes(antiga), 'a antiga nao pode gerar um segundo lembrete');
+});
+
+test('dedupe: ignora diferenca de caixa e espaco no e-mail', () => {
+  const antiga = criarCaso({ email: 'MesmaPessoa@Exemplo.com ', horasAtras: 20 });
+  const recente = criarCaso({ email: '  mesmapessoa@exemplo.COM', horasAtras: 10 });
+
+  const lista = elegiveis();
+  assert.ok(lista.includes(recente));
+  assert.ok(!lista.includes(antiga), 'caixa/espaco nao pode furar o dedupe');
+});
+
+test('dedupe (borda): se a MAIS RECENTE ja comecou a entrevista, a antiga NAO recebe', () => {
+  const email = 'ja-comecou@exemplo.com';
+  const antiga = criarCaso({ email, horasAtras: 20 });
+  // A mais recente entrou na entrevista: status muda e existe linha em interviews.
+  criarCaso({ email, horasAtras: 10, status: 'em_entrevista', comEntrevista: true });
+
+  assert.ok(
+    !elegiveis().includes(antiga),
+    'a pessoa ja entrou por outra candidatura; lembrar pela antiga seria errado',
+  );
+});
+
+test('dedupe (borda): candidatura arquivada nao bloqueia o lembrete de uma ativa', () => {
+  const email = 'com-arquivada@exemplo.com';
+  const ativa = criarCaso({ email, horasAtras: 20 });
+  criarCaso({ email, horasAtras: 10, deletedAt: '2026-07-30 10:00:00' });
+
+  assert.ok(
+    elegiveis().includes(ativa),
+    'arquivar uma candidatura nao pode silenciar a outra do mesmo e-mail',
+  );
+});
+
+test('dedupe: e-mails diferentes seguem independentes', () => {
+  const a = criarCaso({ email: 'pessoa-a@exemplo.com' });
+  const b = criarCaso({ email: 'pessoa-b@exemplo.com' });
+  const lista = elegiveis();
+  assert.ok(lista.includes(a) && lista.includes(b), 'dedupe nao pode agrupar pessoas distintas');
+});
+
 test('horasEspera invalida devolve lista vazia (degradacao segura)', () => {
   criarCaso();
   assert.equal(db.listarPendentesLembreteInicio({ horasEspera: 0, limite: 100 }).length, 0);
