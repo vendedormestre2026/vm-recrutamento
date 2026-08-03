@@ -1198,6 +1198,38 @@ function registrarAcessoVaga(jobId, utm = null) {
     });
 }
 
+// Registra a PRIMEIRA passagem de um candidato por uma das telas entre a candidatura e o
+// inicio da entrevista (preparacao, video, permissoes e testes de camera/microfone).
+//
+// A segunda passagem pela mesma tela precisa ser silenciosa: o par (application_id,
+// etapa) e UNIQUE, e recarregar a pagina, voltar no navegador ou retomar a entrevista
+// dias depois passa de novo pelas mesmas telas. Ali a colisao e o caso NORMAL, nao o
+// excepcional. O primeiro registro (com o criado_em original) fica.
+//
+// ON CONFLICT ... DO NOTHING em vez de INSERT OR IGNORE, apesar de os dois "ignorarem o
+// duplicado": OR IGNORE ignora QUALQUER violacao de constraint, inclusive a do CHECK das
+// etapas. Com ele, um typo no chamador ('preparcao') nao gravaria nada e nao avisaria
+// ninguem — a etapa apareceria zerada no relatorio e pareceria abandono total, que e o
+// erro mais caro possivel numa tabela cujo unico proposito e medir abandono. O ON
+// CONFLICT nomeia o conflito que queremos engolir (o do par UNIQUE) e deixa o CHECK
+// continuar levantando, alto e no desenvolvimento.
+//
+// Diferente de registrarAcessoVaga, que grava uma linha por acesso: la a pergunta e
+// "quantos acessos a vaga teve?"; aqui e "quantas PESSOAS chegaram nesta tela?".
+//
+// Retorna true se gravou (primeira passagem) e false se ja existia — util para teste e
+// para quem quiser distinguir os dois casos. O chamador (middleware do D3) ignora o
+// retorno: para ele, gravou ou ja estava gravado dao no mesmo.
+function registrarEventoFunil(applicationId, etapa) {
+  const info = getDb()
+    .prepare(
+      `INSERT INTO funil_eventos (application_id, etapa) VALUES (?, ?)
+         ON CONFLICT(application_id, etapa) DO NOTHING`,
+    )
+    .run(applicationId, etapa);
+  return info.changes > 0;
+}
+
 // Totais para o rodape do painel.
 function contarAplicacoes() {
   return getDb().prepare('SELECT COUNT(*) AS n FROM applications').get().n;
@@ -1589,6 +1621,7 @@ module.exports = {
   listarAplicacoesComContexto,
   obterReportPorInterview,
   registrarAcessoVaga,
+  registrarEventoFunil,
   contarAplicacoes,
   contarEntrevistasConcluidas,
   obterFunilConversao,

@@ -96,6 +96,7 @@ module.exports = {
   listarAplicacoesComContexto: driver.listarAplicacoesComContexto,
   obterReportPorInterview: driver.obterReportPorInterview,
   registrarAcessoVaga: driver.registrarAcessoVaga,
+  registrarEventoFunil: driver.registrarEventoFunil,
   contarAplicacoes: driver.contarAplicacoes,
   contarEntrevistasConcluidas: driver.contarEntrevistasConcluidas,
   obterFunilConversao: driver.obterFunilConversao,
