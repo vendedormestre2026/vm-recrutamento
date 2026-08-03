@@ -674,6 +674,25 @@ function colunasCandidatosAtivas() {
   return COLUNAS_CANDIDATOS.filter((col) => chaves.includes(col.chave));
 }
 
+// Saneia a busca textual (?q=). Unico filtro sem allowlist possivel — o valor e texto do
+// recrutador —, entao o saneamento e de FORMA, nao de conteudo:
+//   1. so aceita string. O Express entrega array em ?q=a&q=b e objeto em ?q[x]=1; um
+//      String() cru nesses casos viraria 'a,b' ou '[object Object]' e buscaria lixo.
+//      Qualquer coisa que nao seja string vira '' = sem busca.
+//   2. trim(), para " maria " e "maria" serem a mesma busca (e " " ser busca nenhuma).
+//   3. teto de tamanho: acima disso o excedente so encareceria o LIKE sem mudar o
+//      resultado. Um nome completo com folga cabe em 100.
+// Aspas, acentos e '%' nao precisam de tratamento aqui: o valor vai como PARAMETRO
+// ligado (nunca concatenado no SQL) e o escape de curinga mora na camada de dados.
+//
+// FUNCAO COMPARTILHADA de proposito: o handler da lista e o paramsFiltros dos redirects
+// precisam do MESMO resultado. Se cada um tivesse a sua copia, um teto diferente faria a
+// busca mudar sozinha ao arquivar em lote — o recrutador voltaria para outro recorte.
+const MAX_BUSCA = 100;
+function sanearBusca(valor) {
+  return typeof valor === 'string' ? valor.trim().slice(0, MAX_BUSCA) : '';
+}
+
 // ── GET /admin ── lista de candidatos (com filtros por status, data e busca, via query string) ──
 router.get('/', (req, res) => {
   const q = req.query || {};
@@ -695,18 +714,8 @@ router.get('/', (req, res) => {
   // Visibilidade de arquivados. NAO se chama 'arquivados' de proposito: esse nome ja e
   // usado na query string como CONTAGEM do flash de arquivar-lote (?arquivados=3).
   const visibilidade = VISIBILIDADES_LISTA.includes(q.visibilidade) ? q.visibilidade : 'ativos';
-  // Busca textual livre (?q=). Unico filtro sem allowlist possivel — o valor e texto do
-  // recrutador —, entao o saneamento e de FORMA, nao de conteudo:
-  //   1. so aceita string. O Express entrega array em ?q=a&q=b e objeto em ?q[x]=1; um
-  //      String() cru nesses casos viraria 'a,b' ou '[object Object]' e buscaria lixo.
-  //      Qualquer coisa que nao seja string vira '' = sem busca.
-  //   2. trim(), para " maria " e "maria" serem a mesma busca (e " " ser busca nenhuma).
-  //   3. teto de tamanho: acima disso o excedente so encareceria o LIKE sem mudar o
-  //      resultado. Um nome completo com folga cabe em 100.
-  // Aspas, acentos e '%' nao precisam de tratamento aqui: o valor vai como PARAMETRO
-  // ligado (nunca concatenado no SQL) e o escape de curinga mora na camada de dados.
-  const MAX_BUSCA = 100;
-  const busca = typeof q.q === 'string' ? q.q.trim().slice(0, MAX_BUSCA) : '';
+  // Busca textual livre (?q=). Regras em sanearBusca (compartilhada com paramsFiltros).
+  const busca = sanearBusca(q.q);
 
   const vagas = db.listarVagas();
   const candidatos = db.listarAplicacoesComContexto({
@@ -763,6 +772,7 @@ router.get('/', (req, res) => {
   const selRec = (v) => (statusRecrutador === v ? ' selected' : '');
   const selVis = (v) => (visibilidade === v ? ' selected' : '');
   const temFiltro =
+    busca ||
     status ||
     statusIa ||
     statusRecrutador ||
@@ -860,6 +870,7 @@ router.get('/', (req, res) => {
     <details class="bloco-card" style="margin-bottom:1rem;">
       <summary>Colunas</summary>
       <form method="POST" action="/admin/colunas-candidatos">
+        <input type="hidden" name="q" value="${escapeHtml(busca)}">
         <input type="hidden" name="status" value="${escapeHtml(status)}">
         <input type="hidden" name="status_ia" value="${escapeHtml(statusIa)}">
         <input type="hidden" name="filtro_status_recrutador" value="${escapeHtml(statusRecrutador)}">
@@ -919,6 +930,7 @@ router.get('/', (req, res) => {
     ${filtros}
     ${painelColunas}
     <form id="form-lote" method="POST" action="/admin/candidatos/arquivar-lote">
+      <input type="hidden" name="q" value="${escapeHtml(busca)}">
       <input type="hidden" name="status" value="${escapeHtml(status)}">
       <input type="hidden" name="status_ia" value="${escapeHtml(statusIa)}">
       <!-- Nome PROPOSITALMENTE diferente do filtro na query string: dentro deste form ja
@@ -1592,10 +1604,15 @@ router.post('/candidato/:id/restaurar', (req, res) => {
   return res.redirect(`/admin/candidato/${id}?ok=restaurado`);
 });
 
-// Reconstroi a query string dos filtros da listagem (status/de/ate/vaga), saneada, para
-// preservar o contexto ao redirecionar. Serve tanto para req.query quanto para req.body.
+// Reconstroi a query string dos filtros da listagem (busca/status/de/ate/vaga), saneada,
+// para preservar o contexto ao redirecionar. Serve tanto para req.query quanto para
+// req.body.
 function paramsFiltros(src = {}) {
   const p = new URLSearchParams();
+  // Busca vazia nao vai para a URL: '?q=' sujaria o endereco sem significar nada
+  // (mesma logica da visibilidade 'ativos' la embaixo).
+  const busca = sanearBusca(src.q);
+  if (busca) p.set('q', busca);
   if (['aplicado', 'em_entrevista', 'concluido'].includes(src.status)) p.set('status', src.status);
   if (STATUS_IA_VALIDOS.includes(src.status_ia)) p.set('status_ia', src.status_ia);
   // Status Recrutador: nos FORMS o filtro viaja como filtro_status_recrutador, porque
