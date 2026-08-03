@@ -45,6 +45,34 @@ function bloquearSeModoSimples(req, res, next) {
   return next();
 }
 
+// Instrumentacao do funil: marca que ESTE candidato chegou a ESTA tela. Fabrica de
+// middleware — registrarEtapaFunil('preparacao') devolve o middleware daquela etapa.
+//
+// Fire-and-forget, mesmo padrao do registro de acesso a vaga (mais abaixo, na /vaga/:slug):
+// metrica NUNCA derruba a pagina do candidato. Se o banco estiver em erro, o log guarda o
+// rastro e a tela renderiza normalmente — perder um evento de funil e barato, travar um
+// candidato no meio da entrevista nao e.
+//
+// Roda SEMPRE depois de exigirCandidato (precisa de req.candidato) e de
+// bloquearSeModoSimples (quem e mandado para o modo Simples nao chegou nesta etapa de
+// verdade — contar seria falso-positivo). A guarda do req.candidato e defensiva: se a
+// ordem for trocada por engano um dia, o middleware pula em vez de estourar.
+//
+// So marca a PRIMEIRA passagem — a idempotencia mora na constraint UNIQUE da tabela e no
+// ON CONFLICT de db.registrarEventoFunil, nao aqui.
+function registrarEtapaFunil(etapa) {
+  return function marcarEtapa(req, res, next) {
+    try {
+      if (req.candidato && req.candidato.id) {
+        db.registrarEventoFunil(req.candidato.id, etapa);
+      }
+    } catch (e) {
+      console.error(`[funil] falha ao registrar etapa '${etapa}' (métrica, ignorado):`, e.message);
+    }
+    return next();
+  };
+}
+
 // Bloco de placeholder padrao para as telas ainda nao implementadas.
 function placeholder({ kicker, titulo, descricao, acao, centro = false, badgeFase = null }) {
   return `
@@ -425,20 +453,36 @@ function paginaPreparacao(req) {
 }
 
 // /preparacao (sem slug): back-compat (links antigos, redirect de /instrucoes).
-router.get('/preparacao', exigirCandidato, bloquearSeModoSimples, (req, res) => {
-  res.send(paginaPreparacao(req));
-});
+router.get(
+  '/preparacao',
+  exigirCandidato,
+  bloquearSeModoSimples,
+  registrarEtapaFunil('preparacao'),
+  (req, res) => {
+    res.send(paginaPreparacao(req));
+  },
+);
 
 // /preparacao/:slug: mesma pagina, com a slug da vaga na URL p/ diferenciar o lead
 // por vaga no GTM. A vaga real e sempre a da SESSAO: se a slug da URL nao bater com
 // a da sessao, redireciona para a slug correta (sem confiar na URL).
-router.get('/preparacao/:slug', exigirCandidato, bloquearSeModoSimples, (req, res) => {
-  const { vaga } = vagaERoteiroDaSessao(req);
-  if (vaga && vaga.slug && req.params.slug !== vaga.slug) {
-    return res.redirect(`/preparacao/${vaga.slug}`);
-  }
-  return res.send(paginaPreparacao(req));
-});
+// A marcacao do funil vem como middleware (antes do handler), entao acontece tambem no
+// caminho do redirect de slug divergente. Nao e falso-positivo: o destino do redirect e a
+// MESMA etapa, e o candidato chegou a preparacao de um jeito ou de outro. Contrasta com
+// /video/:slug, onde o redirect leva a OUTRA etapa e a marcacao precisa ficar no handler.
+router.get(
+  '/preparacao/:slug',
+  exigirCandidato,
+  bloquearSeModoSimples,
+  registrarEtapaFunil('preparacao'),
+  (req, res) => {
+    const { vaga } = vagaERoteiroDaSessao(req);
+    if (vaga && vaga.slug && req.params.slug !== vaga.slug) {
+      return res.redirect(`/preparacao/${vaga.slug}`);
+    }
+    return res.send(paginaPreparacao(req));
+  },
+);
 
 // ── Tela de vídeo introdutório (Item 8) — GET /video/:slug ──
 // Etapa condicional: exibida ANTES das permissões, só quando a vaga tem um vídeo
@@ -623,7 +667,12 @@ router.get('/instrucoes', exigirCandidato, (req, res) => res.redirect(302, '/pre
 // camera nao ha entrevista. Quando a permissao e negada/indisponivel, o JS troca o
 // pedido pela tela de bloqueio (data-cam-bloqueio) com a opcao de receber um link por
 // e-mail para retomar depois — nao existe mais "continuar sem camera". ──
-router.get('/permissao-camera', exigirCandidato, bloquearSeModoSimples, (req, res) => {
+router.get(
+  '/permissao-camera',
+  exigirCandidato,
+  bloquearSeModoSimples,
+  registrarEtapaFunil('permissao_camera'),
+  (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro" data-tela-permissao-camera>
       <div data-cam-pedido>
@@ -660,7 +709,12 @@ router.get('/permissao-camera', exigirCandidato, bloquearSeModoSimples, (req, re
 
 // ── Tela 7: Teste de camera (preview ao vivo). A gravacao em si comeca na entrevista;
 // aqui so confirmamos o enquadramento e reforcamos que havera gravacao em video. ──
-router.get('/teste-camera', exigirCandidato, bloquearSeModoSimples, (req, res) => {
+router.get(
+  '/teste-camera',
+  exigirCandidato,
+  bloquearSeModoSimples,
+  registrarEtapaFunil('teste_camera'),
+  (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro" data-tela-teste-camera>
       <p class="vm-kicker">Câmera</p>
@@ -682,7 +736,12 @@ router.get('/teste-camera', exigirCandidato, bloquearSeModoSimples, (req, res) =
 });
 
 // ── Tela 8: Permissao de microfone (obrigatorio — canal principal da entrevista) ──
-router.get('/permissao-microfone', exigirCandidato, bloquearSeModoSimples, (req, res) => {
+router.get(
+  '/permissao-microfone',
+  exigirCandidato,
+  bloquearSeModoSimples,
+  registrarEtapaFunil('permissao_microfone'),
+  (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro">
       <p class="vm-kicker">Microfone</p>
@@ -705,7 +764,12 @@ router.get('/permissao-microfone', exigirCandidato, bloquearSeModoSimples, (req,
 });
 
 // ── Tela 9: Teste de microfone (medidor de nivel via Web Audio — sem gravar) ──
-router.get('/teste-microfone', exigirCandidato, bloquearSeModoSimples, (req, res) => {
+router.get(
+  '/teste-microfone',
+  exigirCandidato,
+  bloquearSeModoSimples,
+  registrarEtapaFunil('teste_microfone'),
+  (req, res) => {
   const conteudo = `
     <section class="vm-hero vm-hero--centro" data-tela-teste-mic>
       <p class="vm-kicker">Microfone</p>
