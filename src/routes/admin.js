@@ -667,7 +667,7 @@ function colunasCandidatosAtivas() {
   return COLUNAS_CANDIDATOS.filter((col) => chaves.includes(col.chave));
 }
 
-// ── GET /admin ── lista de candidatos (com filtros por status e data, via query string) ──
+// ── GET /admin ── lista de candidatos (com filtros por status, data e busca, via query string) ──
 router.get('/', (req, res) => {
   const q = req.query || {};
   // Saneamento: status so vale se for um dos valores conhecidos; datas no formato YYYY-MM-DD.
@@ -688,6 +688,18 @@ router.get('/', (req, res) => {
   // Visibilidade de arquivados. NAO se chama 'arquivados' de proposito: esse nome ja e
   // usado na query string como CONTAGEM do flash de arquivar-lote (?arquivados=3).
   const visibilidade = VISIBILIDADES_LISTA.includes(q.visibilidade) ? q.visibilidade : 'ativos';
+  // Busca textual livre (?q=). Unico filtro sem allowlist possivel — o valor e texto do
+  // recrutador —, entao o saneamento e de FORMA, nao de conteudo:
+  //   1. so aceita string. O Express entrega array em ?q=a&q=b e objeto em ?q[x]=1; um
+  //      String() cru nesses casos viraria 'a,b' ou '[object Object]' e buscaria lixo.
+  //      Qualquer coisa que nao seja string vira '' = sem busca.
+  //   2. trim(), para " maria " e "maria" serem a mesma busca (e " " ser busca nenhuma).
+  //   3. teto de tamanho: acima disso o excedente so encareceria o LIKE sem mudar o
+  //      resultado. Um nome completo com folga cabe em 100.
+  // Aspas, acentos e '%' nao precisam de tratamento aqui: o valor vai como PARAMETRO
+  // ligado (nunca concatenado no SQL) e o escape de curinga mora na camada de dados.
+  const MAX_BUSCA = 100;
+  const busca = typeof q.q === 'string' ? q.q.trim().slice(0, MAX_BUSCA) : '';
 
   const vagas = db.listarVagas();
   const candidatos = db.listarAplicacoesComContexto({
@@ -697,6 +709,7 @@ router.get('/', (req, res) => {
     dataDe,
     dataAte,
     jobId: vagaId || undefined,
+    busca,
     arquivados: visibilidade,
   });
 
