@@ -504,6 +504,25 @@ router.get('/video/:slug', exigirCandidato, bloquearSeModoSimples, (req, res) =>
     return res.redirect(`/video/${vaga.slug}`);
   }
 
+  // Instrumentacao do funil: aqui NAO da para usar o middleware registrarEtapaFunil, que
+  // rodaria antes do handler e portanto antes dos dois returns acima. Esta e a unica das
+  // seis etapas cuja tela pode nao existir: sem video_intro_ref a rota redireciona direto
+  // para /permissao-camera, e hoje NENHUMA vaga tem video configurado — marcar antes do if
+  // registraria 'video' para 100% dos candidatos que nunca viram video nenhum, e a etapa
+  // apareceria como a mais saudavel do funil justamente por nao existir.
+  //
+  // Fica depois TAMBEM do redirect de slug divergente (mais estrito que as outras cinco
+  // etapas): assim a linha significa "a tela de video renderizou de verdade", nunca "a
+  // rota foi chamada". Nao se perde nada — o redirect de slug reentra nesta mesma rota com
+  // a slug correta e marca ali.
+  //
+  // try/catch pelo mesmo motivo do middleware: metrica nunca derruba a pagina.
+  try {
+    db.registrarEventoFunil(req.candidato.id, 'video');
+  } catch (e) {
+    console.error("[funil] falha ao registrar etapa 'video' (métrica, ignorado):", e.message);
+  }
+
   const videoId = escapeHtml(vaga.video_intro_ref);
   const conteudo = `
     <section class="vm-hero vm-hero--centro" data-tela-video-intro>
