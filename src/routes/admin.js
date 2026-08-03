@@ -168,8 +168,15 @@ const ESTILO_ADMIN = `
   .admin-filtros { display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:1.25rem; }
   .admin-filtros .filtro { display:flex; flex-direction:column; gap:.25rem; }
   .admin-filtros .filtro > span { color:var(--cinza); font-size:.8rem; text-transform:uppercase; }
-  .admin-filtros select, .admin-filtros input[type=date] { background:var(--campo); color:var(--preto); border:1px solid var(--linha); border-radius:6px; padding:.5rem .6rem; font:inherit; }
-  .admin-filtros select:focus, .admin-filtros input[type=date]:focus { outline:none; border-color:var(--laranja); }
+  .admin-filtros select, .admin-filtros input[type=date], .admin-filtros input[type=search] { background:var(--campo); color:var(--preto); border:1px solid var(--linha); border-radius:6px; padding:.5rem .6rem; font:inherit; }
+  .admin-filtros select:focus, .admin-filtros input[type=date]:focus, .admin-filtros input[type=search]:focus { outline:none; border-color:var(--laranja); }
+  /* appearance:none anula o desenho proprio que o WebKit da ao type=search (cantos e
+     sombra interna que ignoram border/border-radius) — sem isto o campo de busca
+     destoaria dos selects ao lado no Safari. */
+  .admin-filtros input[type=search] { appearance:none; -webkit-appearance:none; }
+  /* Cresce para ocupar a sobra da linha (os demais filtros tem largura de conteudo),
+     com um piso que cabe um nome completo sem cortar. */
+  .admin-filtros .filtro--busca { flex:1 1 16rem; }
   .rel-sec { margin:1.5rem 0; }
   .rel-id { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:.5rem 1.5rem; }
   .rel-id dt { color:var(--cinza); font-size:.8rem; text-transform:uppercase; }
@@ -771,6 +778,15 @@ router.get('/', (req, res) => {
     .join('');
   const filtros = `
     <form method="GET" action="/admin" class="admin-filtros">
+      <!-- Primeiro item de proposito: e o filtro que o recrutador usa para achar UMA
+           pessoa (o caso mais frequente), enquanto os selects abaixo recortam grupos.
+           O value repete a busca saneada — sem isso o campo esvaziaria a cada submit e
+           o recrutador nao veria o que esta filtrando. -->
+      <label class="filtro filtro--busca">
+        <span>Buscar</span>
+        <input type="search" name="q" value="${escapeHtml(busca)}"
+          placeholder="Nome, e-mail ou telefone">
+      </label>
       <label class="filtro">
         <span>Vaga</span>
         <select name="vaga">
