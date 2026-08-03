@@ -135,6 +135,37 @@ CREATE INDEX IF NOT EXISTS idx_vaga_acessos_job ON vaga_acessos(job_id);
 -- ANTES das migracoes) quebraria o boot ("no such column: utm_source"). O indice
 -- idx_vaga_acessos_utm e criado em migrate.js, no lugar correto.
 
+-- Passagem do candidato pelas telas ENTRE a candidatura e o inicio da entrevista.
+--
+-- POR QUE EXISTE: 93% do vazamento do funil acontece nesse trecho — a maioria das
+-- candidaturas em vagas com entrevista ativa nunca cria uma linha em interviews. Hoje
+-- so enxergamos as duas pontas (applications e interviews) e o meio e cego: nao da para
+-- dizer se a pessoa parou na preparacao, no pedido de permissao da camera ou no teste
+-- de microfone. Cada etapa aqui e uma tela desse trecho.
+--
+-- Mesma anatomia de vaga_acessos (id + FK + criado_em), com UMA diferenca deliberada:
+-- vaga_acessos grava um registro por ACESSO (pode repetir), esta grava um registro por
+-- PRIMEIRA passagem. O UNIQUE(application_id, etapa) e o que garante isso, junto com o
+-- INSERT OR IGNORE de quem escreve — recarregar a tela, voltar no navegador ou retomar a
+-- entrevista dias depois nao inflam a contagem. O que se quer medir e "quantas pessoas
+-- CHEGARAM ate aqui", nao quantas vezes cada uma passou.
+--
+-- O CHECK trava as seis etapas conhecidas: uma etapa nova exige mexer no schema de
+-- proposito, para a tabela nao virar um saco de strings livres com typo virando etapa.
+-- Sem FK rigida para applications, seguindo talentos.aplicacao_id — a instrumentacao
+-- nunca pode impedir uma escrita no funil de negocio.
+CREATE TABLE IF NOT EXISTS funil_eventos (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  application_id INTEGER NOT NULL,
+  etapa          TEXT NOT NULL CHECK (etapa IN (
+                   'preparacao', 'video', 'permissao_camera', 'teste_camera',
+                   'permissao_microfone', 'teste_microfone'
+                 )),
+  criado_em      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(application_id, etapa)
+);
+CREATE INDEX IF NOT EXISTS idx_funil_eventos_application ON funil_eventos(application_id);
+
 -- Configuracoes gerais (store chave/valor generico). Usado por ora para uma unica
 -- chave: entrevista_automatica_geral. Sem seed: a ausencia de linha significa "usar o
 -- default" (definido em quem le, ex.: obterConfigBool(..., true)).
