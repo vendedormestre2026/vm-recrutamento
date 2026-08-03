@@ -1008,10 +1008,26 @@ function obterReportEnviadoPorInterview(interviewId) {
 //   statusIa -> filtra a.status_ia (veredito da IA; enum abaixo; ignorado caso contrario)
 //   dataDe / dataAte -> intervalo INCLUSIVO sobre a data (YYYY-MM-DD) de a.criado_em
 //   jobId -> filtra a.job_id (id da vaga; ignorado se ausente)
+//   busca -> texto livre em nome/sobrenome/nome completo/e-mail/telefone (vazio = ignorado)
 // Enum dos vereditos da IA (espelha a maquina de estados do item 2 e badgeStatusIa do
 // painel). Interno a esta query; o handler /admin mantem a MESMA allowlist ao sanear a
 // query string (mesmo padrao ja usado para o enum de status).
 const STATUS_IA_VALIDOS = ['avancar', 'talvez', 'descartar', 'processando', 'indefinido', 'erro'];
+
+// Minimo de digitos para o termo tambem ser procurado no TELEFONE. Abaixo disso a busca
+// numerica devolveria meio banco (um '1' casa com quase todo mundo) sem ajudar ninguem;
+// nome e e-mail continuam sendo procurados normalmente.
+const MIN_DIGITOS_BUSCA_TELEFONE = 3;
+
+// Escapa os curingas do LIKE no termo digitado pelo recrutador. Sem isto, '%' e '_'
+// digitados na busca virariam curingas e o campo se comportaria de forma imprevisivel
+// ('a_b' casaria com 'axb'). A contrabarra vem PRIMEIRO na regex por ser o proprio
+// caractere de escape — inverter a ordem escaparia as barras que acabamos de inserir.
+// Pareia com o ESCAPE '\' declarado em cada LIKE da query.
+function escaparCuringasLike(termo) {
+  return String(termo).replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 function listarAplicacoesComContexto({
   status,
   statusIa,
@@ -1019,6 +1035,7 @@ function listarAplicacoesComContexto({
   dataDe,
   dataAte,
   jobId,
+  busca,
   incluirArquivados = false,
   arquivados,
 } = {}) {
@@ -1075,6 +1092,47 @@ function listarAplicacoesComContexto({
   if (dataAte) {
     where.push('date(a.criado_em) <= date(?)');
     params.push(dataAte);
+  }
+
+  // ── Busca textual livre (nome, sobrenome, nome completo, e-mail, telefone) ──
+  //
+  // Entra no MESMO array `where`, e portanto e combinada com AND aos demais filtros e
+  // herda a visibilidade de arquivados de graca — buscar dentro do modo 'ativos' nao
+  // pode ressuscitar um lead arquivado.
+  //
+  // LIMITACAO CONHECIDA (decisao deliberada, nao e bug): o LIKE padrao do SQLite so
+  // ignora maiusculas/minusculas em ASCII. Portanto 'jose' NAO encontra 'José', nem
+  // 'JOSÉ' encontra 'josé' — o dobramento de acentos exigiria uma coluna normalizada
+  // ou a extensao ICU, e optamos por nao pagar esse custo: o recrutador digita o nome
+  // como ele aparece na tela. 'jose' encontrando 'Jose'/'JOSE' continua funcionando.
+  const termo = typeof busca === 'string' ? busca.trim() : '';
+  if (termo) {
+    const alvo = `%${escaparCuringasLike(termo)}%`;
+    // nome completo concatenado: sem ele, "maria silva" nao acha ninguem, porque nenhuma
+    // coluna sozinha contem os dois pedacos.
+    const condicoes = [
+      "a.nome LIKE ? ESCAPE '\\'",
+      "a.sobrenome LIKE ? ESCAPE '\\'",
+      "(a.nome || ' ' || a.sobrenome) LIKE ? ESCAPE '\\'",
+      "a.email LIKE ? ESCAPE '\\'",
+    ];
+    params.push(alvo, alvo, alvo, alvo);
+
+    // Telefone e gravado CRU ('+55 (11) 99999-9999', '+55 11999999999' — os dois formatos
+    // convivem no banco), entao os dois lados sao reduzidos a digitos antes de comparar:
+    // o termo aqui em JS, a coluna via REPLACE aninhado. Assim '11999', '(11) 99999' e
+    // '+55 11999' encontram o mesmo candidato.
+    const digitos = termo.replace(/\D/g, '');
+    if (digitos.length >= MIN_DIGITOS_BUSCA_TELEFONE) {
+      condicoes.push(
+        `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+           a.telefone, ' ', ''), '-', ''), '(', ''), ')', ''), '+', '') LIKE ?`,
+      );
+      // So digitos: nao ha curinga a escapar.
+      params.push(`%${digitos}%`);
+    }
+
+    where.push(`(${condicoes.join(' OR ')})`);
   }
 
   const clausula = where.length ? `WHERE ${where.join(' AND ')}` : '';
