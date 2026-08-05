@@ -21,6 +21,7 @@ const { modoEntrevistaAtivo } = require('../lib/modo');
 const followup = require('../lib/followupEntrevista');
 const emailRecusa = require('../lib/emailRecusa');
 const lembreteInicio = require('../lib/lembreteInicio');
+const limpezaAudio = require('../lib/limpezaAudio');
 const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
@@ -3658,6 +3659,12 @@ const CHAVE_EMAIL_RECUSA_ATIVO = emailRecusa.CHAVE_ATIVO;
 // nao em env, para desligar na hora sem redeploy.
 const CHAVE_LEMBRETE_INICIO_ATIVO = lembreteInicio.CHAVE_ATIVO;
 
+// Liga/desliga a LIMPEZA AUTOMATICA de audio das entrevistas no volume. Mesma logica de
+// propriedade das outras: a chave mora em lib/limpezaAudio, dono do subsistema. Kill
+// switch no painel (nao em env) porque apagar arquivo e irreversivel — precisa dar para
+// desligar na hora, sem redeploy.
+const CHAVE_LIMPEZA_AUDIO_ATIVO = limpezaAudio.CHAVE_ATIVO;
+
 // ── GET /admin/config ── tela de configuracoes gerais ──
 router.get('/config', (req, res) => {
   const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
@@ -3675,6 +3682,9 @@ router.get('/config', (req, res) => {
 
   // Lembrete de inicio de entrevista (default desligado).
   const lembreteInicioAtivo = db.obterConfigBool(CHAVE_LEMBRETE_INICIO_ATIVO, false);
+
+  // Limpeza automatica de audio no volume (default desligada).
+  const limpezaAudioAtiva = db.obterConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, false);
 
   // Horas de espera do 1o follow-up de entrevista nao concluida. Le pelo MESMO helper do
   // agendador (lib/followupEntrevista.horasEspera), entao painel e varredura nunca
@@ -3795,6 +3805,20 @@ router.get('/config', (req, res) => {
           nesse intervalo. Cada candidato recebe no máximo <b>um</b> e-mail destes.
           <b>Mantenha desligado até confirmar o funcionamento.</b>
         </p>
+        <label class="campo-check">
+          <input type="checkbox" name="limpeza_audio_ativo" value="1"${limpezaAudioAtiva ? ' checked' : ''}>
+          <span style="color:var(--preto);text-transform:none;">
+            Apagar <b>áudio de entrevistas</b> quando o disco encher
+          </span>
+        </label>
+        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Libera espaço apagando os arquivos de áudio guardados no servidor. Só age
+          <b>quando o disco passa de ${limpezaAudio.limiarPct()}%</b> de uso, e só toca em
+          entrevistas <b>concluídas</b>, <b>com relatório pronto</b> e cujo <b>vídeo já
+          está salvo no Google Drive</b> — o vídeo continua lá, e a transcrição continua
+          no banco. No máximo ${limpezaAudio.remocoesPorCiclo()} entrevistas por vez, e
+          para assim que o disco volta ao normal. <b>A exclusão é definitiva.</b>
+        </p>
         <button type="submit" class="btn">Salvar</button>
       </form>
     </section>
@@ -3852,6 +3876,7 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_LEMBRETE_INICIO_ATIVO, marcado('lembrete_inicio_ativo'));
   db.definirConfigBool(followup.CHAVE_ATIVO, marcado('followup_ativo'));
   db.definirConfigBool(CHAVE_EMAIL_RECUSA_ATIVO, marcado('email_recusa_ativo'));
+  db.definirConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, marcado('limpeza_audio_ativo'));
   res.redirect('/admin/config?salvo=1');
 });
 

@@ -21,6 +21,7 @@ const apiBancoCurriculos = require('./routes/api_banco_curriculos');
 const followupEntrevista = require('./lib/followupEntrevista');
 const emailRecusa = require('./lib/emailRecusa');
 const lembreteInicio = require('./lib/lembreteInicio');
+const limpezaAudio = require('./lib/limpezaAudio');
 
 // Follow-up de entrevistas nao concluidas: de quanto em quanto tempo a varredura roda.
 // Nao e o atraso do e-mail (esse e configuravel no painel, em horas) — e so a resolucao
@@ -37,6 +38,12 @@ const INTERVALO_RECUSA_MS = 15 * 60 * 1000;
 // separada pela mesma razao das outras duas — as tres varreduras sao subsistemas
 // independentes, e mudar a cadencia de uma nao pode mexer nas outras por acidente.
 const INTERVALO_LEMBRETE_MS = 15 * 60 * 1000;
+
+// Limpeza automatica de audio das entrevistas: quarta constante separada, pela mesma
+// razao das outras tres. Aqui o intervalo e so a RESOLUCAO da checagem — o gatilho real
+// e o uso do disco passar do limiar (lib/limpezaAudio), entao a passada normal nao faz
+// nada alem de medir e sair.
+const INTERVALO_LIMPEZA_AUDIO_MS = 15 * 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -111,6 +118,7 @@ function iniciar() {
   agendarFollowupEntrevista();
   agendarEmailRecusa();
   agendarLembreteInicio();
+  agendarLimpezaAudio();
 }
 
 // Agendador do follow-up de entrevistas nao concluidas.
@@ -178,6 +186,30 @@ function agendarLembreteInicio() {
 
   console.log(
     `[lembrete] varredura agendada a cada ${INTERVALO_LEMBRETE_MS / 60000} min (1a passada no boot).`,
+  );
+}
+
+// Agendador da limpeza automatica de audio. Mesmo desenho das outras tres (timer em
+// memoria, trava em lib/limpezaAudio.varrerSeOcioso, setInterval PROPRIO), com UMA
+// diferenca: as outras agem a cada ciclo, esta so age quando o uso do volume passa do
+// limiar. O ciclo normal mede o disco e sai — e por isso que ela pode rodar de 15 em 15
+// min sem custo. Sincrona (mexe em disco local, nao chama provedor externo), mas mantida
+// com `void` para o agendador ficar igual aos outros tres.
+//
+// Enquanto o interruptor do painel estiver desligado (default), cada ciclo so loga
+// "[limpeza-audio] desativado" e nao toca no disco nem no banco.
+function agendarLimpezaAudio() {
+  // Primeira passada no boot, igual as outras: depois de um deploy, um volume que ja
+  // esta acima do limiar nao espera mais 15 min.
+  void limpezaAudio.varrerSeOcioso();
+
+  setInterval(() => {
+    void limpezaAudio.varrerSeOcioso();
+  }, INTERVALO_LIMPEZA_AUDIO_MS);
+
+  console.log(
+    `[limpeza-audio] varredura agendada a cada ${INTERVALO_LIMPEZA_AUDIO_MS / 60000} min ` +
+      `(1a passada no boot; limiar ${limpezaAudio.limiarPct()}% de uso do volume).`,
   );
 }
 

@@ -887,6 +887,38 @@ function definirVideoUrl(interviewId, url) {
     .run(url || null, interviewId);
 }
 
+// Entrevistas cujo audio no volume ja e descartavel (lib/limpezaAudio decide QUANDO
+// chamar; esta query so diz QUAIS podem). As tres condicoes sao obrigatorias e nenhuma
+// e redundante:
+//   status = 'concluido'      -> a entrevista acabou; ninguem mais vai tocar o mp3 da Vera.
+//   video_url IS NOT NULL     -> existe backup em video no Drive. E a condicao FORTE: sem
+//                                ela, apagar o audio deixa a transcricao como unico registro.
+//   reports.status gerado/env -> a avaliacao ja foi extraida da transcricao; nada mais
+//                                precisa ser reprocessado a partir deste material.
+// GROUP BY: reprocessar um relatorio cria uma linha NOVA em reports, entao o JOIN pode
+// devolver a mesma interview mais de uma vez — sem o GROUP BY o cap por ciclo seria
+// consumido por duplicatas.
+// ORDER BY i.id: mais antigas primeiro (drena o backlog em ordem estavel entre ciclos).
+function listarElegiveisLimpezaAudio({ limite } = {}) {
+  const max = Number.isFinite(Number(limite)) && Number(limite) > 0 ? Math.floor(Number(limite)) : 20;
+
+  return getDb()
+    .prepare(
+      `SELECT i.id
+         FROM interviews i
+         JOIN reports r ON r.interview_id = i.id
+        WHERE i.status = 'concluido'
+          AND i.video_url IS NOT NULL
+          AND TRIM(i.video_url) <> ''
+          AND r.status IN ('gerado', 'enviado')
+        GROUP BY i.id
+        ORDER BY i.id
+        LIMIT ?`,
+    )
+    .all(max)
+    .map((linha) => linha.id);
+}
+
 // Turnos da conversa
 function criarTurno(turno) {
   const info = getDb().prepare(`
@@ -1687,6 +1719,7 @@ module.exports = {
   acumularTempoPausado,
   finalizarInterview,
   definirVideoUrl,
+  listarElegiveisLimpezaAudio,
   criarTurno,
   listarTurnos,
   contarTurnos,

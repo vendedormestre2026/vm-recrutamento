@@ -82,6 +82,7 @@ module.exports = {
   acumularTempoPausado: driver.acumularTempoPausado,
   finalizarInterview: driver.finalizarInterview,
   definirVideoUrl: driver.definirVideoUrl,
+  listarElegiveisLimpezaAudio: driver.listarElegiveisLimpezaAudio,
   criarTurno: driver.criarTurno,
   listarTurnos: driver.listarTurnos,
   contarTurnos: driver.contarTurnos,
