@@ -1086,8 +1086,17 @@ router.get('/interview/audio-padrao/nao-ouvi.mp3', async (req, res) => {
 router.post('/interview/video-upload', (req, res) => {
   const ct = String(req.headers['content-type'] || '');
 
+  // Identificacao do request nos logs ANTES de interviewId existir (itens 1-3 abaixo
+  // rodam antes do parse). Vai o valor CRU da query: se ele chegar ausente/estranho, e
+  // justamente isso que precisamos enxergar.
+  const idCru = JSON.stringify(req.query.interview_id);
+
   // 1) Tipo: agora no header da requisicao inteira (nao numa sub-parte multipart).
   if (!/^video\//.test(ct)) {
+    console.warn(
+      `[video-upload] recusado (400): Content-Type inválido ${JSON.stringify(ct || '(ausente)')} ` +
+        `— interview_id=${idCru}.`,
+    );
     req.resume(); // drena o corpo p/ nao pendurar a conexao
     return res.status(400).json({ ok: false, erro: 'Formato de vídeo inválido.' });
   }
@@ -1096,6 +1105,10 @@ router.post('/interview/video-upload', (req, res) => {
   //    por isso tambem contamos os bytes durante o stream (abaixo).
   const declarado = Number(req.headers['content-length']);
   if (Number.isFinite(declarado) && declarado > MAX_VIDEO_BYTES) {
+    console.warn(
+      `[video-upload] recusado (400): Content-Length ${declarado} excede o teto de ` +
+        `${MAX_VIDEO_BYTES} bytes — interview_id=${idCru}.`,
+    );
     req.resume();
     return res.status(400).json({ ok: false, erro: 'O vídeo da entrevista é muito grande.' });
   }
@@ -1103,12 +1116,26 @@ router.post('/interview/video-upload', (req, res) => {
   // 3) Auth + entrevista ANTES de gravar (fail-fast: nao recebe 300 MB p/ request invalido).
   const candidato = candidatoApi(req, res);
   if (!candidato) {
+    // O 401 ja foi respondido por candidatoApi; aqui so deixamos o rastro. Distingue
+    // "cookie expirou no meio da entrevista" de todos os outros motivos de nao subir video.
+    console.warn(`[video-upload] recusado (401): sem sessão de candidato — interview_id=${idCru}.`);
     req.resume();
     return undefined;
   }
   const interviewId = Number(req.query.interview_id);
   const entrevistaRow = db.obterInterview(interviewId);
   if (!entrevistaRow || entrevistaRow.application_id !== candidato.id) {
+    // Mesmo detalhamento por motivo ja usado no 404 de /interview/answer: sem ele, os
+    // quatro casos abaixo viram um 404 indistinguivel.
+    const motivo = !req.query.interview_id
+      ? 'interview_id ausente na query'
+      : !Number.isFinite(interviewId)
+        ? `interview_id invalido: ${idCru}`
+        : !entrevistaRow
+          ? `entrevista ${interviewId} inexistente no banco`
+          : `entrevista ${interviewId} pertence a outra candidatura ` +
+            `(app ${entrevistaRow.application_id} != ${candidato.id})`;
+    console.warn(`[video-upload] recusado (404): ${motivo}.`);
     req.resume();
     return res.status(404).json({ ok: false, erro: 'Entrevista não encontrada.' });
   }
@@ -1135,17 +1162,47 @@ router.post('/interview/video-upload', (req, res) => {
 
   req.on('data', (chunk) => {
     recebido += chunk.length;
-    if (recebido > MAX_VIDEO_BYTES) abortar(400, 'O vídeo da entrevista é muito grande.');
+    if (recebido > MAX_VIDEO_BYTES) {
+      // Caso DISTINTO do item 2: aqui o Content-Length nao veio (upload chunked) e o teto
+      // so estourou no meio do stream.
+      console.warn(
+        `[video-upload] abortado (400): interview ${interviewId} excedeu ${MAX_VIDEO_BYTES} ` +
+          `bytes durante o stream (recebido=${recebido}).`,
+      );
+      abortar(400, 'O vídeo da entrevista é muito grande.');
+    }
   });
   req.on('aborted', () => {
     // Cliente abortou (ex.: fechou a aba). Best-effort: limpa e nao responde.
     if (finalizado) return;
     finalizado = true;
+    // `recebido` diferencia "nem comecou" (0) de "caiu no meio de 40 MB" — sem esse numero
+    // o aborto do cliente e indistinguivel de um upload que nunca saiu do navegador.
+    console.warn(
+      `[video-upload] abortado pelo cliente: interview ${interviewId} — ${recebido} bytes ` +
+        'recebidos antes do corte (aba fechada / conexão caiu).',
+    );
     ws.destroy();
     removerTemp(destino);
   });
-  req.on('error', () => abortar(400, 'Não foi possível processar o vídeo.'));
-  ws.on('error', () => abortar(400, 'Não foi possível processar o vídeo.'));
+  // Os dois handlers abaixo davam a MESMA resposta e ficavam indistinguiveis no log, mas
+  // a causa e oposta: falha de rede/cliente na leitura (warn, nada a fazer do nosso lado)
+  // vs. falha ao ESCREVER o temporario em os.tmpdir() (error — disco do container cheio,
+  // permissao: problema NOSSO). O parametro de erro, antes descartado, agora e logado.
+  req.on('error', (e) => {
+    console.warn(
+      `[video-upload] erro de leitura da requisição: interview ${interviewId} — ` +
+        `${e && e.message} (recebido=${recebido}).`,
+    );
+    abortar(400, 'Não foi possível processar o vídeo.');
+  });
+  ws.on('error', (e) => {
+    console.error(
+      `[video-upload] erro ao gravar o arquivo temporário ${destino}: interview ` +
+        `${interviewId} — ${e && e.message} (recebido=${recebido}).`,
+    );
+    abortar(400, 'Não foi possível processar o vídeo.');
+  });
   req.pipe(ws);
 
   ws.on('finish', async () => {
@@ -1153,6 +1210,12 @@ router.post('/interview/video-upload', (req, res) => {
     finalizado = true;
 
     if (recebido === 0) {
+      // A requisicao chegou inteira e valida, mas com corpo vazio: assinatura de
+      // MediaRecorder que nao capturou nenhum chunk.
+      console.warn(
+        `[video-upload] recusado (400): interview ${interviewId} enviou 0 bytes ` +
+          '(MediaRecorder sem chunks?).',
+      );
       removerTemp(destino);
       return res.status(400).json({ ok: false, erro: 'Nenhum vídeo recebido.' });
     }
