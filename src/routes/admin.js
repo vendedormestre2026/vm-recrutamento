@@ -577,9 +577,9 @@ function selectStatusRecrutadorLinha(c) {
 // elas sempre aparecem e nao sao togglaveis.
 //
 // `exigeAplicacao`: a query da listagem (listarAplicacoesComContexto) NAO devolve todas
-// as colunas de applications — linkedin_url e utm_source ficam de fora. As colunas que
-// dependem delas marcam esta flag e o handler carrega a aplicacao completa por linha
-// (db.obterAplicacao) SOMENTE quando pelo menos uma dessas colunas esta ativa.
+// as colunas de applications — linkedin_url fica de fora. As colunas que dependem dela
+// marcam esta flag e o handler carrega a aplicacao completa por linha (db.obterAplicacao)
+// SOMENTE quando pelo menos uma dessas colunas esta ativa.
 const COLUNAS_CANDIDATOS = [
   {
     chave: 'telefone',
@@ -605,7 +605,8 @@ const COLUNAS_CANDIDATOS = [
   {
     chave: 'origem',
     rotulo: 'Origem (UTM)',
-    exigeAplicacao: true,
+    // Sem `exigeAplicacao`: a query da listagem passou a trazer a.utm_source, entao esta
+    // coluna nao custa mais uma consulta por linha (eram 550+ num painel sem paginacao).
     // Mesma regra da tela de detalhe: NULL (candidaturas antigas) e o literal 'direto'
     // (acesso sem UTM) exibem "Direto"; qualquer outra origem mostra o valor cru escapado.
     celula: (c) =>
@@ -733,8 +734,8 @@ router.get('/', (req, res) => {
   // Colunas visiveis (preferencia salva ou default). Uma leitura de config por request.
   const colunas = colunasCandidatosAtivas();
 
-  // LinkedIn/Origem nao vem na query da listagem: so quando uma delas esta ativa a linha
-  // e completada com a aplicacao inteira (db.obterAplicacao). Com o conjunto padrao de
+  // LinkedIn nao vem na query da listagem: so quando essa coluna esta ativa a linha e
+  // completada com a aplicacao inteira (db.obterAplicacao). Com o conjunto padrao de
   // colunas, nenhuma consulta extra acontece.
   const precisaAplicacao = colunas.some((col) => col.exigeAplicacao);
 

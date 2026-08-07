@@ -1060,13 +1060,69 @@ function escaparCuringasLike(termo) {
   return String(termo).replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-function listarAplicacoesComContexto({
+// ── Paginacao da lista de candidatos ──
+// Tamanho de pagina FIXO (nao configuravel pela query string): a tela nasceu sem
+// paginacao e com 550+ leads numa pagina so. O numero mora aqui porque tres pontos
+// precisam do MESMO valor — a query (LIMIT), o calculo de totalPaginas no handler e
+// os controles de navegacao. Exportado para o painel nao redeclarar o 25.
+const CANDIDATOS_POR_PAGINA = 25;
+
+// ── Origem do lead (utm_source): valor CRU no banco x valor CANONICO no filtro ──
+// O banco guarda a origem exatamente como veio da URL, e por isso tem duplicatas
+// historicas ('grupo-whats' e 'grupowhats' sao a mesma campanha, digitadas diferente)
+// e dois jeitos de dizer "sem origem" (NULL nas candidaturas anteriores ao rastreio, e
+// o literal 'direto' gravado desde entao). A normalizacao acontece SO na apresentacao e
+// no filtro — nada aqui reescreve applications.utm_source.
+const ORIGEM_DIRETO = 'direto';
+const ORIGEM_GRUPO_WHATS = 'grupo-whats';
+// Todas as grafias que caem no balde do grupo de WhatsApp (a 1a e a canonica).
+const ORIGENS_GRUPO_WHATS = ['grupo-whats', 'grupowhats'];
+
+// Valor cru -> valor canonico do filtro. NULL/vazio/'direto' viram 'direto'; as duas
+// grafias do grupo viram 'grupo-whats'; o resto passa intacto.
+function origemCanonica(valor) {
+  const v = valor == null ? '' : String(valor).trim();
+  if (!v || v === ORIGEM_DIRETO) return ORIGEM_DIRETO;
+  if (ORIGENS_GRUPO_WHATS.includes(v)) return ORIGEM_GRUPO_WHATS;
+  return v;
+}
+
+// Rotulo de tela para um valor canonico. Espelha o que a coluna "Origem (UTM)" do
+// painel ja mostrava ('Direto'); as demais origens aparecem cruas, como sempre.
+function rotuloOrigem(canonica) {
+  if (canonica === ORIGEM_DIRETO) return 'Direto';
+  if (canonica === ORIGEM_GRUPO_WHATS) return 'Grupo WhatsApp';
+  return canonica;
+}
+
+// Origens existentes para popular o <select> do filtro, ja deduplicadas pela
+// normalizacao acima. Sempre inclui 'Direto', mesmo que nenhuma candidatura tenha
+// utm_source NULL/'direto': e a opcao que o recrutador espera encontrar na lista.
+// Ordenado por rotulo (pt-BR), para a ordem nao depender da ordem de insercao.
+function listarOrigensDistintas() {
+  const linhas = getDb().prepare('SELECT DISTINCT utm_source FROM applications').all();
+  const mapa = new Map([[ORIGEM_DIRETO, rotuloOrigem(ORIGEM_DIRETO)]]);
+  for (const linha of linhas) {
+    const canon = origemCanonica(linha.utm_source);
+    if (!mapa.has(canon)) mapa.set(canon, rotuloOrigem(canon));
+  }
+  return [...mapa.entries()]
+    .map(([valor_canonico, label]) => ({ valor_canonico, label }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+}
+
+// Monta o WHERE dinamico da lista de candidatos. Extraido para ser a UNICA fonte dos
+// filtros: a query das linhas (com LIMIT/OFFSET) e a contagem total (sem) chamam esta
+// funcao, entao o rodape nunca conta um conjunto diferente do que a tabela mostra.
+// Retorna { where, params } — as condicoes usam SEMPRE o alias `a` de applications.
+function condicoesFiltroCandidatos({
   status,
   statusIa,
   statusRecrutador,
   dataDe,
   dataAte,
   jobId,
+  origem,
   busca,
   incluirArquivados = false,
   arquivados,
@@ -1126,6 +1182,23 @@ function listarAplicacoesComContexto({
     params.push(dataAte);
   }
 
+  // Origem do lead. Dois valores canonicos sao BALDES (varias grafias no banco caem
+  // neles) e por isso nao podem virar um '= ?' simples; o resto e igualdade direta.
+  // Origem ausente/vazia = sem filtro (mesma convencao dos outros).
+  const origemFiltro = origem ? origemCanonica(origem) : '';
+  if (origemFiltro === ORIGEM_DIRETO) {
+    // Inclui a string vazia por defesa: origemCanonica ja a trata como 'direto', entao
+    // uma linha assim precisa aparecer no mesmo recorte da tela.
+    where.push("(a.utm_source IS NULL OR TRIM(a.utm_source) = '' OR a.utm_source = ?)");
+    params.push(ORIGEM_DIRETO);
+  } else if (origemFiltro === ORIGEM_GRUPO_WHATS) {
+    where.push(`a.utm_source IN (${ORIGENS_GRUPO_WHATS.map(() => '?').join(', ')})`);
+    params.push(...ORIGENS_GRUPO_WHATS);
+  } else if (origemFiltro) {
+    where.push('a.utm_source = ?');
+    params.push(origemFiltro);
+  }
+
   // ── Busca textual livre (nome, sobrenome, nome completo, e-mail, telefone) ──
   //
   // Entra no MESMO array `where`, e portanto e combinada com AND aos demais filtros e
@@ -1167,14 +1240,34 @@ function listarAplicacoesComContexto({
     where.push(`(${condicoes.join(' OR ')})`);
   }
 
-  const clausula = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return { where, params };
+}
+
+// Junta as condicoes num WHERE (ou string vazia, quando nao ha filtro nenhum).
+function montarClausula(where) {
+  return where.length ? `WHERE ${where.join(' AND ')}` : '';
+}
+
+// Pagina 1-indexed e saneada aqui tambem (nao so no handler): qualquer lixo — 0,
+// negativo, 'abc', undefined — vira 1, para o OFFSET nunca ficar negativo.
+function paginaSaneada(pagina) {
+  const n = Math.floor(Number(pagina));
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+// Lista UMA pagina de candidatos (25 por vez). Para o total de linhas do recorte,
+// use contarAplicacoesComContexto com os MESMOS filtros.
+function listarAplicacoesComContexto(filtros = {}) {
+  const { where, params } = condicoesFiltroCandidatos(filtros);
+  const clausula = montarClausula(where);
+  const pagina = paginaSaneada(filtros.pagina);
 
   return getDb()
     .prepare(
       `SELECT
          a.id, a.nome, a.sobrenome, a.email, a.telefone, a.status, a.criado_em,
          a.status_ia, a.status_recrutador, a.contatado_whatsapp_em,
-         a.deleted_at,
+         a.deleted_at, a.utm_source,
          j.titulo AS vaga_titulo,
          j.empresa AS vaga_empresa,
          (SELECT i.id FROM interviews i
@@ -1188,9 +1281,21 @@ function listarAplicacoesComContexto({
        FROM applications a
        LEFT JOIN jobs j ON j.id = a.job_id
        ${clausula}
-       ORDER BY a.criado_em DESC`,
+       ORDER BY a.criado_em DESC
+       LIMIT ? OFFSET ?`,
     )
-    .all(...params);
+    .all(...params, CANDIDATOS_POR_PAGINA, (pagina - 1) * CANDIDATOS_POR_PAGINA);
+}
+
+// Total de candidatos do recorte, SEM LIMIT/OFFSET — e o denominador da paginacao e o
+// "Total de candidatos" do rodape. Nao ha JOIN com jobs porque nenhum filtro toca a
+// tabela de vagas (jobId e coluna de applications); se um dia entrar um filtro por
+// campo de job, o JOIN precisa vir para ca tambem.
+function contarAplicacoesComContexto(filtros = {}) {
+  const { where, params } = condicoesFiltroCandidatos(filtros);
+  return getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM applications a ${montarClausula(where)}`)
+    .get(...params).n;
 }
 
 // Ultimo relatorio de uma entrevista, em QUALQUER status (o painel mostra mesmo
@@ -1650,7 +1755,10 @@ module.exports = {
   atualizarVaga,
   definirVagaAtiva,
   // painel (Fase 5)
+  CANDIDATOS_POR_PAGINA,
   listarAplicacoesComContexto,
+  contarAplicacoesComContexto,
+  listarOrigensDistintas,
   obterReportPorInterview,
   registrarAcessoVaga,
   registrarEventoFunil,

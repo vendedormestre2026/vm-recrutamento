@@ -94,7 +94,10 @@ module.exports = {
   obterReportEnviadoPorInterview: driver.obterReportEnviadoPorInterview,
 
   // painel do recrutador (Fase 5)
+  CANDIDATOS_POR_PAGINA: driver.CANDIDATOS_POR_PAGINA,
   listarAplicacoesComContexto: driver.listarAplicacoesComContexto,
+  contarAplicacoesComContexto: driver.contarAplicacoesComContexto,
+  listarOrigensDistintas: driver.listarOrigensDistintas,
   obterReportPorInterview: driver.obterReportPorInterview,
   registrarAcessoVaga: driver.registrarAcessoVaga,
   registrarEventoFunil: driver.registrarEventoFunil,
