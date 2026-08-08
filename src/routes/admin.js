@@ -166,6 +166,8 @@ const ESTILO_ADMIN = `
   .btn--ghost:hover { border-color:var(--laranja); color:var(--laranja); }
   .btn:disabled, .btn[disabled] { background:var(--cinza-suave); color:var(--cinza); cursor:not-allowed; filter:none; }
   .admin-rodape { margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--linha); color:var(--cinza); font-size:.9rem; }
+  /* Marca que os numeros do rodape sao do recorte filtrado, nao do banco inteiro. */
+  .admin-rodape .rodape-filtrado { color:var(--laranja); font-style:italic; }
   .admin-filtros { display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:1.25rem; }
   .admin-filtros .filtro { display:flex; flex-direction:column; gap:.25rem; }
   .admin-filtros .filtro > span { color:var(--cinza); font-size:.8rem; text-transform:uppercase; }
@@ -720,7 +722,13 @@ router.get('/', (req, res) => {
   const busca = sanearBusca(q.q);
 
   const vagas = db.listarVagas();
-  const candidatos = db.listarAplicacoesComContexto({
+
+  // Recorte UNICO da tela: o mesmo objeto vai para a listagem e para os dois contadores
+  // do rodape. Remontar um objeto parecido em outro ponto do handler seria a porta de
+  // entrada para o rodape divergir da tabela (era o que acontecia com os contadores
+  // globais). Filtro novo entra aqui e chega nos tres de graca.
+  // (nome com sufixo porque `filtros` mais abaixo ja e o HTML do formulario)
+  const filtrosLista = {
     status,
     statusIa,
     statusRecrutador,
@@ -729,7 +737,8 @@ router.get('/', (req, res) => {
     jobId: vagaId || undefined,
     busca,
     arquivados: visibilidade,
-  });
+  };
+  const candidatos = db.listarAplicacoesComContexto(filtrosLista);
 
   // Colunas visiveis (preferencia salva ou default). Uma leitura de config por request.
   const colunas = colunasCandidatosAtivas();
@@ -766,8 +775,11 @@ router.get('/', (req, res) => {
     })
     .join('');
 
-  const totalCandidatos = db.contarAplicacoes();
-  const totalConcluidas = db.contarEntrevistasConcluidas();
+  // Numeros do rodape: MESMO recorte da tabela, sem `pagina` — a paginacao e recorte de
+  // exibicao, nao filtro. Nenhuma das duas funcoes le esse campo; passar `filtros`
+  // inteiro seria inofensivo, mas o objeto aqui nao tem pagina mesmo.
+  const totalCandidatos = db.contarAplicacoesComContexto(filtrosLista);
+  const totalConcluidas = db.contarEntrevistasConcluidasComContexto(filtrosLista);
 
   const sel = (v) => (status === v ? ' selected' : '');
   const selIa = (v) => (statusIa === v ? ' selected' : '');
@@ -975,7 +987,7 @@ router.get('/', (req, res) => {
     </form>
     <p class="admin-rodape">
       Total de candidatos: <b>${totalCandidatos}</b> ·
-      Entrevistas concluídas: <b>${totalConcluidas}</b>
+      Entrevistas concluídas: <b>${totalConcluidas}</b>${temFiltro ? ' <span class="rodape-filtrado">(filtrado)</span>' : ''}
     </p>
     <script>
     (function () {

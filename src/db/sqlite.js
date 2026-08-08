@@ -1298,6 +1298,31 @@ function contarAplicacoesComContexto(filtros = {}) {
     .get(...params).n;
 }
 
+// Entrevistas concluidas DENTRO do mesmo recorte da listagem — o segundo numero do
+// rodape do painel. Difere de contarEntrevistasConcluidas (que conta a tabela inteira,
+// sem olhar para os filtros da tela).
+//
+// Precisa do JOIN com applications porque todo filtro da tela mora em applications
+// (status, vaga, datas, origem, busca, arquivados); `interviews` so contribui com o
+// proprio status. A condicao de conclusao entra no MESMO array `where` em vez de ser
+// concatenada depois: assim montarClausula resolve sozinha o caso "nenhum filtro
+// ativo" (vira `WHERE i.status = 'concluido'`, sem AND solto).
+//
+// Como conta linhas de `interviews`, um candidato com duas entrevistas concluidas
+// (reprocessamento) conta duas vezes — exatamente o que o contador global ja fazia.
+function contarEntrevistasConcluidasComContexto(filtros = {}) {
+  const { where, params } = condicoesFiltroCandidatos(filtros);
+  const clausula = montarClausula([...where, "i.status = 'concluido'"]);
+  return getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM interviews i
+         JOIN applications a ON a.id = i.application_id
+         ${clausula}`,
+    )
+    .get(...params).n;
+}
+
 // Ultimo relatorio de uma entrevista, em QUALQUER status (o painel mostra mesmo
 // 'gerado'/'erro'; difere de obterReportEnviadoPorInterview, que so pega 'enviado').
 function obterReportPorInterview(interviewId) {
@@ -1758,6 +1783,7 @@ module.exports = {
   CANDIDATOS_POR_PAGINA,
   listarAplicacoesComContexto,
   contarAplicacoesComContexto,
+  contarEntrevistasConcluidasComContexto,
   listarOrigensDistintas,
   obterReportPorInterview,
   registrarAcessoVaga,

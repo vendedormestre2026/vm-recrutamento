@@ -97,6 +97,7 @@ module.exports = {
   CANDIDATOS_POR_PAGINA: driver.CANDIDATOS_POR_PAGINA,
   listarAplicacoesComContexto: driver.listarAplicacoesComContexto,
   contarAplicacoesComContexto: driver.contarAplicacoesComContexto,
+  contarEntrevistasConcluidasComContexto: driver.contarEntrevistasConcluidasComContexto,
   listarOrigensDistintas: driver.listarOrigensDistintas,
   obterReportPorInterview: driver.obterReportPorInterview,
   registrarAcessoVaga: driver.registrarAcessoVaga,
