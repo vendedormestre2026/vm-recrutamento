@@ -1292,10 +1292,31 @@ router.get('/descadastro', (req, res) => {
 // ── POST /descadastro ── grava o opt-out ──
 router.post('/descadastro', (req, res) => {
   const b = req.body || {};
-  // Revalidacao COMPLETA, do zero. O formulario e dado externo como qualquer outro: o
-  // fato de o GET ter validado antes nao prova nada sobre este POST.
-  const email = lerEmailDaUrl(b.e);
-  const token = typeof b.t === 'string' ? b.t : '';
+  const q = req.query || {};
+  // DUAS origens para os mesmos dois parametros, porque sao DOIS caminhos legitimos:
+  //
+  //   1. humano  -> GET /descadastro?e=..&t=.. mostra a confirmacao, e o formulario faz
+  //                 POST com `e`/`t` no CORPO (application/x-www-form-urlencoded).
+  //   2. One-Click (RFC 8058) -> o CLIENTE DE E-MAIL, ao ver o cabecalho
+  //                 `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, faz um POST
+  //                 direto na URL do `List-Unsubscribe`, SEM abrir pagina e SEM corpo de
+  //                 formulario. Os parametros so existem na QUERY STRING.
+  //
+  // Ler apenas do corpo (como era ate aqui) faria o One-Click falhar em silencio: o
+  // provedor mostraria "cancelar inscricao" ao usuario, o clique responderia erro, e a
+  // pessoa concluiria que nao consegue sair — o gatilho classico de denuncia de spam.
+  //
+  // A query tem PRIORIDADE quando presente: e o unico canal do One-Click, enquanto o
+  // fluxo humano sempre tem o corpo. Nao ha ambiguidade real (os dois nunca chegam
+  // juntos), e a precedencia so torna o comportamento deterministico se chegarem.
+  const eBruto = typeof q.e === 'string' && q.e ? q.e : b.e;
+  const tBruto = typeof q.t === 'string' && q.t ? q.t : b.t;
+
+  // Revalidacao COMPLETA, do zero, venha de onde vier. O formulario (e a query) sao dado
+  // externo como qualquer outro: o fato de o GET ter validado antes nao prova nada sobre
+  // este POST.
+  const email = lerEmailDaUrl(eBruto);
+  const token = typeof tBruto === 'string' ? tBruto : '';
 
   if (!email || !verificarToken(email, token)) {
     return avisoLinkDescadastroInvalido(res);

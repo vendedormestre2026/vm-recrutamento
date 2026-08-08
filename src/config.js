@@ -174,6 +174,40 @@ const config = {
       remetente: process.env.RESEND_FROM_EMAIL || 'jean@vendedormestre.com.br',
       resend: { apiKey: process.env.RESEND_API_KEY || '' },
     },
+
+    // ── E-mail de CAMPANHA (Promocao de Vagas) — SMTP generico ──
+    //
+    // Bloco SEPARADO do `email` acima, de proposito, e nao um provedor a mais dentro
+    // dele. Sao dois sistemas com necessidades opostas:
+    //   - `email` (Resend): transacional, 1 mensagem por evento, 6 call sites, dominio
+    //     principal. Reputacao dele nao pode depender de campanha.
+    //   - `emailCampanha` (SMTP): divulgacao em massa, subdominio proprio, precisa de
+    //     List-Unsubscribe e de troca de provedor sem tocar em codigo.
+    // Uma denuncia de spam numa campanha nao pode derrubar a entrega do e-mail de
+    // entrevista de ninguem — por isso remetente, provedor e reputacao sao separados.
+    //
+    // SMTP GENERICO (e nao a API REST do Emailit) e a decisao que torna a migracao
+    // barata: quando o Amazon SES for aprovado, troca-se HOST/PORTA/USUARIO/SENHA por
+    // credenciais SES (o SES tambem fala SMTP) e NENHUMA linha de codigo muda.
+    emailCampanha: {
+      host: process.env.SMTP_CAMPANHA_HOST || '',
+      porta: num(process.env.SMTP_CAMPANHA_PORTA, 587),
+      // `seguro` mapeia direto para a opcao `secure` do nodemailer, e o default FALSE
+      // e o correto para a porta 587 — nao e descuido:
+      //   - porta 587 -> secure:false. A conexao abre em texto claro e sobe para TLS via
+      //     STARTTLS (o nodemailer faz isso sozinho quando o servidor anuncia suporte).
+      //   - porta 465 -> secure:true. TLS implicito, cifrado desde o primeiro byte.
+      // Marcar secure:true na 587 faz o handshake TLS falhar contra um servidor que
+      // espera texto claro no inicio. Emailit usa 587, entao o default serve; quem for
+      // para a 465 precisa setar SMTP_CAMPANHA_SEGURO=true junto com a porta.
+      seguro: bool(process.env.SMTP_CAMPANHA_SEGURO, false),
+      usuario: process.env.SMTP_CAMPANHA_USUARIO || '',
+      senha: process.env.SMTP_CAMPANHA_SENHA || '',
+      // Remetente das campanhas: subdominio DEDICADO, separado do dominio transacional.
+      // O valor abaixo e um PLACEHOLDER — a verificacao do dominio no provedor (registros
+      // SPF/DKIM/DMARC) e passo MANUAL, fora do codigo e fora deste incremento.
+      remetente: process.env.SMTP_CAMPANHA_FROM_EMAIL || 'vagas@vagas.vendedormestre.com.br',
+    },
   },
 };
 
