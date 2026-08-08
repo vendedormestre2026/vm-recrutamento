@@ -112,17 +112,39 @@ function barraFunil(etapaAtual) {
 }
 
 // Layout completo de uma pagina.
-//   opcoes: { titulo, conteudo, tema: 'claro'|'escuro', etapa?:1..4, comOrbe?:bool }
-function pagina({ titulo, conteudo, tema = 'claro', etapa = null, comOrbe = false }) {
+//   opcoes: { titulo, conteudo, tema: 'claro'|'escuro', etapa?:1..4, comOrbe?:bool,
+//             semRastreio?:bool }
+//
+// semRastreio (default false, entao NENHUM call site existente muda de comportamento):
+// suprime GTM e Meta Pixel nesta pagina. Existe para as telas de exercicio de direito do
+// titular — hoje o descadastro (routes/pages.js) —, alcancadas por link de e-mail: seria
+// incoerente carregar rastreio de terceiros exatamente na pagina em que a pessoa pede
+// para parar de ser contactada. Nao e preferencia estetica; nao remova sem trocar por
+// outra garantia equivalente.
+function pagina({
+  titulo,
+  conteudo,
+  tema = 'claro',
+  etapa = null,
+  comOrbe = false,
+  semRastreio = false,
+}) {
   const classeTema = tema === 'escuro' ? 'tema-escuro' : 'tema-claro';
   const tituloPagina = titulo ? `${titulo} · Vendedor Mestre` : 'Vendedor Mestre';
+
+  // Resolvidos aqui (e nao inline no template) para que os TRES pontos de injecao —
+  // head do GTM, pixel e noscript do GTM — sejam governados pela mesma decisao. Inline,
+  // seria facil suprimir dois e esquecer o terceiro.
+  const gtmHead = semRastreio ? '' : snippetGtmHead(config.rastreio.gtmId);
+  const metaPixel = semRastreio ? '' : snippetMetaPixel(config.rastreio.metaPixelId);
+  const gtmBody = semRastreio ? '' : snippetGtmBody(config.rastreio.gtmId);
 
   return `<!doctype html>
 <html lang="pt-BR" class="${classeTema}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#F4F3F1">${snippetGtmHead(config.rastreio.gtmId)}${snippetMetaPixel(config.rastreio.metaPixelId)}
+  <meta name="theme-color" content="#F4F3F1">${gtmHead}${metaPixel}
   <title>${escapeHtml(tituloPagina)}</title>
   <meta name="description" content="Recrutamento de vendedores - entrevista com a agente ${escapeHtml(config.agente.nome)}.">
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
@@ -132,7 +154,7 @@ function pagina({ titulo, conteudo, tema = 'claro', etapa = null, comOrbe = fals
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/css/base.css">
 </head>
-<body>${snippetGtmBody(config.rastreio.gtmId)}
+<body>${gtmBody}
   ${PARCIAIS.header}
   ${etapa ? barraFunil(etapa) : ''}
   <main class="vm-main">

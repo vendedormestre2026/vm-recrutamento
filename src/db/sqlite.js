@@ -11,6 +11,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { config } = require('../config');
+// Modulo-FOLHA, sem nenhuma dependencia do projeto — e o que torna seguro a camada de
+// dados importa-lo (ver o cabecalho dele). NAO troque este require pelo de
+// lib/descadastro, que reexporta a mesma funcao: aquele modulo depende de ../config hoje
+// e pode passar a depender de ../db amanha, fechando um ciclo db -> lib -> db que, em
+// CommonJS, nao falha no require e sim em runtime.
+const { normalizarEmail } = require('../lib/normalizarEmail');
 
 let _db = null;
 
@@ -1768,6 +1774,34 @@ function definirConfigBool(chave, valor) {
   definirConfig(chave, valor ? '1' : '0');
 }
 
+// ──────────────────────────────────────────────────────────────
+// Promocao de Vagas — descadastro (opt-out global por e-mail)
+// ──────────────────────────────────────────────────────────────
+
+// Registra o opt-out. INSERT OR IGNORE porque a idempotencia ja e da PK: quem clica duas
+// vezes no link (ou clica depois de o recrutador ter registrado na mao) nao gera erro nem
+// sobrescreve a origem do PRIMEIRO registro — a data e a origem originais do opt-out sao
+// o que interessa para auditoria.
+// Retorna true se INSERIU, false se ja existia. E-mail vazio devolve false sem lancar:
+// vem de query string publica, e ausencia de e-mail nao e excecao, e so "nada a fazer".
+function registrarDescadastro(email, origem) {
+  const alvo = normalizarEmail(email);
+  if (!alvo) return false;
+  const info = getDb()
+    .prepare('INSERT OR IGNORE INTO descadastros (email, origem) VALUES (?, ?)')
+    .run(alvo, origem || null);
+  return info.changes > 0;
+}
+
+// A pessoa esta fora da divulgacao? Comparacao pelo e-mail NORMALIZADO nos dois lados —
+// a coluna ja guarda normalizado (quem escreve passa por aqui) e o argumento e
+// normalizado antes de comparar, entao qualquer grafia do mesmo endereco responde igual.
+function estaDescadastrado(email) {
+  const alvo = normalizarEmail(email);
+  if (!alvo) return false;
+  return Boolean(getDb().prepare('SELECT 1 FROM descadastros WHERE email = ?').get(alvo));
+}
+
 module.exports = {
   getDb,
   aplicarSchema,
@@ -1802,6 +1836,9 @@ module.exports = {
   definirConfig,
   obterConfigBool,
   definirConfigBool,
+  // Promocao de Vagas — descadastro (opt-out)
+  registrarDescadastro,
+  estaDescadastrado,
   // roteiros
   obterRoteiro,
   obterRoteiroPorNome,

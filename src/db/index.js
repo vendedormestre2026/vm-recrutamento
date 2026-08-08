@@ -118,4 +118,8 @@ module.exports = {
   definirConfig: driver.definirConfig,
   obterConfigBool: driver.obterConfigBool,
   definirConfigBool: driver.definirConfigBool,
+
+  // Promocao de Vagas — descadastro (opt-out global por e-mail)
+  registrarDescadastro: driver.registrarDescadastro,
+  estaDescadastrado: driver.estaDescadastrado,
 };

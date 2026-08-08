@@ -59,6 +59,28 @@ const config = {
     segredo: process.env.SESSION_SECRET || 'troque-isto',
   },
 
+  // Promocao de Vagas — segredo do HMAC que assina os links de descadastro.
+  //
+  // SEM FALLBACK para SESSION_SECRET, de proposito. Um fallback silencioso faria os
+  // links funcionarem hoje e quebrarem no dia em que DESCADASTRO_SECRET fosse definido:
+  // todo token JA ENVIADO passaria a ser invalido. E-mail enviado e IMUTAVEL — nao da
+  // para reemitir o link de quem ja recebeu. Entao a ausencia do segredo tem que doer
+  // AGORA (gerarToken lanca), e nao depois, num opt-out que o titular nao consegue
+  // exercer. Vazio tambem nao vira default 'troque-isto' pela mesma razao.
+  //
+  // `segredoAnterior` (opcional, default vazio) e a JANELA DE ROTACAO: verificarToken
+  // aceita o token do segredo atual OU do anterior, entao trocar a chave nao quebra os
+  // links ja enviados. Sem ele, o segredo seria irrotacionavel na pratica — um link de
+  // opt-out quebrado e gatilho de denuncia de spam, que atinge a reputacao do MESMO
+  // dominio usado pelos e-mails transacionais do funil.
+  // Procedimento de rotacao (documentado tambem no .env.example): mover o valor atual
+  // para DESCADASTRO_SECRET_ANTERIOR, por o novo em DESCADASTRO_SECRET. Links antigos
+  // seguem validos indefinidamente. Ausencia do anterior e o caso normal, nao erro.
+  descadastro: {
+    segredo: process.env.DESCADASTRO_SECRET || '',
+    segredoAnterior: process.env.DESCADASTRO_SECRET_ANTERIOR || '',
+  },
+
   agente: {
     nome: process.env.AGENT_NAME || 'Vera',
   },

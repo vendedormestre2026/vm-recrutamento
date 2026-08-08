@@ -13,6 +13,11 @@ const { modoEntrevistaAtivo } = require('../lib/modo');
 const { extrairUtmDaQuery, lerUtmDoCookie, serializarUtmParaCookie } = require('../lib/utm');
 const { mensagemPosEntrevista, mensagemNovaCandidatura } = require('../lib/whatsapp');
 const {
+  verificarToken,
+  lerEmailDaUrl,
+  ORIGEM_LINK_EMAIL,
+} = require('../lib/descadastro');
+const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
   rotuloNivel,
@@ -1020,11 +1025,14 @@ function nomeCandidato(candidato) {
 }
 
 // Pagina simples (titulo + mensagem) no tema, para os casos sem relatorio renderizavel.
-function paginaAviso(res, status, { titulo, descricao }) {
+// `semRastreio` e opcional e default false — os call sites existentes nao mudam. So as
+// telas de descadastro passam true (ver o bloco de rotas no fim do arquivo).
+function paginaAviso(res, status, { titulo, descricao, semRastreio = false }) {
   return res.status(status).send(
     pagina({
       titulo,
       tema: 'claro',
+      semRastreio,
       conteudo: placeholder({ titulo, descricao, centro: true }),
     }),
   );
@@ -1200,6 +1208,128 @@ router.get('/relatorio/:token', (req, res) => {
 
   res.send(
     pagina({ titulo: `Relatório — ${nomeCandidato(candidato)}`, tema: 'claro', conteudo }),
+  );
+});
+
+// ──────────────────────────────────────────────────────────────
+// Descadastro da divulgacao de vagas (Promocao de Vagas) — GET + POST /descadastro
+// ──────────────────────────────────────────────────────────────
+//
+// Publicas, alcancadas por link no rodape dos e-mails de divulgacao. Mesmo desenho de
+// GET /relatorio/:token: sem sessao, autorizacao por token nao-adivinhavel e mensagens
+// de erro GENERICAS — a pagina nunca revela se um e-mail existe na base, senao a propria
+// rota viraria um oraculo de enumeracao ("este endereco esta cadastrado?").
+//
+// POR QUE O GET NAO DESCADASTRA (a decisao mais importante deste par de rotas):
+// scanners de seguranca de e-mail corporativo (Defender, Proofpoint, Mimecast...) fazem
+// GET em TODOS os links da mensagem antes de entrega-la ao destinatario. Se o GET
+// mudasse estado, essas pessoas seriam descadastradas sem nunca ter aberto o e-mail — e
+// o sintoma seria "a lista encolhe sozinha", quase impossivel de diagnosticar depois.
+// Por isso: GET so LE e mostra a confirmacao; a mudanca de estado exige o POST do botao.
+// NAO transforme isto num clique so, por mais que pareca melhor de UX.
+//
+// As duas passam semRastreio: true — nao se carrega GTM/Pixel na tela em que o titular
+// exerce o direito de sair.
+
+// Erro comum das duas rotas. Texto identico para token ausente, malformado ou invalido:
+// distinguir os casos ajudaria mais quem esta sondando do que quem tem um link quebrado.
+function avisoLinkDescadastroInvalido(res) {
+  return paginaAviso(res, 400, {
+    semRastreio: true,
+    titulo: 'Link inválido',
+    descricao:
+      'Este link de descadastro é inválido ou está incompleto. Confira se ele foi ' +
+      'copiado por inteiro do e-mail. Se o problema continuar, responda o e-mail que ' +
+      'você recebeu e nós cuidamos disso para você.',
+  });
+}
+
+// Aviso que a pessoa precisa ler ANTES de confirmar, e repetido na tela de sucesso: o
+// opt-out e da DIVULGACAO, e nao tem nada a ver com uma candidatura em andamento. Sao
+// dois fluxos distintos no sistema (campanhas x applications) e quem clica aqui achando
+// que esta desistindo de uma vaga — ou com medo de que esteja — precisa saber a diferenca.
+const NOTA_ESCOPO_DESCADASTRO = `
+  <div class="vm-card">
+    <p><b>Isto vale só para os e-mails de divulgação de vagas.</b></p>
+    <p>Se você tem uma candidatura em andamento, ela <b>continua normalmente</b> — você
+    segue recebendo os e-mails sobre o seu processo (entrevista, retomada de link e
+    retorno). Descadastrar-se aqui <b>não cancela</b> nenhuma candidatura.</p>
+    <p>Para desistir de uma candidatura específica, responda o e-mail do seu processo.</p>
+  </div>`;
+
+// ── GET /descadastro ── confirmacao (NAO altera nada) ──
+router.get('/descadastro', (req, res) => {
+  const email = lerEmailDaUrl(req.query.e);
+  const token = typeof req.query.t === 'string' ? req.query.t : '';
+
+  if (!email || !verificarToken(email, token)) {
+    return avisoLinkDescadastroInvalido(res);
+  }
+
+  // Os campos ocultos repassam os MESMOS `e` e `t` que chegaram na URL: o POST revalida
+  // tudo do zero e nao confia em nada que o formulario afirme.
+  const conteudo = `
+    <section class="vm-hero">
+      <p class="vm-kicker">Vendedor Mestre</p>
+      <h1 class="vm-title">Deseja parar de receber nossas vagas?</h1>
+      <p class="vm-lead">Você está prestes a descadastrar o e-mail
+        <b>${escapeHtml(email)}</b> da divulgação de vagas.</p>
+      ${NOTA_ESCOPO_DESCADASTRO}
+      <form method="POST" action="/descadastro" class="vm-acoes" style="width:100%">
+        <input type="hidden" name="e" value="${escapeHtml(String(req.query.e || ''))}">
+        <input type="hidden" name="t" value="${escapeHtml(token)}">
+        <button type="submit" class="vm-btn vm-btn--primario">Confirmar descadastro</button>
+      </form>
+      <p class="vm-lead" style="font-size:.95rem">Se você chegou aqui sem querer, é só
+        fechar esta página — nada foi alterado.</p>
+    </section>`;
+
+  res.send(
+    pagina({ titulo: 'Descadastro', tema: 'claro', semRastreio: true, conteudo }),
+  );
+});
+
+// ── POST /descadastro ── grava o opt-out ──
+router.post('/descadastro', (req, res) => {
+  const b = req.body || {};
+  // Revalidacao COMPLETA, do zero. O formulario e dado externo como qualquer outro: o
+  // fato de o GET ter validado antes nao prova nada sobre este POST.
+  const email = lerEmailDaUrl(b.e);
+  const token = typeof b.t === 'string' ? b.t : '';
+
+  if (!email || !verificarToken(email, token)) {
+    return avisoLinkDescadastroInvalido(res);
+  }
+
+  try {
+    // Retorno ignorado DE PROPOSITO: false significa "ja estava descadastrado", que para
+    // o titular e o mesmo desfecho de "acabou de sair". A tela abaixo e a mesma nos dois
+    // casos — a pessoa quer saber que esta fora, nao o estado do nosso banco.
+    db.registrarDescadastro(email, ORIGEM_LINK_EMAIL);
+  } catch (err) {
+    console.error(`[descadastro] falha ao registrar opt-out: ${err.message}`);
+    return paginaAviso(res, 500, {
+      semRastreio: true,
+      titulo: 'Não foi possível concluir',
+      descricao:
+        'Não conseguimos registrar seu descadastro agora. Tente novamente em alguns ' +
+        'instantes ou responda o e-mail que você recebeu — nós registramos manualmente.',
+    });
+  }
+
+  const conteudo = `
+    <section class="vm-hero">
+      <p class="vm-kicker">Vendedor Mestre</p>
+      <h1 class="vm-title">Pronto, você foi descadastrado</h1>
+      <p class="vm-lead">O e-mail <b>${escapeHtml(email)}</b> não vai mais receber
+        divulgação de vagas nossas.</p>
+      ${NOTA_ESCOPO_DESCADASTRO}
+      <p class="vm-lead" style="font-size:.95rem">Mudou de ideia? Responda o último
+        e-mail que recebeu de nós e pedimos para voltar.</p>
+    </section>`;
+
+  res.send(
+    pagina({ titulo: 'Descadastro concluído', tema: 'claro', semRastreio: true, conteudo }),
   );
 });
 
