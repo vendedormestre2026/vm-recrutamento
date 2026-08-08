@@ -168,6 +168,7 @@ const ESTILO_ADMIN = `
   .admin-rodape { margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--linha); color:var(--cinza); font-size:.9rem; }
   /* Marca que os numeros do rodape sao do recorte filtrado, nao do banco inteiro. */
   .admin-rodape .rodape-filtrado { color:var(--laranja); font-style:italic; }
+  .admin-paginacao { display:flex; gap:.75rem; align-items:center; justify-content:center; flex-wrap:wrap; margin-top:1rem; color:var(--cinza); font-size:.9rem; }
   .admin-filtros { display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:1.25rem; }
   .admin-filtros .filtro { display:flex; flex-direction:column; gap:.25rem; }
   .admin-filtros .filtro > span { color:var(--cinza); font-size:.8rem; text-transform:uppercase; }
@@ -723,6 +724,19 @@ router.get('/', (req, res) => {
 
   const vagas = db.listarVagas();
 
+  // Origem (utm_source). A allowlist e DINAMICA — sai do proprio banco, ja com as
+  // grafias duplicadas fundidas (grupo-whats/grupowhats) e NULL+'direto' num balde so.
+  // Mesmo padrao dos outros enums: valor fora da lista e ignorado, o que equivale a
+  // "Todas". As origens tambem alimentam o <select> mais abaixo — uma consulta so.
+  const origens = db.listarOrigensDistintas();
+  const origem = origens.some((o) => o.valor_canonico === q.origem) ? q.origem : '';
+
+  // Pagina 1-indexed. Mesmo formato de saneamento do filtro de vaga (inteiro positivo,
+  // lixo cai no default). A camada de dados sanea de novo — aqui o valor tambem serve
+  // para desenhar os controles, entao precisa estar limpo antes da query.
+  const paginaNum = Number(q.pagina);
+  const pagina = Number.isInteger(paginaNum) && paginaNum > 0 ? paginaNum : 1;
+
   // Recorte UNICO da tela: o mesmo objeto vai para a listagem e para os dois contadores
   // do rodape. Remontar um objeto parecido em outro ponto do handler seria a porta de
   // entrada para o rodape divergir da tabela (era o que acontecia com os contadores
@@ -735,8 +749,12 @@ router.get('/', (req, res) => {
     dataDe,
     dataAte,
     jobId: vagaId || undefined,
+    origem,
     busca,
     arquivados: visibilidade,
+    // `pagina` recorta a EXIBICAO, nao o conjunto: as duas contagens do rodape usam este
+    // mesmo objeto e ignoram o campo de proposito (nenhuma delas o le).
+    pagina,
   };
   const candidatos = db.listarAplicacoesComContexto(filtrosLista);
 
@@ -781,10 +799,18 @@ router.get('/', (req, res) => {
   const totalCandidatos = db.contarAplicacoesComContexto(filtrosLista);
   const totalConcluidas = db.contarEntrevistasConcluidasComContexto(filtrosLista);
 
+  // Numero de paginas do recorte, reaproveitando a contagem que o rodape ja fez (nenhuma
+  // query a mais). Piso 1 para a tela nunca dizer "Pagina 1 de 0" quando nao ha resultado.
+  // Pagina alem da ultima nao e erro nem redirect: o OFFSET simplesmente devolve vazio e
+  // a mensagem de "nenhum candidato" que ja existia cobre o caso.
+  const totalPaginas = Math.max(1, Math.ceil(totalCandidatos / db.CANDIDATOS_POR_PAGINA));
+
   const sel = (v) => (status === v ? ' selected' : '');
   const selIa = (v) => (statusIa === v ? ' selected' : '');
   const selRec = (v) => (statusRecrutador === v ? ' selected' : '');
   const selVis = (v) => (visibilidade === v ? ' selected' : '');
+  // `pagina` de proposito FORA daqui: ela nao recorta nada — decide o "(filtrado)" do
+  // rodape e a mensagem de tabela vazia, e estar na pagina 3 nao e um filtro.
   const temFiltro =
     busca ||
     status ||
@@ -793,11 +819,20 @@ router.get('/', (req, res) => {
     dataDe ||
     dataAte ||
     vagaId ||
+    origem ||
     visibilidade !== 'ativos';
   const opcoesVaga = vagas
     .map(
       (v) =>
         `<option value="${v.id}"${String(vagaId) === String(v.id) ? ' selected' : ''}>${escapeHtml(v.titulo || `Vaga ${v.id}`)}</option>`,
+    )
+    .join('');
+  // O valor vai cru no value (e o valor_canonico que o filtro espera de volta) e o rotulo
+  // escapado — 'meta', 'recrutasimples' etc. sao dados vindos da URL de campanha.
+  const opcoesOrigem = origens
+    .map(
+      (o) =>
+        `<option value="${escapeHtml(o.valor_canonico)}"${origem === o.valor_canonico ? ' selected' : ''}>${escapeHtml(o.label)}</option>`,
     )
     .join('');
   const filtros = `
@@ -816,6 +851,13 @@ router.get('/', (req, res) => {
         <select name="vaga">
           <option value=""${vagaId ? '' : ' selected'}>Todas</option>
           ${opcoesVaga}
+        </select>
+      </label>
+      <label class="filtro">
+        <span>Origem</span>
+        <select name="origem">
+          <option value=""${origem ? '' : ' selected'}>Todas</option>
+          ${opcoesOrigem}
         </select>
       </label>
       <label class="filtro">
@@ -891,6 +933,7 @@ router.get('/', (req, res) => {
         <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
         <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
         <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
+        <input type="hidden" name="origem" value="${escapeHtml(origem)}">
         <input type="hidden" name="visibilidade" value="${escapeHtml(visibilidade)}">
         <p style="color:var(--cinza);font-size:.85rem;margin:0 0 .7rem;">
           Escolha as colunas visíveis na tabela. Seleção, <b>Nome</b> e <b>Ação</b> são fixas.
@@ -926,6 +969,50 @@ router.get('/', (req, res) => {
                 ? '<div class="aviso-ok">Lead restaurado.</div>'
                 : '';
 
+  // ── Controles de paginacao ──
+  // Links de reload (GET), o mesmo padrao de navegacao do resto da tela: sem fetch, sem
+  // POST. A querystring sai de paramsFiltros — a MESMA fonte usada pelos redirects
+  // pos-acao —, e so `pagina` e escrita por cima. Assim a lista de filtros que viaja na
+  // URL nao e redigitada aqui: filtro novo entra em paramsFiltros e a navegacao o
+  // preserva de graca.
+  const linkPagina = (n) => {
+    const p = paramsFiltros({
+      q: busca,
+      status,
+      status_ia: statusIa,
+      filtro_status_recrutador: statusRecrutador,
+      de: dataDe,
+      ate: dataAte,
+      vaga: vagaId,
+      origem,
+      visibilidade,
+    });
+    p.set('pagina', String(n));
+    return `/admin?${p.toString()}`;
+  };
+  // Escondido quando ha uma pagina so — nao ha para onde navegar e a barra viraria ruido.
+  // A excecao e `pagina > 1`: quem chegou a uma pagina alem da ultima (URL na mao, ou um
+  // filtro que encolheu o resultado) precisa de um caminho de volta na tela.
+  // "Anterior" nesse caso aponta para a ULTIMA pagina real, nao para pagina-1, que seria
+  // outra tela vazia.
+  const paginacao =
+    totalPaginas > 1 || pagina > 1
+      ? `
+      <nav class="admin-paginacao" aria-label="Paginação da lista de candidatos">
+        ${
+          pagina > 1
+            ? `<a class="btn btn--ghost" rel="prev" href="${linkPagina(Math.min(pagina - 1, totalPaginas))}">← Anterior</a>`
+            : '<span class="btn btn--off">← Anterior</span>'
+        }
+        <span>Página <b>${pagina}</b> de <b>${totalPaginas}</b></span>
+        ${
+          pagina < totalPaginas
+            ? `<a class="btn btn--ghost" rel="next" href="${linkPagina(pagina + 1)}">Próxima →</a>`
+            : '<span class="btn btn--off">Próxima →</span>'
+        }
+      </nav>`
+      : '';
+
   const conteudo = `
     ${flashLista}
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
@@ -954,6 +1041,7 @@ router.get('/', (req, res) => {
       <input type="hidden" name="de" value="${escapeHtml(dataDe)}">
       <input type="hidden" name="ate" value="${escapeHtml(dataAte)}">
       <input type="hidden" name="vaga" value="${escapeHtml(String(vagaId || ''))}">
+      <input type="hidden" name="origem" value="${escapeHtml(origem)}">
         <input type="hidden" name="visibilidade" value="${escapeHtml(visibilidade)}">
       <div style="margin:0 0 .75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
         <button type="submit" class="btn" data-arquivar-lote disabled>Arquivar selecionados</button>
@@ -985,6 +1073,7 @@ router.get('/', (req, res) => {
         </table>
       </div>
     </form>
+    ${paginacao}
     <p class="admin-rodape">
       Total de candidatos: <b>${totalCandidatos}</b> ·
       Entrevistas concluídas: <b>${totalConcluidas}</b>${temFiltro ? ' <span class="rodape-filtrado">(filtrado)</span>' : ''}
@@ -1643,6 +1732,19 @@ function paramsFiltros(src = {}) {
   if (ehData(src.ate)) p.set('ate', String(src.ate));
   const vn = Number(src.vaga);
   if (Number.isInteger(vn) && vn > 0) p.set('vaga', String(vn));
+  // Origem: saneamento FROUXO aqui (string nao-vazia, aparada e com teto), porque a
+  // allowlist verdadeira vem do banco (listarOrigensDistintas) e esta funcao roda em
+  // redirects de POST, onde nao vale abrir consulta so para montar uma URL. Uma origem
+  // invalida que sobreviva ate aqui e descartada na entrada do GET /admin, que revalida
+  // contra a lista real — no pior caso a tela volta com "Todas".
+  if (typeof src.origem === 'string' && src.origem.trim()) {
+    p.set('origem', src.origem.trim().slice(0, MAX_BUSCA));
+  }
+  // `pagina` NAO entra: paramsFiltros existe para os redirects DEPOIS de uma acao
+  // (arquivar/restaurar/status em lote, salvar colunas), e essas acoes podem esvaziar
+  // justamente a pagina que estava aberta — arquivar os 25 itens da pagina 3 devolveria
+  // o recrutador para uma pagina em branco. Sem o parametro, o GET cai no default 1.
+  // Os links de navegacao entre paginas setam `pagina` por conta propria, depois daqui.
   // Visibilidade de arquivados: 'ativos' e o default, entao nao precisa viajar na URL.
   if (src.visibilidade === 'arquivados' || src.visibilidade === 'todos') {
     p.set('visibilidade', String(src.visibilidade));
