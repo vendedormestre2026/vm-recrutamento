@@ -220,3 +220,112 @@ CREATE INDEX IF NOT EXISTS idx_applications_job      ON applications(job_id);
 CREATE INDEX IF NOT EXISTS idx_turns_interview       ON interview_turns(interview_id, ordem);
 CREATE INDEX IF NOT EXISTS idx_api_usage_interview   ON api_usage(interview_id);
 CREATE INDEX IF NOT EXISTS idx_api_usage_criado      ON api_usage(criado_em);
+
+-- ──────────────────────────────────────────────────────────────
+-- Promocao de Vagas (divulgacao de uma vaga para a base de contatos)
+-- ──────────────────────────────────────────────────────────────
+
+-- Uma campanha de divulgacao: uma VAGA enviada por e-mail para um recorte da base de
+-- contatos. A base de contatos NAO e uma tabela: e uma projecao de LEITURA sobre
+-- `applications` (funil) + `talentos` (Banco de Curriculos), que continuam separadas,
+-- sem FK entre si e sem fusao de dados — as duas tem finalidades LGPD distintas
+-- (candidatura a vaga x banco de talentos) e nada aqui as mistura no armazenamento.
+--
+-- `criterios` guarda o JSON dos filtros aplicados no momento do disparo (vaga, origem,
+-- status, periodo...). E um registro HISTORICO, nao uma configuracao re-executavel: o
+-- publico real de cada campanha esta materializado em `campanha_envios`, linha a linha.
+-- Guardar os criterios permite auditar "por que esta pessoa recebeu" depois que os dados
+-- de origem mudaram (o candidato avancou de status, a vaga foi encerrada etc.).
+--
+-- `total_destinatarios` e o tamanho do publico no momento em que a campanha foi
+-- enfileirada — congelado de proposito, para o painel poder mostrar progresso
+-- (enviados / total) sem recontar um conjunto que muda embaixo dele.
+CREATE TABLE IF NOT EXISTS campanhas (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id              INTEGER NOT NULL REFERENCES jobs(id),
+  assunto             TEXT NOT NULL,
+  corpo_html          TEXT NOT NULL,
+  criterios           TEXT NOT NULL,   -- JSON dos filtros aplicados (rastro historico)
+  status              TEXT NOT NULL DEFAULT 'rascunho'
+                        CHECK (status IN ('rascunho', 'enfileirada', 'enviando', 'concluida', 'cancelada')),
+  total_destinatarios INTEGER NOT NULL DEFAULT 0,
+  criado_em           TEXT NOT NULL DEFAULT (datetime('now')),
+  enfileirada_em      TEXT,
+  finalizada_em       TEXT
+);
+
+-- Uma linha por PESSOA por campanha: o publico materializado no momento do disparo.
+--
+-- UNIQUE(campanha_id, email) NAO e higiene de dados — e a garantia de IDEMPOTENCIA no
+-- nivel do banco. A mesma pessoa nunca recebe a mesma campanha duas vezes, mesmo que a
+-- query de publico seja executada de novo (re-enfileiramento, retry apos falha, dois
+-- ciclos de varredura se cruzando). NAO REMOVER: sem esta constraint, a unica protecao
+-- contra e-mail duplicado seria a logica da aplicacao, e nao existe "despublicar" um
+-- e-mail enviado.
+--
+-- `email` e gravado JA NORMALIZADO (LOWER(TRIM())). Quem escreve normaliza; quem le NAO
+-- precisa aplicar LOWER(TRIM()) de novo. E o que faz o UNIQUE acima valer para a PESSOA
+-- (a unidade de destinatario deste subsistema) e nao para uma grafia especifica do
+-- e-mail — 'Joao@X.com' e 'joao@x.com ' sao a mesma linha aqui.
+--
+-- `origem_id` NAO tem chave estrangeira DE PROPOSITO: aponta ora para applications(id),
+-- ora para talentos(id), conforme `origem_tipo`. Uma FK so pode mirar UMA tabela, e as
+-- duas bases sao independentes. E rastro de AUDITORIA ("de onde veio este contato"), nao
+-- relacao — segue a mesma decisao de talentos.aplicacao_id (referencia logica, sem
+-- constraint rigida). Nullable: um contato cuja origem sumiu continua auditavel pelo
+-- e-mail, e apagar a origem nunca pode apagar o registro de que o e-mail saiu.
+CREATE TABLE IF NOT EXISTS campanha_envios (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  campanha_id INTEGER NOT NULL REFERENCES campanhas(id),
+  email       TEXT NOT NULL,   -- SEMPRE ja normalizado (LOWER(TRIM())) por quem escreve
+  nome        TEXT,
+  origem_tipo TEXT NOT NULL CHECK (origem_tipo IN ('application', 'talento')),
+  origem_id   INTEGER,         -- applications(id) OU talentos(id), conforme origem_tipo; sem FK (ver acima)
+  status      TEXT NOT NULL DEFAULT 'pendente'
+                CHECK (status IN ('pendente', 'enviado', 'falha', 'cancelado')),
+  enviado_em  TEXT,
+  erro        TEXT,
+  criado_em   TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (campanha_id, email)
+);
+
+-- Opt-out de divulgacao. GLOBAL e por E-MAIL, nao por candidato, por tres razoes que
+-- juntas descartam qualquer alternativa por-linha:
+--   1. a mesma pessoa pode existir em `applications` E em `talentos` (bases separadas);
+--   2. a mesma pessoa pode ter VARIAS linhas em `applications` (recandidatura — ja
+--      observado em producao, ver o dedupe de listarPendentesLembreteInicio);
+--   3. a pessoa pode se recandidatar DEPOIS de ter se descadastrado, criando uma linha
+--      nova e limpa — o opt-out precisa sobreviver a isso.
+-- Uma coluna em applications/talentos falharia nos tres casos. Aqui o e-mail e a
+-- identidade, e a supressao vale para sempre, independente de onde a pessoa reaparecer.
+--
+-- `email` e a PK e e gravado JA NORMALIZADO (LOWER(TRIM())), mesma regra de
+-- campanha_envios: quem escreve normaliza, quem le compara direto.
+-- Sem coluna de "reinscricao": desfazer um opt-out e apagar a linha (acao deliberada e
+-- rara), nao alternar um flag que um bug poderia inverter em massa.
+CREATE TABLE IF NOT EXISTS descadastros (
+  email     TEXT PRIMARY KEY,   -- SEMPRE ja normalizado (LOWER(TRIM())) por quem escreve
+  origem    TEXT,               -- 'link_email' (auto-servico) | 'manual' (recrutador)
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Indices da Promocao de Vagas.
+--
+-- Os dois primeiros ficam AQUI (e nao em migrate.js) porque `applications.email` e
+-- `talentos.email` fazem parte do CREATE TABLE original das duas tabelas, acima neste
+-- mesmo arquivo — nao sao colunas adicionadas por migracao incremental. A restricao que
+-- obrigou idx_vaga_acessos_utm a morar em migrate.js (aplicarSchema roda ANTES das
+-- migracoes, entao a coluna ainda nao existiria) NAO se aplica a eles.
+--
+-- ATENCAO — indice sobre a coluna CRUA, nao sobre LOWER(TRIM(email)): consultas que
+-- normalizam nos dois lados (o padrao deste subsistema e o de
+-- listarPendentesLembreteInicio) NAO usam estes indices; o SQLite cai em varredura de
+-- tabela. E aceito DE PROPOSITO no volume atual (~550 leads / ~227 candidaturas): um
+-- indice funcional resolveria, mas so vale a pena quando a varredura doer, e ate la ele
+-- seria estrutura extra para manter. Isto e decisao registrada, nao descuido. Os indices
+-- seguem uteis para busca/join por e-mail exato.
+CREATE INDEX IF NOT EXISTS idx_applications_email       ON applications(email);
+CREATE INDEX IF NOT EXISTS idx_talentos_email           ON talentos(email);
+-- Fila de trabalho da varredura de envio: "os pendentes DESTA campanha". A ordem das
+-- colunas segue o uso (igualdade em campanha_id, depois filtro por status).
+CREATE INDEX IF NOT EXISTS idx_campanha_envios_pendentes ON campanha_envios(campanha_id, status);
