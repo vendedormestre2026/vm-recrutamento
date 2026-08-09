@@ -27,7 +27,22 @@
 const express = require('express');
 const db = require('../db');
 const { listarPublicoCampanha, PERFIS_VALIDOS, RECOMENDACOES_VALIDAS } = require('../lib/promocaoVagas');
+const { gerarSugestaoConteudo } = require('../lib/gerarSugestaoPromocao');
 const { escapeHtml } = require('../views');
+
+// Mensagem por codigo de erro da sugestao. Fonte unica para a rota, no molde de
+// MENSAGENS_IMPORT_ERRO (admin.js). Cada uma diz o que o Jean pode FAZER — "falhou" sem
+// proximo passo nao ajuda ninguem.
+const MENSAGENS_SUGESTAO_ERRO = {
+  VAGA_NAO_ENCONTRADA:
+    'Vaga não encontrada. Recarregue a página e escolha a vaga de novo.',
+  LLM_INDISPONIVEL:
+    'Não consegui falar com o modelo de IA agora. Tente de novo em instantes — ou escreva o texto à mão, que funciona igual.',
+  SUGESTAO_TRUNCADA:
+    'A sugestão veio cortada (a descrição da vaga é longa demais). Encurte a descrição da vaga e tente de novo, ou escreva o texto à mão.',
+  SUGESTAO_FALHOU:
+    'A IA respondeu num formato que não consegui aproveitar. Tente de novo; se repetir, escreva o texto à mão.',
+};
 
 // Rotulos de exibicao dos enums. Ficam aqui (camada de apresentacao) e nao na lib: a lib
 // trabalha com os valores canonicos, a tela e que precisa de portugues.
@@ -126,9 +141,26 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       )
       .join('');
 
+    // Marca que o conteudo veio da IA. Nao e enfeite: quem revisa precisa saber que
+    // aquele texto nao foi escrito por uma pessoa, e que revisar e obrigatorio, nao
+    // opcional. Some assim que o Jean recalcula a previa ou salva.
+    const notaSugestao = valores.sugestaoGerada
+      ? `<p class="aviso-alerta" style="margin:0 0 1rem;">
+           <b>Assunto e corpo abaixo foram gerados por IA</b> a partir dos dados da vaga.
+           É um ponto de partida: leia, corrija e ajuste o tom antes de criar a campanha.
+           Nada é enviado sem você criar a campanha e disparar.
+         </p>`
+      : '';
+
     return `
       ${alerta}
       <form method="POST" action="/admin/promocao/previa">
+        ${
+          // Carrega o estado "ja calculei a previa" atraves dos submits que NAO recalculam
+          // (o de sugestao). Sem isto, pedir uma sugestao de texto esconderia o botao de
+          // criar e obrigaria a recalcular sem motivo.
+          valores.previaCalculada ? '<input type="hidden" name="previa_calculada" value="1">' : ''
+        }
         <section class="rel-sec">
           <h2>Vaga e mensagem</h2>
           <label class="campo" style="max-width:520px;">
@@ -142,6 +174,15 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
             Só vagas <b>ativas</b> aparecem aqui. Quem já se candidatou a esta vaga
             (mesmo com a candidatura arquivada) é excluído do público automaticamente.
           </p>
+          <p style="margin:0 0 1rem;">
+            <button type="submit" class="btn btn--ghost" formaction="/admin/promocao/sugestao">
+              Gerar sugestão de conteúdo
+            </button>
+            <span style="color:var(--cinza);font-size:.8rem;margin-left:.5rem;">
+              Escreve assunto e corpo a partir dos dados da vaga. Você revisa depois.
+            </span>
+          </p>
+          ${notaSugestao}
           <label class="campo" style="max-width:520px;">
             <span>Assunto do e-mail</span>
             <input type="text" name="assunto" value="${escapeHtml(valores.assunto || '')}"
@@ -296,7 +337,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     return db.listarVagas().filter((v) => v.ativo);
   }
 
-  function paginaFormulario({ criterios, valores, resultado, erro }) {
+  function paginaFormulario({ criterios, valores = {}, resultado, erro }) {
     const conteudo = `
       <p><a class="btn btn--ghost" href="/admin/promocao">← Voltar às campanhas</a></p>
       <h1>Nova campanha</h1>
@@ -403,6 +444,77 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     }
 
     res.send(paginaFormulario({ criterios, valores, resultado }));
+  });
+
+  // ── POST /admin/promocao/sugestao ── preenche assunto e corpo com ajuda de LLM ──
+  //
+  // NAO cria campanha, NAO envia e-mail e NAO recalcula publico: mexe SO no conteudo do
+  // e-mail. Os criterios de segmentacao que o Jean ja tinha montado atravessam intactos
+  // (via lerCriteriosDoForm, a mesma funcao das outras duas rotas), e o estado
+  // "previa calculada" tambem — pedir um rascunho de texto nao pode custar o recorte de
+  // publico que a pessoa levou minutos ajustando.
+  //
+  // Em QUALQUER falha, o que o Jean digitou volta para a tela. Uma sugestao que nao veio
+  // nao justifica apagar o texto que a pessoa ja tinha escrito.
+  router.post('/sugestao', async (req, res) => {
+    const b = req.body || {};
+    const criterios = lerCriteriosDoForm(b);
+    const previaCalculada = b.previa_calculada === '1';
+    const digitado = {
+      assunto: b.assunto,
+      corpo_html: b.corpo_html,
+      previaCalculada,
+    };
+
+    const renderErro = (mensagem, status = 400) =>
+      res.status(status).send(
+        paginaFormulario({ criterios, valores: digitado, resultado: null, erro: mensagem }),
+      );
+
+    // Validacao no BACKEND, e nao so pelo `required` do <select>: o navegador pode ser
+    // contornado, e chamar o LLM sem vaga gastaria token para produzir nada.
+    if (!criterios.jobIdAlvo) {
+      return renderErro('Escolha a vaga antes de gerar a sugestão — o texto sai dos dados dela.');
+    }
+
+    const r = await gerarSugestaoConteudo(criterios.jobIdAlvo);
+    if (!r.ok) {
+      return renderErro(
+        MENSAGENS_SUGESTAO_ERRO[r.erroCodigo] || MENSAGENS_SUGESTAO_ERRO.SUGESTAO_FALHOU,
+        r.erroCodigo === 'VAGA_NAO_ENCONTRADA' ? 400 : 502,
+      );
+    }
+
+    // Sugestao pronta: recalcula o publico com os MESMOS criterios que ja estavam na tela,
+    // pela mesma chamada que POST /previa faz. E leitura pura e barata, e sem ela a tela
+    // voltaria com o botao de criar liberado e NENHUM numero a vista — furando a garantia
+    // do Incremento 5, que e justamente "ninguem cria campanha sem ver o tamanho dela".
+    //
+    // Se o recalculo falhar, a sugestao NAO se perde: a tela volta com o texto gerado e
+    // sem o bloco de numeros. Perder o conteudo ja pago por causa de uma consulta seria
+    // trocar um problema pequeno por um maior.
+    let resultado = null;
+    try {
+      resultado = listarPublicoCampanha(criterios);
+    } catch (err) {
+      console.error(`[promocao] sugestao gerada, mas falhou o recalculo da previa: ${err.message}`);
+    }
+
+    res.send(
+      paginaFormulario({
+        criterios,
+        valores: {
+          assunto: r.assunto,
+          corpo_html: r.corpoHtml,
+          // Com o recalculo, o estado normalmente vem do proprio resultado. O campo oculto
+          // so ainda importa quando o recalculo falha — e no caminho de ERRO da sugestao,
+          // que continua sem recalcular.
+          previaCalculada: Boolean(resultado) || previaCalculada,
+          sugestaoGerada: true,
+        },
+        resultado,
+      }),
+    );
   });
 
   // ── POST /admin/promocao ── cria o rascunho ──
