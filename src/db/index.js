@@ -122,4 +122,11 @@ module.exports = {
   // Promocao de Vagas — descadastro (opt-out global por e-mail)
   registrarDescadastro: driver.registrarDescadastro,
   estaDescadastrado: driver.estaDescadastrado,
+
+  // Promocao de Vagas — motor de publico (lib/promocaoVagas)
+  listarCandidatosParaCampanha: driver.listarCandidatosParaCampanha,
+  listarTalentosParaCampanha: driver.listarTalentosParaCampanha,
+  listarEmailsInscritosNaVaga: driver.listarEmailsInscritosNaVaga,
+  listarEmailsDescadastrados: driver.listarEmailsDescadastrados,
+  origemCanonica: driver.origemCanonica,
 };

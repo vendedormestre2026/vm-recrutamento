@@ -1802,6 +1802,146 @@ function estaDescadastrado(email) {
   return Boolean(getDb().prepare('SELECT 1 FROM descadastros WHERE email = ?').get(alvo));
 }
 
+// ──────────────────────────────────────────────────────────────
+// Promocao de Vagas — motor de publico (leitura para campanha)
+// ──────────────────────────────────────────────────────────────
+//
+// As quatro funcoes abaixo sao LEITURA CRUA. Elas devolvem linhas com os atributos que a
+// segmentacao precisa; quem decide quem entra e quem sai e lib/promocaoVagas.js.
+//
+// DIVISAO DE TRABALHO, e a razao dela: as comparacoes de IDENTIDADE (mesma pessoa, ja
+// inscrito na vaga alvo, descadastrado) NAO acontecem no SQL. Elas exigem o e-mail
+// normalizado, e a normalizacao canonica do projeto e a de lib/normalizarEmail, que e
+// Unicode-aware — o LOWER() do SQLite dobra apenas ASCII. Um `d.email = LOWER(TRIM(...))`
+// aqui seria uma SEGUNDA definicao de "mesma pessoa", divergente da que gravou a linha em
+// `descadastros`; o efeito de uma divergencia e alguem que pediu para sair receber e-mail
+// mesmo assim. Por isso o SQL entrega os conjuntos e o JS compara. Ver o cabecalho de
+// lib/normalizarEmail.js.
+//
+// O custo disso e carregar as linhas em memoria. Na ordem de grandeza atual (centenas de
+// candidaturas, algumas centenas de opt-outs) e irrelevante, e a consulta roda sob demanda
+// no painel, nunca em laco.
+
+// Candidaturas na janela de datas, com os atributos de segmentacao.
+//
+// REUSO de condicoesFiltroCandidatos para os eixos que se sobrepoem (intervalo de datas e
+// visibilidade de arquivados), sem toca-la: ela continua com os mesmos 3 call sites do
+// painel. `arquivados: 'todos'` porque o publico de campanha e "todo mundo" — uma
+// candidatura arquivada em OUTRA vaga nao torna a pessoa inelegivel para saber de uma vaga
+// nova (a exclusao por arquivamento vale so na vaga ALVO, e e feita por e-mail no JS).
+//
+// `recomendacao` sai do relatorio MAIS RECENTE que nao falhou, mesmo criterio e mesma
+// forma de subconsulta que listarAplicacoesComContexto ja usa para achar o relatorio de
+// uma candidatura. Vem de `reports` (a coluna canonica); applications.status_ia e um
+// espelho denormalizado e nao e a fonte usada aqui.
+function listarCandidatosParaCampanha({ dataDe, dataAte } = {}) {
+  const { where, params } = condicoesFiltroCandidatos({ dataDe, dataAte, arquivados: 'todos' });
+  // Sem e-mail nao ha destinatario possivel — descartado ja no SQL.
+  const clausula = montarClausula([...where, 'a.email IS NOT NULL', "TRIM(a.email) <> ''"]);
+
+  return getDb()
+    .prepare(
+      `SELECT
+         a.id          AS origem_id,
+         a.email       AS email,
+         a.nome        AS nome,
+         a.sobrenome   AS sobrenome,
+         a.utm_source  AS utm_source,
+         j.perfil      AS perfil,
+         (SELECT r.recomendacao
+            FROM reports r
+            JOIN interviews i ON i.id = r.interview_id
+           WHERE i.application_id = a.id
+             AND r.status <> 'erro'
+           ORDER BY r.id DESC
+           LIMIT 1)   AS recomendacao
+       FROM applications a
+       LEFT JOIN jobs j ON j.id = a.job_id
+       ${clausula}
+       ORDER BY a.id`,
+    )
+    .all(...params);
+}
+
+// Talentos (Banco de Curriculos) na mesma janela de datas.
+//
+// `talentos.criado_em` existe e e NOT NULL, com o mesmo sentido de applications.criado_em
+// (momento do cadastro), entao a janela de datas se aplica igual as duas bases — nao ha
+// "talento sem data".
+//
+// NAO ha exclusao por vaga alvo aqui: talentos nao tem job_id.
+//
+// EXCLUSAO DE `status = 'descartado'`, e por que ela fica NO SQL enquanto as outras duas
+// exclusoes automaticas moram no JS: as que estao no JS ('ja inscrito na vaga alvo' e
+// 'descadastrado') sao comparacoes de IDENTIDADE — casam PESSOAS entre tabelas pelo
+// e-mail normalizado, e por isso dependem da normalizacao Unicode-aware de
+// lib/normalizarEmail. Esta aqui e um atributo de LINHA, comparacao de enum exata, sem
+// nada a normalizar; e da mesma natureza da janela de datas e do "tem e-mail", que ja
+// estao no WHERE. O criterio nao e "onde as outras exclusoes ficam", e sim identidade ->
+// JS, atributo de linha -> SQL. Manter no SQL tambem evita carregar linhas que serao
+// descartadas em seguida.
+//
+// 'descartado' e o recrutador dizendo que este curriculo nao serve. Nao e opt-out (a
+// pessoa nao pediu nada), mas tambem nao e alguem para quem faz sentido divulgar vaga.
+// 'novo', 'contatado' e 'convertido' seguem elegiveis.
+// A coluna e NOT NULL DEFAULT 'novo' desde a criacao da tabela, entao `<>` nao corre risco
+// de descartar linha por comparacao com NULL.
+//
+// `perfil_interesse` sai apelidado como `perfil`, o MESMO nome que a Query A da a
+// jobs.perfil, de proposito: e o mesmo atributo, no mesmo enum (SDR|CLOSER), e o
+// agrupamento em lib/promocaoVagas trata os dois casos com o mesmo codigo. Um talento que
+// declarou interesse em CLOSER casa com o filtro de perfil CLOSER; so quem tem NULL aqui
+// conta como "sem atributo".
+function listarTalentosParaCampanha({ dataDe, dataAte } = {}) {
+  const where = ['t.email IS NOT NULL', "TRIM(t.email) <> ''", "t.status <> 'descartado'"];
+  const params = [];
+  if (dataDe) {
+    where.push('date(t.criado_em) >= date(?)');
+    params.push(dataDe);
+  }
+  if (dataAte) {
+    where.push('date(t.criado_em) <= date(?)');
+    params.push(dataAte);
+  }
+
+  return getDb()
+    .prepare(
+      `SELECT
+         t.id               AS origem_id,
+         t.email            AS email,
+         t.nome             AS nome,
+         t.perfil_interesse AS perfil
+       FROM talentos t
+       ${montarClausula(where)}
+       ORDER BY t.id`,
+    )
+    .all(...params);
+}
+
+// E-mails com QUALQUER candidatura na vaga alvo — inclusive arquivada (deleted_at NAO
+// entra na condicao, de proposito: quem ja se candidatou aquela vaga nao deve receber
+// convite para ela, e arquivar a candidatura nao desfaz o fato de ter se candidatado).
+// Devolve os valores CRUS; quem normaliza e compara e o JS.
+function listarEmailsInscritosNaVaga(jobId) {
+  return getDb()
+    .prepare(
+      `SELECT email FROM applications
+        WHERE job_id = ? AND email IS NOT NULL AND TRIM(email) <> ''`,
+    )
+    .all(jobId)
+    .map((linha) => linha.email);
+}
+
+// Todos os opt-outs. A coluna ja guarda o e-mail normalizado (quem escreve passa por
+// lib/normalizarEmail), mas quem le normaliza de novo por defesa — custa nada e protege
+// contra uma linha que porventura tenha entrado por outro caminho.
+function listarEmailsDescadastrados() {
+  return getDb()
+    .prepare('SELECT email FROM descadastros')
+    .all()
+    .map((linha) => linha.email);
+}
+
 module.exports = {
   getDb,
   aplicarSchema,
@@ -1839,6 +1979,15 @@ module.exports = {
   // Promocao de Vagas — descadastro (opt-out)
   registrarDescadastro,
   estaDescadastrado,
+  // Promocao de Vagas — motor de publico (leitura para campanha)
+  listarCandidatosParaCampanha,
+  listarTalentosParaCampanha,
+  listarEmailsInscritosNaVaga,
+  listarEmailsDescadastrados,
+  // Canonizacao da origem (utm_source). Exportada para a segmentacao de campanha usar a
+  // MESMA regra do filtro do painel — os baldes 'direto' e 'grupo-whats' precisam
+  // significar a mesma coisa nos dois lugares, e duas implementacoes divergiriam.
+  origemCanonica,
   // roteiros
   obterRoteiro,
   obterRoteiroPorNome,
