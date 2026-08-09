@@ -123,6 +123,11 @@ module.exports = {
   registrarDescadastro: driver.registrarDescadastro,
   estaDescadastrado: driver.estaDescadastrado,
 
+  // Promocao de Vagas — campanhas (CRUD do rascunho)
+  criarCampanha: driver.criarCampanha,
+  listarCampanhas: driver.listarCampanhas,
+  obterCampanha: driver.obterCampanha,
+
   // Promocao de Vagas — motor de publico (lib/promocaoVagas)
   listarCandidatosParaCampanha: driver.listarCandidatosParaCampanha,
   listarTalentosParaCampanha: driver.listarTalentosParaCampanha,

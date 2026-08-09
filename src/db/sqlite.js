@@ -1803,6 +1803,64 @@ function estaDescadastrado(email) {
 }
 
 // ──────────────────────────────────────────────────────────────
+// Promocao de Vagas — campanhas (CRUD do rascunho)
+// ──────────────────────────────────────────────────────────────
+
+// `criterios` e JSON no banco (registro historico do recorte usado); vira objeto aqui,
+// no mesmo padrao de jobDeLinha/reportDeLinha para as demais colunas JSON do projeto.
+function campanhaDeLinha(linha) {
+  if (!linha) return null;
+  return { ...linha, criterios: lerJson(linha.criterios, {}) };
+}
+
+// Cria a campanha em rascunho. `total_destinatarios` e CONGELADO aqui de proposito: e o
+// tamanho do publico no momento em que o recorte foi aprovado, e serve depois para
+// comparar com o publico recalculado e revelar decadencia (gente que se descadastrou ou
+// se candidatou a vaga alvo no meio do caminho).
+function criarCampanha({ job_id, assunto, corpo_html, criterios, total_destinatarios } = {}) {
+  const info = getDb()
+    .prepare(
+      `INSERT INTO campanhas (job_id, assunto, corpo_html, criterios, total_destinatarios)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      job_id,
+      assunto,
+      corpo_html,
+      JSON.stringify(criterios || {}),
+      Number.isFinite(Number(total_destinatarios)) ? Number(total_destinatarios) : 0,
+    );
+  return Number(info.lastInsertRowid);
+}
+
+// Todas as campanhas, mais recentes primeiro, ja com o titulo da vaga (a listagem sempre
+// precisa dele; evita N+1 na tela).
+function listarCampanhas() {
+  return getDb()
+    .prepare(
+      `SELECT c.*, j.titulo AS vaga_titulo, j.perfil AS vaga_perfil
+         FROM campanhas c
+         LEFT JOIN jobs j ON j.id = c.job_id
+        ORDER BY c.id DESC`,
+    )
+    .all()
+    .map(campanhaDeLinha);
+}
+
+function obterCampanha(id) {
+  return campanhaDeLinha(
+    getDb()
+      .prepare(
+        `SELECT c.*, j.titulo AS vaga_titulo, j.perfil AS vaga_perfil, j.slug AS vaga_slug
+           FROM campanhas c
+           LEFT JOIN jobs j ON j.id = c.job_id
+          WHERE c.id = ?`,
+      )
+      .get(id),
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
 // Promocao de Vagas — motor de publico (leitura para campanha)
 // ──────────────────────────────────────────────────────────────
 //
@@ -1979,6 +2037,10 @@ module.exports = {
   // Promocao de Vagas — descadastro (opt-out)
   registrarDescadastro,
   estaDescadastrado,
+  // Promocao de Vagas — campanhas (CRUD do rascunho)
+  criarCampanha,
+  listarCampanhas,
+  obterCampanha,
   // Promocao de Vagas — motor de publico (leitura para campanha)
   listarCandidatosParaCampanha,
   listarTalentosParaCampanha,

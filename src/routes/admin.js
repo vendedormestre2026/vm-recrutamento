@@ -37,6 +37,7 @@ const {
   badgeVereditoHtml,
 } = require('../lib/relatorio');
 const { gerarRelatorioPdf, slugNome } = require('../lib/relatorioPdf');
+const { criarRouterPromocao } = require('./admin_promocao');
 const { escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -1024,6 +1025,7 @@ router.get('/', (req, res) => {
         <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
         <a class="btn btn--ghost" href="/admin/perfis-curriculo">Perfis de currículo</a>
         <a class="btn btn--ghost" href="/admin/talentos">Banco de talentos</a>
+        <a class="btn btn--ghost" href="/admin/promocao">Promoção de Vagas</a>
         <a class="btn btn--ghost" href="/admin/config">Configurações</a>
         <a class="btn btn--ghost" href="/admin/uso">Custos / Uso API</a>
       </div>
@@ -4006,5 +4008,14 @@ router.post('/config/followup-entrevista', (req, res) => {
   db.definirConfig(followup.CHAVE_HORAS_ESPERA, String(horas));
   res.redirect('/admin/config?salvo=1');
 });
+
+// ── Promocao de Vagas (/admin/promocao) ──
+// Rotas em arquivo proprio (routes/admin_promocao.js) para nao inflar mais este, seguindo
+// o precedente de routes/banco_curriculos.js. Montado AQUI, depois do
+// `router.use(adminAuth)` la em cima — e o mount que da a essas telas a protecao do
+// painel. Mover esta linha para antes daquela deixaria a Promocao de Vagas PUBLICA.
+// Os helpers de apresentacao vao por parametro porque este modulo exporta o router, nao
+// eles; extrai-los para um modulo compartilhado seria refactor das ~15 telas existentes.
+router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }));
 
 module.exports = router;
