@@ -39,6 +39,12 @@ const {
   verificarPreCondicoesDisparo,
   ENVIOS_POR_CICLO,
 } = require('../lib/dispararPromocao');
+// Namespace (e nao desestruturado) porque a rota usa quatro coisas do modulo — a funcao de
+// envio, o endereco configurado, o prefixo do assunto e o cooldown — e as tres ultimas so
+// aparecem no texto da tela. Ler PREFIXO_ASSUNTO e COOLDOWN_SEGUNDOS de la, em vez de
+// repetir "[TESTE]" e "60 s" no HTML, e o que impede a tela de prometer uma coisa e a lib
+// fazer outra.
+const emailTeste = require('../lib/emailTestePromocao');
 const { escapeHtml } = require('../views');
 
 // Mensagem por codigo de erro da sugestao. Fonte unica para a rota, no molde de
@@ -135,8 +141,9 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
 
   // Formulario de criacao. `criterios` e `valores` vem preenchidos no re-submit da previa,
   // para o Jean nunca perder o que digitou ao recalcular.
-  function formularioCampanha({ vagas, origens, criterios = {}, valores = {}, erro = '' } = {}) {
+  function formularioCampanha({ vagas, origens, criterios = {}, valores = {}, erro = '', ok = '' } = {}) {
     const alerta = erro ? `<p class="aviso-alerta">${escapeHtml(erro)}</p>` : '';
+    const confirmacao = ok ? `<p class="aviso-ok">${escapeHtml(ok)}</p>` : '';
 
     const opcoesVaga = vagas
       .map(
@@ -217,7 +224,27 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
             (mesmo com a candidatura arquivada) é excluído do público automaticamente.
           </p>`;
 
+    // ── Botao de e-mail de teste ──
+    //
+    // BOTAO SEMPRE VIVO, inclusive sem endereco configurado. `disabled` de verdade era
+    // permitido aqui (ao contrario da trava da vaga, nao ha nada a materializar por
+    // engano), mas o projeto ja decidiu contra botao morto uma vez — ver blocoDisparo:
+    // "um botao morto so ensinaria o Jean a ignorar o botao". A nota abaixo diz o que
+    // fazer ANTES do clique, e o clique sem configuracao devolve a mesma instrucao com
+    // mais detalhe. As duas mensagens levam ao mesmo lugar; nenhuma delas e um beco.
+    const enderecoDeTeste = emailTeste.enderecoTeste();
+    const notaTeste = enderecoDeTeste
+      ? `Envia o assunto e o corpo <b>que estão aí em cima agora</b> para
+         <b>${escapeHtml(enderecoDeTeste)}</b>, com o prefixo
+         <b>${escapeHtml(emailTeste.PREFIXO_ASSUNTO.trim())}</b> no assunto. Não cria
+         campanha, não gasta destinatário e pode ser repetido (a cada
+         ${emailTeste.COOLDOWN_SEGUNDOS} s).`
+      : `<b>Configure o e-mail de teste em <a href="/admin/config">Configurações</a></b>
+         para usar este botão — ele sempre envia para aquele endereço fixo, nunca para um
+         endereço digitado aqui.`;
+
     return `
+      ${confirmacao}
       ${alerta}
       <form method="POST" action="/admin/promocao/previa">
         ${
@@ -254,6 +281,14 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
             <textarea name="corpo_html" rows="10"
               placeholder="&lt;p&gt;Olá! Estamos com uma vaga aberta…&lt;/p&gt;">${escapeHtml(valores.corpo_html || '')}</textarea>
           </label>
+          <p style="margin:.2rem 0 0;">
+            <button type="submit" class="btn btn--ghost" formaction="/admin/promocao/teste">
+              Enviar e-mail de teste para mim
+            </button>
+          </p>
+          <p style="margin:.35rem 0 0;color:var(--cinza);font-size:.8rem;">
+            ${notaTeste}
+          </p>
         </section>
 
         <section class="rel-sec">
@@ -466,7 +501,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     return db.listarVagas().filter((v) => v.ativo);
   }
 
-  function paginaFormulario({ criterios, valores = {}, resultado, erro }) {
+  function paginaFormulario({ criterios, valores = {}, resultado, erro, ok }) {
     const conteudo = `
       <p><a class="btn btn--ghost" href="/admin/promocao">← Voltar às campanhas</a></p>
       <h1>Nova campanha</h1>
@@ -477,6 +512,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
         criterios,
         valores,
         erro,
+        ok,
       })}`;
     return paginaAdmin({ titulo: 'Nova campanha', conteudo });
   }
@@ -653,6 +689,77 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
         },
         resultado,
       }),
+    );
+  });
+
+  // ── POST /admin/promocao/teste ── envia UM e-mail de teste para o proprio recrutador ──
+  //
+  // O QUE ESTA ROTA NAO TOCA: campanha_envios (nenhuma linha, em nenhum caminho), a tabela
+  // de campanhas (nao cria nem altera rascunho) e o interruptor `promocao_ativa`. Ela existe
+  // exatamente para dar um caminho de verificacao que NAO passa pelo fluxo de campanha — ver
+  // o cabecalho de lib/emailTestePromocao.js para o porque de cada uma dessas ausencias.
+  //
+  // Funciona A PARTIR DO FORMULARIO AINDA NAO SUBMETIDO: o assunto e o corpo saem dos
+  // MESMOS campos `assunto`/`corpo_html` que /previa, /sugestao e a criacao leem, entao o
+  // Jean pode iterar no texto e ver o resultado na caixa de entrada antes de existir
+  // qualquer rascunho. Nao ha `:id` na rota porque nao ha campanha envolvida.
+  //
+  // Re-renderiza a MESMA tela (nunca redireciona), com os criterios lidos pela mesma
+  // lerCriteriosDoForm das outras rotas e o conteudo devolvido intacto — no sucesso E no
+  // erro. Um teste de e-mail que apagasse o texto em teste seria autossabotagem.
+  router.post('/teste', async (req, res) => {
+    const b = req.body || {};
+    const criterios = lerCriteriosDoForm(b);
+    const previaCalculada = b.previa_calculada === '1';
+    const valores = {
+      assunto: b.assunto,
+      corpo_html: b.corpo_html,
+      previaCalculada,
+      sugestaoGerada: b.sugestao_gerada === '1',
+    };
+
+    const r = await emailTeste.enviarEmailTeste({ assunto: b.assunto, corpoHtml: b.corpo_html });
+
+    // Recalculo do publico no mesmo molde de /sugestao e /trocar-vaga: os criterios nao
+    // mudaram, mas a tela nao pode voltar sem numero a vista so porque o Jean pediu um
+    // e-mail de teste. Falha aqui nao e fatal — o estado cai no campo oculto.
+    let resultado = null;
+    if (criterios.jobIdAlvo) {
+      try {
+        resultado = listarPublicoCampanha(criterios);
+      } catch (err) {
+        console.error(`[promocao] falha ao recalcular previa apos e-mail de teste: ${err.message}`);
+      }
+    }
+
+    const valoresFinais = { ...valores, previaCalculada: Boolean(resultado) || previaCalculada };
+
+    if (r.ok) {
+      return res.send(
+        paginaFormulario({
+          criterios,
+          valores: valoresFinais,
+          resultado,
+          ok: `E-mail de teste enviado para ${r.destinatario}. Assunto: "${r.assunto}".`,
+        }),
+      );
+    }
+
+    // Status por CODIGO, e nao um 400 para tudo: "falta configurar o endereco" (o Jean
+    // resolve), "o servidor nao pode enviar" (503, mesma familia do pre-voo no disparo),
+    // "espere o cooldown" (429) e "o provedor recusou" (502) sao situacoes diferentes, e
+    // o codigo HTTP e a unica parte da resposta que um log ou um proxy consegue ler.
+    const STATUS = {
+      SEM_DESTINATARIO: 400,
+      DESTINATARIO_INVALIDO: 400,
+      SEM_CONTEUDO: 400,
+      PRE_VOO: 503,
+      COOLDOWN: 429,
+      ENVIO_FALHOU: 502,
+    };
+
+    return res.status(STATUS[r.erroCodigo] || 400).send(
+      paginaFormulario({ criterios, valores: valoresFinais, resultado, erro: r.mensagem }),
     );
   });
 

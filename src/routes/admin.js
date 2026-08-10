@@ -23,6 +23,7 @@ const emailRecusa = require('../lib/emailRecusa');
 const lembreteInicio = require('../lib/lembreteInicio');
 const limpezaAudio = require('../lib/limpezaAudio');
 const dispararPromocao = require('../lib/dispararPromocao');
+const emailTestePromocao = require('../lib/emailTestePromocao');
 const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
@@ -3790,6 +3791,12 @@ const CHAVE_LIMPEZA_AUDIO_ATIVO = limpezaAudio.CHAVE_ATIVO;
 // Default FALSE, como todos os outros: nasce desligado.
 const CHAVE_PROMOCAO_ATIVA = dispararPromocao.CHAVE_ATIVO;
 
+// Endereco fixo do e-mail de TESTE da Promocao de Vagas. Mesma logica de propriedade das
+// chaves acima: mora em lib/emailTestePromocao, dono do subsistema. Vive no painel (e nao
+// no .env) para o Jean trocar o destino sem redeploy — e trocar o destino e justamente o
+// que se faz ao passar o teste para outra pessoa revisar.
+const CHAVE_EMAIL_TESTE_PROMOCAO = emailTestePromocao.CHAVE_EMAIL_TESTE;
+
 // ── GET /admin/config ── tela de configuracoes gerais ──
 router.get('/config', (req, res) => {
   const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
@@ -3813,6 +3820,10 @@ router.get('/config', (req, res) => {
 
   // Disparo das campanhas de Promocao de Vagas (default desligado).
   const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
+
+  // Endereco do e-mail de teste de campanha. Vazio por padrao, de proposito: sem ele o
+  // botao de teste na tela de campanha so sabe dizer "configure aqui primeiro".
+  const emailTeste = db.obterConfig(CHAVE_EMAIL_TESTE_PROMOCAO, '');
 
   // Horas de espera do 1o follow-up de entrevista nao concluida. Le pelo MESMO helper do
   // agendador (lib/followupEntrevista.horasEspera), entao painel e varredura nunca
@@ -3967,6 +3978,32 @@ router.get('/config', (req, res) => {
     </section>
 
     <section class="rel-sec">
+      <h2>E-mail de teste da Promoção de Vagas</h2>
+      <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+        Endereço fixo que recebe o botão <b>Enviar e-mail de teste para mim</b> da tela de
+        <a href="/admin/promocao">nova campanha</a>.
+      </p>
+      <form method="POST" action="/admin/config/email-teste-promocao">
+        <label class="campo" style="max-width:420px;">
+          <span>E-mail de teste</span>
+          <input type="email" name="email_teste_promocao" value="${escapeHtml(emailTeste)}"
+            placeholder="voce@suaempresa.com.br">
+        </label>
+        <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          O e-mail de teste sai pelo <b>mesmo</b> provedor e com os <b>mesmos</b> cabeçalhos
+          de descadastro da campanha real — é para isso que ele serve: conferir formatação,
+          assunto e o link de descadastro antes de disparar para a base. O assunto vai
+          prefixado com <b>${escapeHtml(emailTestePromocao.PREFIXO_ASSUNTO.trim())}</b>, ele
+          <b>não</b> cria campanha nem consome destinatário, e funciona mesmo com
+          <b>Promoção de vagas</b> desligada acima. Só depende de o servidor ter
+          <b>DESCADASTRO_SECRET</b> e as credenciais de SMTP de campanha configuradas.
+          <b>Vazio (padrão) desliga o botão.</b>
+        </p>
+        <button type="submit" class="btn">Salvar</button>
+      </form>
+    </section>
+
+    <section class="rel-sec">
       <h2>Follow-up de entrevista não concluída</h2>
       <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
         E-mail automático para quem <b>começou</b> a entrevista e não terminou, com o link
@@ -4021,6 +4058,22 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_EMAIL_RECUSA_ATIVO, marcado('email_recusa_ativo'));
   db.definirConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, marcado('limpeza_audio_ativo'));
   db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
+  res.redirect('/admin/config?salvo=1');
+});
+
+// ── POST /admin/config/email-teste-promocao ── endereco fixo do e-mail de teste ──
+//
+// TEXT livre (definirConfig), no molde do /config/whatsapp: guarda o que veio, aparado.
+// Vazio e valor VALIDO — e como o Jean desliga o botao de teste.
+//
+// SEM validacao de formato aqui, de proposito: o `type="email"` do campo ja barra o erro
+// de digitacao comum no navegador, e a lib confere a forma do endereco no momento do envio
+// (erroCodigo DESTINATARIO_INVALIDO) — que e onde a mensagem de fato ajuda, junto do botao
+// que falhou. Recusar o save obrigaria a inventar uma tela de erro para /admin/config, que
+// hoje so sabe redirecionar com ?salvo=1.
+router.post('/config/email-teste-promocao', (req, res) => {
+  const b = req.body || {};
+  db.definirConfig(CHAVE_EMAIL_TESTE_PROMOCAO, String(b.email_teste_promocao || '').trim());
   res.redirect('/admin/config?salvo=1');
 });
 
