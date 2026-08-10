@@ -22,6 +22,7 @@ const followupEntrevista = require('./lib/followupEntrevista');
 const emailRecusa = require('./lib/emailRecusa');
 const lembreteInicio = require('./lib/lembreteInicio');
 const limpezaAudio = require('./lib/limpezaAudio');
+const dispararPromocao = require('./lib/dispararPromocao');
 
 // Follow-up de entrevistas nao concluidas: de quanto em quanto tempo a varredura roda.
 // Nao e o atraso do e-mail (esse e configuravel no painel, em horas) — e so a resolucao
@@ -44,6 +45,13 @@ const INTERVALO_LEMBRETE_MS = 15 * 60 * 1000;
 // e o uso do disco passar do limiar (lib/limpezaAudio), entao a passada normal nao faz
 // nada alem de medir e sair.
 const INTERVALO_LIMPEZA_AUDIO_MS = 15 * 60 * 1000;
+
+// Disparo da Promocao de Vagas: QUINTA constante separada, pela mesma razao das outras
+// quatro. O valor de 15 min aqui nao e so resolucao de checagem — junto com o teto de
+// lib/dispararPromocao.ENVIOS_POR_CICLO (125), ele DEFINE a vazao: 125 a cada 15 min =
+// 500/h, o limite contratado no provedor de campanha. Mexer em qualquer um dos dois muda
+// a vazao real contra o Emailit; os dois numeros so fazem sentido juntos.
+const INTERVALO_PROMOCAO_MS = 15 * 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -119,6 +127,7 @@ function iniciar() {
   agendarEmailRecusa();
   agendarLembreteInicio();
   agendarLimpezaAudio();
+  agendarDisparoPromocao();
 }
 
 // Agendador do follow-up de entrevistas nao concluidas.
@@ -210,6 +219,32 @@ function agendarLimpezaAudio() {
   console.log(
     `[limpeza-audio] varredura agendada a cada ${INTERVALO_LIMPEZA_AUDIO_MS / 60000} min ` +
       `(1a passada no boot; limiar ${limpezaAudio.limiarPct()}% de uso do volume).`,
+  );
+}
+
+// Agendador do disparo da Promocao de Vagas. Mesmo desenho das outras quatro (timer em
+// memoria, consulta ao banco a cada ciclo, trava em lib/dispararPromocao.varrerSeOcioso,
+// setInterval PROPRIO), com uma diferenca de GRAU que vale registrar: as outras quatro
+// escrevem para quem esta no meio de um processo com a gente; esta escreve em massa para
+// a base inteira. Por isso o interruptor `promocao_ativa` nasce desligado e a vazao esta
+// amarrada a dois numeros (este intervalo + ENVIOS_POR_CICLO).
+//
+// Enquanto o interruptor do painel estiver desligado (default), cada ciclo so loga
+// "[promocao] desativado" e nao toca no banco — nem na fila de envios, nem nas campanhas.
+// Uma campanha pode ficar enfileirada por tempo indeterminado sem que nada saia.
+function agendarDisparoPromocao() {
+  // Primeira passada no boot, igual as outras: depois de um deploy, uma campanha ja
+  // enfileirada nao espera mais 15 min. `void` porque e fire-and-forget — varrerSeOcioso
+  // nunca rejeita.
+  void dispararPromocao.varrerSeOcioso();
+
+  setInterval(() => {
+    void dispararPromocao.varrerSeOcioso();
+  }, INTERVALO_PROMOCAO_MS);
+
+  console.log(
+    `[promocao] varredura agendada a cada ${INTERVALO_PROMOCAO_MS / 60000} min ` +
+      `(1a passada no boot; ate ${dispararPromocao.ENVIOS_POR_CICLO} envios por ciclo).`,
   );
 }
 

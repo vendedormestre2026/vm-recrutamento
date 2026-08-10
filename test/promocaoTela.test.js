@@ -316,7 +316,12 @@ test('POST /admin/promocao exige assunto e corpo', async () => {
 
 // ── Detalhe ──
 
-test('GET /admin/promocao/:id mostra a campanha e o disparo ainda desabilitado', async () => {
+// A versao anterior deste teste afirmava `assert.match(html, /disabled/)` — e passava pelo
+// motivo errado: a string "disabled" aparece no CSS da propria pagina (`.btn:disabled`),
+// nao porque houvesse um botao desabilitado. A asserção estava vazia mesmo antes do
+// Incremento 7, e continuaria verde com o botao vivo. Agora conferimos o comportamento
+// REAL: rascunho mostra o FORMULARIO de disparo apontando para a rota certa.
+test('GET /admin/promocao/:id mostra a campanha e o formulario de disparo (rascunho)', async () => {
   await comServidor(async (base) => {
     await autenticar(base);
     const id = db.criarCampanha({
@@ -331,8 +336,12 @@ test('GET /admin/promocao/:id mostra a campanha e o disparo ainda desabilitado',
     assert.match(html, /Campanha de Detalhe/);
     assert.match(html, /Rascunho/);
     assert.match(html, /Critérios usados/);
-    assert.match(html, /Disparar campanha/);
-    assert.match(html, /disabled/, 'o botao de disparo fica desabilitado ate o Incremento 7');
+    assert.match(
+      html,
+      new RegExp(`action="/admin/promocao/${id}/disparar"`),
+      'o formulario de disparo precisa apontar para a rota da propria campanha',
+    );
+    assert.match(html, /<button type="submit" class="btn">Disparar campanha<\/button>/);
   });
 });
 

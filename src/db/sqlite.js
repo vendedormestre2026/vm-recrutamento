@@ -1861,6 +1861,169 @@ function obterCampanha(id) {
 }
 
 // ──────────────────────────────────────────────────────────────
+// Promocao de Vagas — disparo (materializacao + fila de envio)
+// ──────────────────────────────────────────────────────────────
+
+// Materializa o publico de uma campanha e a passa para 'enfileirada', TUDO OU NADA.
+//
+// UNICA transacao explicita do projeto, e nao por desempenho (o volume nao chega a doer):
+// e por ATOMICIDADE. Sem ela, uma queda no meio do laco deixaria a campanha em 'rascunho'
+// com N linhas ja materializadas — o estado anormal que enfileirarCampanha depois recusa a
+// tocar, exigindo intervencao manual no banco. Com a transacao esse estado nao nasce: ou o
+// publico inteiro existe e a campanha esta enfileirada, ou nada aconteceu.
+//
+// better-sqlite3 e SINCRONO, entao db.transaction() e seguro aqui: nao ha await dentro do
+// laco que pudesse intercalar outra escrita no meio da transacao. Nao use este padrao com
+// callback async — a transacao fecharia antes do trabalho terminar.
+//
+// `email` entra JA NORMALIZADO (a exigencia do schema); quem chama (lib/dispararPromocao)
+// recebe do motor de publico, que ja normaliza. Normalizamos DE NOVO aqui por defesa: o
+// UNIQUE(campanha_id, email) so vale como idempotencia se a grafia for canonica.
+function materializarEnviosCampanha(campanhaId, destinatarios = []) {
+  const bd = getDb();
+
+  const inserir = bd.prepare(
+    `INSERT INTO campanha_envios (campanha_id, email, nome, origem_tipo, origem_id)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const enfileirar = bd.prepare(
+    `UPDATE campanhas SET status = 'enfileirada', enfileirada_em = datetime('now'),
+            total_destinatarios = ?
+      WHERE id = ? AND status = 'rascunho'`,
+  );
+
+  const executar = bd.transaction((lista) => {
+    let gravados = 0;
+    for (const d of lista) {
+      const email = normalizarEmail(d.email);
+      // Sem e-mail nao ha destinatario. Pular em silencio seria esconder um furo do motor
+      // de publico; mas ABORTAR a campanha inteira por causa de uma linha suja seria pior.
+      // Contamos so o que de fato virou linha, e o total gravado reflete isso.
+      if (!email) continue;
+      inserir.run(campanhaId, email, d.nome || null, d.origemTipo, d.origemId ?? null);
+      gravados += 1;
+    }
+    // O total gravado passa a ser o do publico CONGELADO agora — o numero contra o qual o
+    // painel mede progresso. O da criacao do rascunho ja cumpriu o papel dele (revelar
+    // decadencia na tela de revisao) e nao serve mais como denominador.
+    const info = enfileirar.run(gravados, campanhaId);
+    if (info.changes !== 1) {
+      // Guarda de ULTIMA linha: se a campanha saiu de 'rascunho' entre a leitura da lib e
+      // este UPDATE, a transacao inteira volta atras e nenhuma linha fica orfa.
+      throw new Error(
+        `campanha ${campanhaId} nao estava mais em 'rascunho' no momento da materializacao`,
+      );
+    }
+    return gravados;
+  });
+
+  return executar(destinatarios);
+}
+
+// Quantas linhas de envio esta campanha ja tem. Serve de guarda contra materializacao
+// duplicada (ver lib/dispararPromocao) e de base para o progresso na tela.
+function contarEnviosCampanha(campanhaId) {
+  const linhas = getDb()
+    .prepare('SELECT status, COUNT(*) AS n FROM campanha_envios WHERE campanha_id = ? GROUP BY status')
+    .all(campanhaId);
+
+  const contagem = { pendente: 0, enviado: 0, falha: 0, cancelado: 0, total: 0 };
+  for (const l of linhas) {
+    if (l.status in contagem) contagem[l.status] = l.n;
+    contagem.total += l.n;
+  }
+  return contagem;
+}
+
+// A fila de trabalho da varredura: os envios pendentes de campanhas que AINDA DEVEM sair.
+//
+// O JOIN com `campanhas` nao e conveniencia para trazer assunto e corpo — e um FILTRO DE
+// SEGURANCA. Linha 'pendente' de uma campanha cancelada (ou que voltou a rascunho por
+// qualquer caminho) NAO pode ser enviada; a rotina nunca deve assumir que todo pendente
+// merece um e-mail. Hoje nao ha cancelamento na tela, e e exatamente por isso que a
+// condicao precisa existir agora: quando ele chegar, a fila ja o respeita.
+//
+// ORDEM por id: a fila drena na ordem em que foi materializada, e o `LIMIT` recorta
+// sempre do mesmo comeco — sem isso, o cap por ciclo poderia revisitar os mesmos.
+function listarEnviosPendentesCampanha({ limite = 125 } = {}) {
+  const teto = Number.isInteger(limite) && limite > 0 ? limite : 125;
+  return getDb()
+    .prepare(
+      `SELECT e.id, e.campanha_id, e.email, e.nome,
+              c.assunto AS assunto, c.corpo_html AS corpo_html
+         FROM campanha_envios e
+         JOIN campanhas c ON c.id = e.campanha_id
+        WHERE e.status = 'pendente'
+          AND c.status IN ('enfileirada', 'enviando')
+        ORDER BY e.id
+        LIMIT ?`,
+    )
+    .all(teto);
+}
+
+// Marca UM envio como entregue. Condicional (`WHERE status = 'pendente'`), mesmo padrao de
+// marcarLembreteInicioEnviado: se dois ciclos se cruzarem, o segundo grava 0 linhas.
+// Devolve o nº de linhas afetadas (0 = ja processado por outro caminho).
+function marcarEnvioCampanhaEnviado(id) {
+  const info = getDb()
+    .prepare(
+      `UPDATE campanha_envios SET status = 'enviado', enviado_em = datetime('now'), erro = NULL
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(id);
+  return info.changes;
+}
+
+// Marca UM envio como falho, com a mensagem truncada. Tambem condicional, pela mesma razao.
+// A linha SAI da fila: uma falha de envio em massa raramente e transitoria (endereco morto,
+// recusa do provedor) e retentar automaticamente a cada 15 min queimaria reputacao do
+// dominio. Reprocessar e decisao humana, nao automatica.
+function marcarEnvioCampanhaFalha(id, erro) {
+  const info = getDb()
+    .prepare(
+      `UPDATE campanha_envios SET status = 'falha', erro = ?
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(String(erro || '').slice(0, 300), id);
+  return info.changes;
+}
+
+// Campanhas que a varredura ainda precisa olhar. Curta por natureza (uma campanha sai
+// daqui assim que conclui), entao percorre-la a cada ciclo custa praticamente nada.
+function listarCampanhasEmAndamento() {
+  return getDb()
+    .prepare(
+      `SELECT id, status FROM campanhas
+        WHERE status IN ('enfileirada', 'enviando')
+        ORDER BY id`,
+    )
+    .all();
+}
+
+// 'enfileirada' -> 'enviando': marca que a campanha ja comecou a sair de fato.
+// Condicional, para nao reverter uma campanha que outro caminho ja concluiu ou cancelou.
+function marcarCampanhaEnviando(id) {
+  const info = getDb()
+    .prepare(
+      `UPDATE campanhas SET status = 'enviando' WHERE id = ? AND status = 'enfileirada'`,
+    )
+    .run(id);
+  return info.changes;
+}
+
+// Fecha a campanha. Condicional ao estado em andamento: uma campanha cancelada no meio do
+// caminho nao pode ser "concluida" por uma varredura que chegou depois.
+function concluirCampanha(id) {
+  const info = getDb()
+    .prepare(
+      `UPDATE campanhas SET status = 'concluida', finalizada_em = datetime('now')
+        WHERE id = ? AND status IN ('enfileirada', 'enviando')`,
+    )
+    .run(id);
+  return info.changes;
+}
+
+// ──────────────────────────────────────────────────────────────
 // Promocao de Vagas — motor de publico (leitura para campanha)
 // ──────────────────────────────────────────────────────────────
 //
@@ -2041,6 +2204,15 @@ module.exports = {
   criarCampanha,
   listarCampanhas,
   obterCampanha,
+  // Promocao de Vagas — disparo (materializacao + fila de envio)
+  materializarEnviosCampanha,
+  contarEnviosCampanha,
+  listarEnviosPendentesCampanha,
+  marcarEnvioCampanhaEnviado,
+  marcarEnvioCampanhaFalha,
+  listarCampanhasEmAndamento,
+  marcarCampanhaEnviando,
+  concluirCampanha,
   // Promocao de Vagas — motor de publico (leitura para campanha)
   listarCandidatosParaCampanha,
   listarTalentosParaCampanha,

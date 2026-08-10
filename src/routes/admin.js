@@ -22,6 +22,7 @@ const followup = require('../lib/followupEntrevista');
 const emailRecusa = require('../lib/emailRecusa');
 const lembreteInicio = require('../lib/lembreteInicio');
 const limpezaAudio = require('../lib/limpezaAudio');
+const dispararPromocao = require('../lib/dispararPromocao');
 const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
@@ -3782,6 +3783,13 @@ const CHAVE_LEMBRETE_INICIO_ATIVO = lembreteInicio.CHAVE_ATIVO;
 // desligar na hora, sem redeploy.
 const CHAVE_LIMPEZA_AUDIO_ATIVO = limpezaAudio.CHAVE_ATIVO;
 
+// Liga/desliga o DISPARO das campanhas de Promocao de Vagas. Mesma logica de propriedade
+// das outras quatro: a chave mora em lib/dispararPromocao, dono do subsistema. E o kill
+// switch com a maior consequencia do painel — e o unico que faz e-mail sair para gente que
+// nao esta num processo conosco, em volume, e nao ha como despublicar e-mail enviado.
+// Default FALSE, como todos os outros: nasce desligado.
+const CHAVE_PROMOCAO_ATIVA = dispararPromocao.CHAVE_ATIVO;
+
 // ── GET /admin/config ── tela de configuracoes gerais ──
 router.get('/config', (req, res) => {
   const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
@@ -3802,6 +3810,9 @@ router.get('/config', (req, res) => {
 
   // Limpeza automatica de audio no volume (default desligada).
   const limpezaAudioAtiva = db.obterConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, false);
+
+  // Disparo das campanhas de Promocao de Vagas (default desligado).
+  const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
 
   // Horas de espera do 1o follow-up de entrevista nao concluida. Le pelo MESMO helper do
   // agendador (lib/followupEntrevista.horasEspera), entao painel e varredura nunca
@@ -3936,6 +3947,21 @@ router.get('/config', (req, res) => {
           no banco. No máximo ${limpezaAudio.remocoesPorCiclo()} entrevistas por vez, e
           para assim que o disco volta ao normal. <b>A exclusão é definitiva.</b>
         </p>
+        <label class="campo-check">
+          <input type="checkbox" name="promocao_ativa" value="1"${promocaoAtiva ? ' checked' : ''}>
+          <span style="color:var(--preto);text-transform:none;">
+            Enviar as <b>campanhas de Promoção de Vagas</b>
+          </span>
+        </label>
+        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Interruptor do envio em massa de <a href="/admin/promocao">Promoção de Vagas</a>.
+          Desmarcado (padrão), campanhas podem ser criadas e até disparadas — elas ficam
+          <b>enfileiradas</b> e <b>nenhum e-mail sai</b>. Marcado, a rotina envia até
+          ${dispararPromocao.ENVIOS_POR_CICLO} e-mails a cada 15 minutos até esvaziar a
+          fila. É o único e-mail do sistema que vai para <b>toda a base</b>, e não apenas
+          para quem está num processo em andamento. <b>Só ligue depois de confirmar
+          remetente, domínio verificado e descadastro funcionando.</b>
+        </p>
         <button type="submit" class="btn">Salvar</button>
       </form>
     </section>
@@ -3994,6 +4020,7 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(followup.CHAVE_ATIVO, marcado('followup_ativo'));
   db.definirConfigBool(CHAVE_EMAIL_RECUSA_ATIVO, marcado('email_recusa_ativo'));
   db.definirConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, marcado('limpeza_audio_ativo'));
+  db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
   res.redirect('/admin/config?salvo=1');
 });
 

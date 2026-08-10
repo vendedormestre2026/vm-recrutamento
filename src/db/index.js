@@ -128,6 +128,16 @@ module.exports = {
   listarCampanhas: driver.listarCampanhas,
   obterCampanha: driver.obterCampanha,
 
+  // Promocao de Vagas — disparo (lib/dispararPromocao)
+  materializarEnviosCampanha: driver.materializarEnviosCampanha,
+  contarEnviosCampanha: driver.contarEnviosCampanha,
+  listarEnviosPendentesCampanha: driver.listarEnviosPendentesCampanha,
+  marcarEnvioCampanhaEnviado: driver.marcarEnvioCampanhaEnviado,
+  marcarEnvioCampanhaFalha: driver.marcarEnvioCampanhaFalha,
+  listarCampanhasEmAndamento: driver.listarCampanhasEmAndamento,
+  marcarCampanhaEnviando: driver.marcarCampanhaEnviando,
+  concluirCampanha: driver.concluirCampanha,
+
   // Promocao de Vagas — motor de publico (lib/promocaoVagas)
   listarCandidatosParaCampanha: driver.listarCandidatosParaCampanha,
   listarTalentosParaCampanha: driver.listarTalentosParaCampanha,

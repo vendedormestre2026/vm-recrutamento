@@ -43,17 +43,45 @@ let _transporter = null;
 // Recorte de mensagem de erro de provedor, para o log nao virar um despejo de SMTP.
 const MAX_DETALHE_ERRO = 300;
 
-// Cria o transporter a partir da config. Exportada para quem quiser um transporter
-// proprio (e para deixar explicito que a fabrica e separada do cache).
-// LANCA quando falta credencial: e melhor falhar aqui, alto e claro, do que abrir uma
-// conexao que o provedor vai recusar com um erro generico de autenticacao.
-function criarTransporter() {
+// FONTE UNICA de "o que falta para uma campanha poder sair": devolve os NOMES das
+// variaveis de ambiente ausentes, na ordem em que aparecem no .env.example.
+//
+// Existe como funcao propria, e nao inline no criarTransporter, porque a mesma pergunta e
+// feita em DOIS momentos muito distantes: aqui, no instante do envio, e no PRE-VOO do
+// disparo (lib/dispararPromocao), que precisa saber a resposta ANTES de materializar
+// centenas de linhas que sairiam todas com falha. Duas listas mantidas em paralelo
+// divergiriam no primeiro campo novo — e a divergencia so apareceria como uma campanha
+// inteira queimada.
+//
+// Le a config a CADA chamada (nao captura no load): o pre-voo precisa refletir o estado
+// atual do processo, e o teste precisa conseguir esvaziar a config em runtime.
+//
+// `remetente` entra na lista mesmo tendo default em config.js (ou seja, na pratica nunca
+// falta): a lista descreve o que um envio EXIGE, e nao o que costuma estar vazio.
+function credenciaisFaltando() {
   const cfg = config.provedores.emailCampanha;
 
   const faltando = [];
   if (!cfg.host) faltando.push('SMTP_CAMPANHA_HOST');
   if (!cfg.usuario) faltando.push('SMTP_CAMPANHA_USUARIO');
   if (!cfg.senha) faltando.push('SMTP_CAMPANHA_SENHA');
+  if (!cfg.remetente) faltando.push('SMTP_CAMPANHA_FROM_EMAIL');
+  return faltando;
+}
+
+// Cria o transporter a partir da config. Exportada para quem quiser um transporter
+// proprio (e para deixar explicito que a fabrica e separada do cache).
+// LANCA quando falta credencial: e melhor falhar aqui, alto e claro, do que abrir uma
+// conexao que o provedor vai recusar com um erro generico de autenticacao.
+//
+// Passou a cobrir tambem o REMETENTE (antes so host/usuario/senha), por consequencia de
+// usar a lista unica acima. E um aperto deliberado: um transporter de campanha so e
+// construido para enviar campanha, e campanha sem remetente nao sai de qualquer forma —
+// falhar na construcao e mais cedo e mais claro do que falhar na montagem da mensagem.
+function criarTransporter() {
+  const cfg = config.provedores.emailCampanha;
+
+  const faltando = credenciaisFaltando();
   if (faltando.length) {
     throw new Error(
       `Credenciais de SMTP de campanha ausentes: ${faltando.join(', ')}. ` +
@@ -178,4 +206,5 @@ module.exports = {
   enviar,
   cabecalhosDescadastro,
   criarTransporter,
+  credenciaisFaltando,
 };

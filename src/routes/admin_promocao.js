@@ -19,15 +19,26 @@
 // telas existentes — fora do escopo deste incremento, pelo mesmo motivo que a navegacao
 // nao virou sistema de abas.
 //
-// ESCOPO DESTE INCREMENTO: a campanha nasce em 'rascunho' e para ali. Nada e enviado,
-// nada e enfileirado, e NENHUMA linha de campanha_envios e criada — a materializacao do
-// publico acontece no disparo (Incremento 7), nao aqui, porque a lista muda entre criar o
-// rascunho e revisar/disparar.
+// A CAMPANHA NASCE EM 'rascunho' e nenhuma linha de campanha_envios existe ate o disparo.
+// A materializacao do publico acontece no clique de disparar (POST /:id/disparar, abaixo),
+// e nao na criacao, porque a lista muda entre criar o rascunho e revisar/disparar.
+//
+// O DISPARO EXIGE DOIS PASSOS (Incremento 7). O botao da tela de detalhe leva a uma tela
+// intermediaria de confirmacao, que so entao POSTa o disparo de verdade. O primeiro POST
+// NAO tem efeito colateral: ele so renderiza a confirmacao com o numero de destinatarios
+// recalculado na hora. Sem esse intervalo, um clique errado enfileiraria uma campanha
+// inteira — e nao existe cancelamento (fora do escopo deste incremento) nem "despublicar"
+// e-mail enviado.
 
 const express = require('express');
 const db = require('../db');
 const { listarPublicoCampanha, PERFIS_VALIDOS, RECOMENDACOES_VALIDAS } = require('../lib/promocaoVagas');
 const { gerarSugestaoConteudo } = require('../lib/gerarSugestaoPromocao');
+const {
+  enfileirarCampanha,
+  verificarPreCondicoesDisparo,
+  ENVIOS_POR_CICLO,
+} = require('../lib/dispararPromocao');
 const { escapeHtml } = require('../views');
 
 // Mensagem por codigo de erro da sugestao. Fonte unica para a rota, no molde de
@@ -329,6 +340,74 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     return itens.map((i) => `<li>${i}</li>`).join('');
   }
 
+  // ── Bloco "Disparo" da tela de detalhe ──
+  //
+  // Tres estados, e nenhum deles e um botao desabilitado permanente: agora que a
+  // funcionalidade existe, um botao morto so ensinaria o Jean a ignorar o botao.
+  //   rascunho              -> botao vivo (leva a confirmacao)
+  //   enfileirada/enviando/
+  //   concluida             -> progresso agregado, sem botao
+  //   cancelada             -> so o status
+  //
+  // O progresso mostra NUMEROS AGREGADOS, nunca a lista de quem falhou. Detalhe por
+  // destinatario e outra tela (e outra decisao): aqui a pergunta e "a campanha andou?".
+  function blocoDisparo(campanha, erro = '') {
+    const alerta = erro ? `<p class="aviso-alerta">${escapeHtml(erro)}</p>` : '';
+
+    if (campanha.status === 'rascunho') {
+      return `
+        <section class="rel-sec">
+          <h2>Disparo</h2>
+          ${alerta}
+          <p style="color:var(--cinza);font-size:.9rem;margin:.2rem 0 1rem;">
+            Disparar <b>congela</b> a lista de destinatários deste momento e entrega a
+            campanha à rotina de envio. Você ainda confirma numa próxima tela, e
+            <b>não há cancelamento depois de confirmado</b>.
+          </p>
+          <form method="POST" action="/admin/promocao/${campanha.id}/disparar">
+            <button type="submit" class="btn">Disparar campanha</button>
+          </form>
+        </section>`;
+    }
+
+    if (campanha.status === 'cancelada') {
+      return `
+        <section class="rel-sec">
+          <h2>Disparo</h2>
+          ${alerta}
+          <p style="margin:.2rem 0 0;">Campanha <b>cancelada</b>. Nada mais será enviado.</p>
+        </section>`;
+    }
+
+    const c = db.contarEnviosCampanha(campanha.id);
+    const falhas = c.falha
+      ? `<li><b>${fmtInt(c.falha)}</b> ${c.falha === 1 ? 'falha' : 'falhas'} de envio</li>`
+      : '';
+    const rotulo = ROTULO_STATUS_CAMPANHA[campanha.status] || campanha.status;
+
+    return `
+      <section class="rel-sec">
+        <h2>Disparo</h2>
+        ${alerta}
+        <p style="margin:.2rem 0 .6rem;">
+          Status: <b>${escapeHtml(rotulo)}</b>
+          ${campanha.enfileirada_em ? ` · enfileirada em ${escapeHtml(formatarDataHora(campanha.enfileirada_em))}` : ''}
+          ${campanha.finalizada_em ? ` · finalizada em ${escapeHtml(formatarDataHora(campanha.finalizada_em))}` : ''}
+        </p>
+        <ul class="lista">
+          <li><b>${fmtInt(c.total)}</b> destinatários congelados no disparo</li>
+          <li><b>${fmtInt(c.enviado)}</b> enviados</li>
+          <li><b>${fmtInt(c.pendente)}</b> na fila</li>
+          ${falhas}
+        </ul>
+        <p style="margin:1rem 0 0;color:var(--cinza);font-size:.8rem;">
+          A rotina envia até ${fmtInt(ENVIOS_POR_CICLO)} e-mails a cada 15 minutos, e só
+          roda com <b>Promoção de vagas</b> ligada em
+          <a href="/admin/config">Configurações</a>.
+        </p>
+      </section>`;
+  }
+
   // Vagas oferecidas na criacao: SO as ativas. Nao existe listarVagasAtivas na camada de
   // dados (listarVagas devolve todas, e obterVagaAtiva devolve UMA so), entao o recorte
   // acontece aqui — e recorte de APRESENTACAO, nao regra de negocio: nao faz sentido
@@ -569,22 +648,22 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     res.redirect(`/admin/promocao/${id}`);
   });
 
-  // ── GET /admin/promocao/:id ── detalhe / revisao ──
-  router.get('/:id', (req, res) => {
-    const id = Number(req.params.id);
-    const campanha = Number.isInteger(id) && id > 0 ? db.obterCampanha(id) : null;
-    if (!campanha) {
-      return res.status(404).send(
-        paginaAdmin({
-          titulo: 'Campanha não encontrada',
-          conteudo: `
-            <p><a class="btn btn--ghost" href="/admin/promocao">← Voltar às campanhas</a></p>
-            <h1>Campanha não encontrada</h1>
-            <p>Esta campanha não existe ou foi removida.</p>`,
-        }),
-      );
-    }
+  // 404 no tema do painel. Fonte unica para o GET do detalhe e para o POST do disparo —
+  // as duas rotas respondem a mesma coisa para um id que nao existe.
+  function pagina404() {
+    return paginaAdmin({
+      titulo: 'Campanha não encontrada',
+      conteudo: `
+        <p><a class="btn btn--ghost" href="/admin/promocao">← Voltar às campanhas</a></p>
+        <h1>Campanha não encontrada</h1>
+        <p>Esta campanha não existe ou foi removida.</p>`,
+    });
+  }
 
+  // Tela de detalhe inteira, como funcao. Extraida do handler para o POST do disparo
+  // poder re-renderizar a MESMA tela com uma mensagem de erro, em vez de inventar uma
+  // segunda pagina que diria a mesma coisa com outra cara.
+  function paginaDetalhe(campanha, { erroDisparo = '' } = {}) {
     // Publico ATUAL, recalculado dos criterios salvos. O total gravado e o numero
     // CONGELADO na criacao; os dois divergem quando a base se mexeu no meio do caminho
     // (alguem se descadastrou, alguem se candidatou a vaga alvo). Mostrar so um dos dois
@@ -594,7 +673,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     try {
       atual = listarPublicoCampanha(campanha.criterios);
     } catch (err) {
-      console.error(`[promocao] falha ao recalcular publico da campanha ${id}: ${err.message}`);
+      console.error(`[promocao] falha ao recalcular publico da campanha ${campanha.id}: ${err.message}`);
       erroAtual = 'Não foi possível recalcular o público agora.';
     }
 
@@ -642,19 +721,143 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
         </div>
       </section>
 
-      <section class="rel-sec">
-        <h2>Disparo</h2>
-        <p style="color:var(--cinza);font-size:.9rem;margin:.2rem 0 1rem;">
-          O envio ainda não está implementado — esta campanha fica em rascunho.
-        </p>
-        <!-- Incremento 7: aqui entra o botao que enfileira o disparo (status
-             'enfileirada') e a rotina que materializa campanha_envios e envia. Ate la o
-             botao fica DESABILITADO de proposito, e nao apenas ausente: a tela precisa
-             deixar claro que o passo existe e ainda nao chegou. -->
-        <button type="button" class="btn btn--off" disabled>Disparar campanha</button>
-      </section>`;
+      ${blocoDisparo(campanha, erroDisparo)}`;
 
-    res.send(paginaAdmin({ titulo: `Campanha — ${campanha.assunto || campanha.id}`, conteudo }));
+    return paginaAdmin({ titulo: `Campanha — ${campanha.assunto || campanha.id}`, conteudo });
+  }
+
+  // ── GET /admin/promocao/:id ── detalhe / revisao ──
+  router.get('/:id', (req, res) => {
+    const id = Number(req.params.id);
+    const campanha = Number.isInteger(id) && id > 0 ? db.obterCampanha(id) : null;
+    if (!campanha) return res.status(404).send(pagina404());
+    res.send(paginaDetalhe(campanha));
+  });
+
+  // ── POST /admin/promocao/:id/disparar ── enfileira o disparo, em DOIS passos ──
+  //
+  // A confirmacao e uma TELA, e nao um `confirm()` de navegador: o painel nao tem
+  // JavaScript proprio (o unico fetch do projeto e o select de Status Recrutador em
+  // admin.js), e uma tela intermediaria e o padrao dominante aqui — formularios que
+  // re-submetem. Tambem e melhor UX para o que esta em jogo: um `confirm()` mostra uma
+  // frase; a tela mostra o NUMERO de pessoas, o assunto e o aviso de que nao ha volta.
+  //
+  // PRIMEIRO POST (sem `confirmado`): renderiza a confirmacao. ZERO efeito colateral —
+  // pode ser repetido a vontade, exatamente como POST /previa.
+  // SEGUNDO POST (`confirmado=1`): enfileira de verdade.
+  //
+  // O guard de status e checado NAS DUAS passagens, e de novo dentro de
+  // enfileirarCampanha (que por sua vez depende de um UPDATE condicional no banco). Sao
+  // tres camadas para a mesma pergunta porque o custo de errar e um e-mail em massa
+  // duplicado, e nao existe desfazer.
+  router.post('/:id/disparar', (req, res) => {
+    const id = Number(req.params.id);
+    const campanha = Number.isInteger(id) && id > 0 ? db.obterCampanha(id) : null;
+    if (!campanha) return res.status(404).send(pagina404());
+
+    if (campanha.status !== 'rascunho') {
+      return res.status(409).send(
+        paginaDetalhe(campanha, {
+          erroDisparo:
+            `Esta campanha está em "${ROTULO_STATUS_CAMPANHA[campanha.status] || campanha.status}" ` +
+            'e só é possível disparar uma campanha em rascunho. Uma campanha já disparada ' +
+            'não pode ser disparada de novo.',
+        }),
+      );
+    }
+
+    // PRE-VOO, antes dos dois caminhos. Se o ambiente nao consegue enviar campanha, a tela
+    // de confirmacao NAO aparece: nao se pede a alguem que confirme um disparo que so
+    // produziria falhas definitivas. Barrar aqui (e nao no clique final) tambem evita o
+    // pior desenho possivel — a pessoa ler "vou enviar para 412 pessoas", clicar em sim, e
+    // so entao descobrir que nada podia sair.
+    const preVoo = verificarPreCondicoesDisparo();
+    if (!preVoo.ok) {
+      console.error(
+        `[promocao] disparo da campanha ${campanha.id} bloqueado no pre-voo: ` +
+          preVoo.pendencias.map((p) => p.chave).join(', '),
+      );
+      return res.status(503).send(paginaDetalhe(campanha, { erroDisparo: preVoo.mensagem }));
+    }
+
+    const confirmado = (req.body || {}).confirmado === '1';
+
+    if (!confirmado) {
+      // Numero recalculado AGORA, pela mesma chamada que a tela de detalhe ja faz. Nao se
+      // usa `total_destinatarios` (congelado na criacao): o que a pessoa precisa aprovar e
+      // quantos e-mails vao sair, nao quantos sairiam se o botao tivesse sido apertado
+      // semanas atras.
+      let atual = null;
+      try {
+        atual = listarPublicoCampanha(campanha.criterios);
+      } catch (err) {
+        console.error(`[promocao] falha ao calcular publico para confirmacao (${id}): ${err.message}`);
+        return res.status(500).send(
+          paginaDetalhe(campanha, {
+            erroDisparo:
+              'Não foi possível calcular o público agora, então não dá para confirmar o ' +
+              'disparo com segurança. A campanha continua em rascunho.',
+          }),
+        );
+      }
+
+      const conteudo = `
+        <p><a class="btn btn--ghost" href="/admin/promocao/${campanha.id}">← Voltar à campanha</a></p>
+        <h1>Confirmar disparo</h1>
+        <p class="aviso-alerta">
+          Você está prestes a enviar <b>${fmtInt(atual.total)}</b>
+          e-mail${atual.total === 1 ? '' : 's'} de verdade. Depois de confirmado
+          <b>não há cancelamento</b>, e não existe desfazer e-mail enviado.
+        </p>
+        <section class="rel-sec">
+          <dl class="rel-id">
+            <div><dt>Assunto</dt><dd>${escapeHtml(campanha.assunto || '(sem assunto)')}</dd></div>
+            <div><dt>Vaga divulgada</dt><dd>${escapeHtml(campanha.vaga_titulo || '(vaga removida)')}</dd></div>
+            <div><dt>Destinatários agora</dt><dd>${fmtInt(atual.total)}</dd></div>
+          </dl>
+          <ul class="lista">
+            <li><b>${fmtInt(atual.porOrigem.applications)}</b> de candidaturas</li>
+            <li><b>${fmtInt(atual.porOrigem.talentos)}</b> do banco de talentos</li>
+          </ul>
+          <p style="margin:1rem 0 0;color:var(--cinza);font-size:.85rem;">
+            Ao confirmar, a lista é <b>congelada</b> e a campanha entra na fila. O envio sai
+            em levas de até ${fmtInt(ENVIOS_POR_CICLO)} a cada 15 minutos, e só começa se
+            <b>Promoção de vagas</b> estiver ligada em
+            <a href="/admin/config">Configurações</a> — enquanto estiver desligada, nada sai.
+          </p>
+        </section>
+        <form method="POST" action="/admin/promocao/${campanha.id}/disparar"
+              style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;">
+          <input type="hidden" name="confirmado" value="1">
+          <button type="submit" class="btn">Sim, disparar para ${fmtInt(atual.total)} destinatários</button>
+          <a class="btn btn--ghost" href="/admin/promocao/${campanha.id}">Cancelar</a>
+        </form>`;
+
+      return res.send(paginaAdmin({ titulo: 'Confirmar disparo', conteudo }));
+    }
+
+    // enfileirarCampanha refaz o pre-voo por conta propria e LANCA se ele falhar. Na
+    // pratica isso so acontece se a configuracao cair entre os dois cliques — mas sem este
+    // try/catch a excecao viraria o 500 JSON do tratador global, que numa tela de painel
+    // nao diz nada a quem esta olhando.
+    let r;
+    try {
+      r = enfileirarCampanha(campanha.id);
+    } catch (err) {
+      console.error(`[promocao] enfileiramento da campanha ${campanha.id} recusado: ${err.message}`);
+      return res.status(503).send(paginaDetalhe(campanha, { erroDisparo: err.message }));
+    }
+
+    if (!r.ok) {
+      // A campanha continua em rascunho (enfileirarCampanha e tudo-ou-nada), entao a tela
+      // de detalhe volta com o botao ainda disponivel e a mensagem do que deu errado.
+      const atualizada = db.obterCampanha(campanha.id) || campanha;
+      return res.status(r.erroCodigo === 'STATUS_INVALIDO' ? 409 : 500).send(
+        paginaDetalhe(atualizada, { erroDisparo: r.mensagem }),
+      );
+    }
+
+    res.redirect(`/admin/promocao/${campanha.id}`);
   });
 
   return router;
