@@ -154,7 +154,14 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
 
     // Marca que o conteudo veio da IA. Nao e enfeite: quem revisa precisa saber que
     // aquele texto nao foi escrito por uma pessoa, e que revisar e obrigatorio, nao
-    // opcional. Some assim que o Jean recalcula a previa ou salva.
+    // opcional.
+    //
+    // MUDANCA vs. Incremento 6: a nota agora SOBREVIVE aos re-submits (ela viaja no campo
+    // oculto `sugestao_gerada`), em vez de sumir no primeiro recalculo de previa. Duas
+    // razoes: o texto continua sendo de origem IA depois de recalcular o publico — some-lo
+    // era subdeclarar —, e ela compartilha o MESMO estado da trava da vaga abaixo. Se a
+    // nota morresse no recalculo, a trava morreria junto e o furo que ela fecha voltaria a
+    // existir depois de um clique em "Calcular previa".
     const notaSugestao = valores.sugestaoGerada
       ? `<p class="aviso-alerta" style="margin:0 0 1rem;">
            <b>Assunto e corpo abaixo foram gerados por IA</b> a partir dos dados da vaga.
@@ -163,17 +170,41 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
          </p>`
       : '';
 
-    return `
-      ${alerta}
-      <form method="POST" action="/admin/promocao/previa">
-        ${
-          // Carrega o estado "ja calculei a previa" atraves dos submits que NAO recalculam
-          // (o de sugestao). Sem isto, pedir uma sugestao de texto esconderia o botao de
-          // criar e obrigaria a recalcular sem motivo.
-          valores.previaCalculada ? '<input type="hidden" name="previa_calculada" value="1">' : ''
-        }
-        <section class="rel-sec">
-          <h2>Vaga e mensagem</h2>
+    // ── A vaga trava depois que o conteudo e gerado PARA ela ──
+    //
+    // O QUE ISTO IMPEDE: gerar a sugestao para a vaga A (o titulo dela entra no prompt e
+    // sai no assunto e no corpo), trocar o select para B e criar a campanha. O resultado
+    // seria uma campanha internamente consistente nos DADOS — job_id e criterios.jobIdAlvo
+    // apontam para B, e a exclusao de "ja inscrito" protege B — mas com um e-mail que
+    // divulga A. Ninguem percebe: nao ha erro, nao ha divergencia no banco, e o candidato
+    // de B recebe uma mensagem sobre outra vaga.
+    //
+    // COMO: `disabled` sozinho NAO serve — campo desabilitado nao e enviado no submit, e a
+    // vaga sumiria do POST seguinte. Entao o select desabilitado fica SEM `name` (e so
+    // enfeite: mostra ao Jean qual vaga esta valendo) e quem carrega o valor e o hidden ao
+    // lado. Um unico campo chamado `vaga` chega ao servidor, nos dois estados.
+    const vagaTravada = Boolean(valores.sugestaoGerada);
+
+    const campoVaga = vagaTravada
+      ? `
+          <label class="campo" style="max-width:520px;">
+            <span>Vaga a divulgar</span>
+            <select disabled aria-describedby="aviso-vaga-travada">
+              ${opcoesVaga}
+            </select>
+          </label>
+          <input type="hidden" name="vaga" value="${escapeHtml(String(criterios.jobIdAlvo || ''))}">
+          <p id="aviso-vaga-travada" class="aviso-alerta" style="margin:-.6rem 0 1rem;">
+            <b>Vaga travada</b> porque o conteúdo foi gerado para ela — o assunto e o corpo
+            acima falam desta vaga. Trocar a vaga agora criaria uma campanha que divulga uma
+            vaga para o público de outra.
+            <button type="submit" class="btn btn--ghost" formaction="/admin/promocao/trocar-vaga"
+                    style="margin-left:.4rem;">Trocar vaga</button>
+            <span style="color:var(--cinza);font-size:.85rem;">
+              (limpa o assunto e o corpo; os filtros de público são mantidos)
+            </span>
+          </p>`
+      : `
           <label class="campo" style="max-width:520px;">
             <span>Vaga a divulgar</span>
             <select name="vaga" required>
@@ -184,10 +215,29 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
           <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
             Só vagas <b>ativas</b> aparecem aqui. Quem já se candidatou a esta vaga
             (mesmo com a candidatura arquivada) é excluído do público automaticamente.
-          </p>
+          </p>`;
+
+    return `
+      ${alerta}
+      <form method="POST" action="/admin/promocao/previa">
+        ${
+          // Carrega o estado "ja calculei a previa" atraves dos submits que NAO recalculam
+          // (o de sugestao). Sem isto, pedir uma sugestao de texto esconderia o botao de
+          // criar e obrigaria a recalcular sem motivo.
+          valores.previaCalculada ? '<input type="hidden" name="previa_calculada" value="1">' : ''
+        }
+        ${
+          // Carrega a trava da vaga atraves de TODOS os submits do formulario (previa,
+          // nova sugestao, criar). Sem este campo, "Calcular previa" devolveria a tela com
+          // o select liberado e o texto da vaga antiga ainda no corpo — reabrindo o furo.
+          valores.sugestaoGerada ? '<input type="hidden" name="sugestao_gerada" value="1">' : ''
+        }
+        <section class="rel-sec">
+          <h2>Vaga e mensagem</h2>
+          ${campoVaga}
           <p style="margin:0 0 1rem;">
             <button type="submit" class="btn btn--ghost" formaction="/admin/promocao/sugestao">
-              Gerar sugestão de conteúdo
+              ${vagaTravada ? 'Gerar outra sugestão para esta vaga' : 'Gerar sugestão de conteúdo'}
             </button>
             <span style="color:var(--cinza);font-size:.8rem;margin-left:.5rem;">
               Escreve assunto e corpo a partir dos dados da vaga. Você revisa depois.
@@ -494,7 +544,13 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
   router.post('/previa', (req, res) => {
     const b = req.body || {};
     const criterios = lerCriteriosDoForm(b);
-    const valores = { assunto: b.assunto, corpo_html: b.corpo_html, previaCalculada: true };
+    // A trava atravessa o recalculo: recalcular publico nao "desgera" o texto.
+    const valores = {
+      assunto: b.assunto,
+      corpo_html: b.corpo_html,
+      previaCalculada: true,
+      sugestaoGerada: b.sugestao_gerada === '1',
+    };
 
     if (!criterios.jobIdAlvo) {
       return res.status(400).send(
@@ -543,6 +599,10 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       assunto: b.assunto,
       corpo_html: b.corpo_html,
       previaCalculada,
+      // A trava sobrevive ao ERRO tambem: se a vaga ja estava travada e a nova sugestao
+      // falhou, o texto ANTIGO (gerado para esta vaga) continua na tela. Destravar aqui
+      // deixaria o Jean trocar a vaga com aquele texto ainda no corpo.
+      sugestaoGerada: b.sugestao_gerada === '1',
     };
 
     const renderErro = (mensagem, status = 400) =>
@@ -596,13 +656,91 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     );
   });
 
+  // ── POST /admin/promocao/trocar-vaga ── destrava a vaga, limpando o conteudo gerado ──
+  //
+  // POST e nao um link para GET /nova: o GET voltaria com o formulario em branco e o Jean
+  // perderia os filtros de segmentacao que levou minutos ajustando. Como o botao vive
+  // DENTRO do formulario, o submit ja carrega perfil, origem, recomendacao, datas e as
+  // caixas de "incluir sem" — `lerCriteriosDoForm` os le com a MESMA funcao das outras
+  // rotas, sem estado novo nenhum: o formulario ja era o transporte.
+  //
+  // O QUE ELE LIMPA, e por que: assunto e corpo saem porque foram escritos PARA a vaga
+  // antiga. Deixa-los seria recriar exatamente o problema que a trava fecha — o Jean
+  // trocaria a vaga e manteria o texto da outra. Perder texto e o ponto, nao efeito
+  // colateral, e o aviso ao lado do botao diz isso antes do clique.
+  //
+  // A VAGA CONTINUA SELECIONADA (so que editavel de novo). Zera-la obrigaria a reescolher
+  // sempre, inclusive quem clicou por engano.
+  router.post('/trocar-vaga', (req, res) => {
+    const b = req.body || {};
+    const criterios = lerCriteriosDoForm(b);
+    const previaCalculada = b.previa_calculada === '1';
+
+    // Sem `sugestaoGerada`: e exatamente o efeito do botao. Sem assunto e sem corpo_html:
+    // a tela volta com os campos de texto vazios.
+    const valores = { assunto: '', corpo_html: '', previaCalculada };
+
+    // Recalculo do publico no mesmo molde do fim de POST /sugestao: os criterios nao
+    // mudaram, mas a tela nao pode voltar com o botao de criar liberado e sem numero a
+    // vista. Falha aqui nao e fatal — cai no estado do campo oculto.
+    let resultado = null;
+    if (criterios.jobIdAlvo) {
+      try {
+        resultado = listarPublicoCampanha(criterios);
+      } catch (err) {
+        console.error(`[promocao] falha ao recalcular previa ao trocar de vaga: ${err.message}`);
+      }
+    }
+
+    res.send(
+      paginaFormulario({
+        criterios,
+        valores: { ...valores, previaCalculada: Boolean(resultado) || previaCalculada },
+        resultado,
+      }),
+    );
+  });
+
   // ── POST /admin/promocao ── cria o rascunho ──
+  //
+  // ── DECISAO CONSCIENTE: a trava de vaga e SO de UI; o backend NAO valida ──
+  //
+  // Um POST forjado com `vaga=B` e o texto gerado para A e ACEITO aqui, de proposito.
+  // Registrado por escrito para nao parecer omissao:
+  //
+  //   1. NAO HA COMO VALIDAR DE VERDADE. `corpo_html` e texto livre — o Jean pode escrever
+  //      a campanha inteira a mao (o fluxo do Incremento 5, e o principal), e pode editar
+  //      legitimamente o texto da IA a ponto de nao sobrar frase reconhecivel. Nao existe
+  //      regra que separe "editou o texto gerado" de "gerou para outra vaga", e qualquer
+  //      tentativa quebraria o fluxo manual, que e o mais usado.
+  //   2. UM CAMPO OCULTO NAO E VALIDACAO. Guardar "a ultima sugestao foi para a vaga A"
+  //      num hidden e compara-lo aqui nao segura ninguem: quem forja `vaga` forja o hidden
+  //      no mesmo POST. Daria aparencia de garantia sem garantia nenhuma — pior que a
+  //      ausencia dela. Uma versao com assinatura HMAC ou estado em sessao ate funcionaria,
+  //      mas seria mecanismo novo para um risco que o item 3 dissolve.
+  //   3. NAO HA ADVERSARIO. Toda esta arvore esta atras do adminAuth (ver o cabecalho do
+  //      arquivo) e o unico usuario e o proprio recrutador. "Forjar" o POST aqui e enganar
+  //      a si mesmo com a propria base de contatos — nao ha escalonamento de privilegio,
+  //      nao ha dado de terceiro exposto, nao ha nada que o usuario ja nao pudesse fazer
+  //      escrevendo o texto errado a mao.
+  //
+  // O risco real e ERRO HONESTO — clicar no select sem lembrar que o texto ja fala de
+  // outra vaga —, e e exatamente isso que a trava da UI impede. Se um dia o painel ganhar
+  // mais de um operador, ou perfis com permissoes diferentes, esta decisao muda: ai passa
+  // a existir "o outro", e a validacao de backend deixa de ser teatro.
   router.post('/', (req, res) => {
     const b = req.body || {};
     const criterios = lerCriteriosDoForm(b);
     const assunto = String(b.assunto || '').trim();
     const corpoHtml = String(b.corpo_html || '').trim();
-    const valores = { assunto, corpo_html: corpoHtml, previaCalculada: true };
+    const valores = {
+      assunto,
+      corpo_html: corpoHtml,
+      previaCalculada: true,
+      // So importa nos caminhos de ERRO abaixo (o sucesso redireciona): a tela que volta
+      // com a mensagem precisa voltar com a vaga ainda travada.
+      sugestaoGerada: b.sugestao_gerada === '1',
+    };
 
     const erro = !criterios.jobIdAlvo
       ? 'Escolha a vaga que será divulgada.'

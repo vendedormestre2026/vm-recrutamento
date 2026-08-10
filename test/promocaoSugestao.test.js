@@ -491,3 +491,198 @@ test('o formulario oferece o botao de gerar sugestao', async () => {
     assert.match(html, /formaction="\/admin\/promocao\/sugestao"/);
   });
 });
+
+// ──────────────────────────────────────────────────────────────
+// Trava da vaga apos gerar sugestao (Incremento 8 — correcao da auditoria)
+// ──────────────────────────────────────────────────────────────
+//
+// O FURO QUE ISTO FECHA: gerar a sugestao para a vaga A (o titulo dela entra no prompt e
+// sai no assunto e no corpo), trocar o select para a vaga B e criar a campanha. Os DADOS
+// ficam coerentes — job_id e criterios.jobIdAlvo apontam para B, e a exclusao de "ja
+// inscrito" protege B —, mas o e-mail que chega ao candidato de B fala da vaga A. Nao ha
+// erro, nao ha divergencia no banco, e ninguem percebe.
+
+// Vaga B, so para os testes de troca/forja. Titulo bem diferente do da vaga A, para as
+// assercoes nao dependerem de coincidencia de texto.
+const vagaOutraId = criarVaga({ titulo: 'Pré-vendas SDR Pleno', perfil: 'SDR' });
+
+test('apos gerar sugestao, o select da vaga fica travado mas o valor ainda e enviado', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await comLlm(
+      async () => ({ texto: RESPOSTA_BOA, modelo: 'm', uso: {}, finishReason: 'stop' }),
+      async () => {
+        const html = await (
+          await fetch(
+            `${base}/admin/promocao/sugestao`,
+            postForm({ vaga: String(vagaId), perfil: 'CLOSER' }),
+          )
+        ).text();
+
+        // NAO EDITAVEL: o select perde o `name` e ganha `disabled`. Perder o `name` e o
+        // que garante que ele nao concorra com o hidden no POST seguinte.
+        assert.match(html, /<select disabled aria-describedby="aviso-vaga-travada">/);
+        assert.doesNotMatch(html, /<select name="vaga"/, 'o select editavel nao pode coexistir');
+
+        // MAS O VALOR VIAJA: o hidden carrega a vaga pelos submits seguintes.
+        assert.match(html, new RegExp(`<input type="hidden" name="vaga" value="${vagaId}">`));
+        assert.match(html, /<input type="hidden" name="sugestao_gerada" value="1">/);
+
+        // E o Jean entende POR QUE nao pode mexer.
+        assert.match(html, /Vaga travada/);
+        assert.match(html, /o conteúdo foi gerado para ela/i);
+        assert.match(html, /Trocar vaga/);
+      },
+    );
+  });
+});
+
+test('com a vaga travada, criar a campanha ainda grava o jobIdAlvo certo', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    // Exatamente o que o navegador enviaria a partir da tela travada: `vaga` vem do hidden
+    // e `sugestao_gerada` viaja junto.
+    const res = await fetch(
+      `${base}/admin/promocao`,
+      postForm({
+        vaga: String(vagaId),
+        sugestao_gerada: '1',
+        assunto: 'Vaga aberta: Closer de Vendas',
+        corpo_html: '<p>Temos uma vaga de Closer.</p>',
+        perfil: 'CLOSER',
+      }),
+    );
+    assert.equal(res.status, 302);
+
+    const id = Number((res.headers.get('location') || '').split('/').pop());
+    const c = db.obterCampanha(id);
+    assert.equal(c.job_id, vagaId, 'a vaga travada e a que vai para o banco');
+    assert.equal(c.criterios.jobIdAlvo, vagaId);
+    assert.equal(c.criterios.perfil, 'CLOSER', 'o filtro tambem sobreviveu');
+  });
+});
+
+test('a trava SOBREVIVE ao recalculo da previa (senao o furo reabriria num clique)', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (
+      await fetch(
+        `${base}/admin/promocao/previa`,
+        postForm({
+          vaga: String(vagaId),
+          sugestao_gerada: '1',
+          assunto: 'Vaga aberta: Closer de Vendas',
+          corpo_html: '<p>Temos uma vaga de Closer.</p>',
+        }),
+      )
+    ).text();
+
+    assert.match(html, /<select disabled/, 'recalcular previa nao pode destravar a vaga');
+    assert.match(html, /<input type="hidden" name="sugestao_gerada" value="1">/);
+    assert.match(html, /gerados por IA/, 'a nota acompanha a trava');
+  });
+});
+
+test('"Trocar vaga" limpa assunto e corpo, libera o select e PRESERVA os filtros', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (
+      await fetch(
+        `${base}/admin/promocao/trocar-vaga`,
+        postForm({
+          vaga: String(vagaId),
+          sugestao_gerada: '1',
+          previa_calculada: '1',
+          assunto: 'Vaga aberta: Closer de Vendas',
+          corpo_html: '<p>Temos uma vaga de Closer.</p>',
+          perfil: 'CLOSER',
+          perfil_incluir_sem: '1',
+          de: '2026-01-01',
+        }),
+      )
+    ).text();
+
+    // Select liberado de novo.
+    assert.match(html, /<select name="vaga" required>/);
+    assert.doesNotMatch(html, /<select disabled/);
+    assert.doesNotMatch(html, /name="sugestao_gerada"/);
+    assert.doesNotMatch(html, /Vaga travada/);
+    assert.doesNotMatch(html, /gerados por IA/, 'sem conteudo gerado, sem nota');
+
+    // Conteudo limpo — e o proposito do botao, nao efeito colateral.
+    assert.doesNotMatch(html, /Temos uma vaga de Closer/, 'o corpo gerado para a vaga antiga sai');
+    assert.match(html, /<input type="text" name="assunto" value=""/);
+
+    // Filtros de segmentacao PRESERVADOS (o motivo de ser POST no proprio form, e nao um
+    // link para GET /nova).
+    assert.match(html, /value="CLOSER" selected/);
+    assert.match(html, /name="perfil_incluir_sem" value="1" checked/);
+    assert.match(html, /name="de" value="2026-01-01"/);
+    // E a vaga segue selecionada, so que editavel.
+    assert.match(html, new RegExp(`<option value="${vagaId}" selected`));
+  });
+});
+
+test('sem sugestao gerada, o select continua editavel (fluxo manual, sem regressao)', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+
+    const nova = await (
+      await fetch(`${base}/admin/promocao/nova`, { headers: { Cookie: cookieAdmin } })
+    ).text();
+    assert.match(nova, /<select name="vaga" required>/);
+    assert.doesNotMatch(nova, /<select disabled/);
+    assert.doesNotMatch(nova, /Vaga travada/);
+
+    // E depois de uma previa de conteudo escrito a mao, idem.
+    const previa = await (
+      await fetch(
+        `${base}/admin/promocao/previa`,
+        postForm({
+          vaga: String(vagaId),
+          assunto: 'Escrevi eu mesmo',
+          corpo_html: '<p>Texto meu.</p>',
+        }),
+      )
+    ).text();
+    assert.match(previa, /<select name="vaga" required>/);
+    assert.doesNotMatch(previa, /<select disabled/);
+    assert.doesNotMatch(previa, /name="sugestao_gerada"/);
+  });
+});
+
+test('DECISAO REGISTRADA: POST forjado com outra vaga e ACEITO (defesa e so de UI)', async () => {
+  // Este teste documenta a decisao, nao um bug. Ver o comentario extenso em
+  // POST /admin/promocao (routes/admin_promocao.js): a trava e de UI porque (1) corpo_html
+  // e texto livre e nao ha regra que separe "editei o texto gerado" de "gerei para outra
+  // vaga" sem quebrar o fluxo manual do Incremento 5; (2) um hidden comparado no servidor
+  // seria forjado no mesmo POST — teatro, nao validacao; (3) a arvore inteira esta atras
+  // do adminAuth e o unico usuario e o proprio recrutador, entao "forjar" aqui e enganar a
+  // si mesmo com a propria base.
+  //
+  // Se este teste um dia falhar porque alguem adicionou validacao de backend, NAO o
+  // conserte: significa que a premissa (3) mudou — o painel ganhou mais de um operador — e
+  // e o comentario da rota que precisa ser reescrito junto.
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const res = await fetch(
+      `${base}/admin/promocao`,
+      postForm({
+        vaga: String(vagaOutraId), // vaga B, forjada direto no corpo do POST
+        sugestao_gerada: '1',
+        assunto: 'Vaga aberta: Closer de Vendas', // texto gerado para a vaga A
+        corpo_html: '<p>Temos uma vaga de Closer.</p>',
+      }),
+    );
+
+    assert.equal(res.status, 302, 'o backend aceita — a defesa e de UI, por decisao');
+
+    const id = Number((res.headers.get('location') || '').split('/').pop());
+    const c = db.obterCampanha(id);
+    // Os DADOS seguem coerentes entre si: nao existe divergencia job_id x criterios.
+    assert.equal(c.job_id, vagaOutraId);
+    assert.equal(c.criterios.jobIdAlvo, vagaOutraId);
+    // O que diverge e o CONTEUDO — e e por isso que a trava de UI existe.
+    assert.match(c.assunto, /Closer/);
+  });
+});
