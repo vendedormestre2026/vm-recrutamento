@@ -285,15 +285,6 @@ async function enviarUm(linha, deps) {
   const db = deps.db || dbPadrao;
   const emailCampanha = deps.emailCampanha || emailCampanhaPadrao;
 
-  // Link de candidatura anexado AQUI, no momento do envio, e nao gravado em
-  // campanhas.corpo_html: o que fica no banco continua sendo o texto que o Jean escreveu ou
-  // revisou, e o link e derivado da vaga a cada envio. Se o dominio da aplicacao mudar
-  // (config.baseUrl), campanhas ja enfileiradas passam a sair com o endereco novo em vez de
-  // carregarem um link morto congelado na criacao.
-  //
-  // MESMA funcao que o botao de e-mail de teste chama (lib/emailTestePromocao) — e o que
-  // garante que o teste mostre exatamente o e-mail que a base vai receber.
-  const corpoFinal = montarCorpoFinal(linha.corpo_html, linha.vaga_slug);
   if (!linha.vaga_slug) {
     console.warn(
       `[promocao] envio ${linha.id} (campanha ${linha.campanha_id}) sem slug de vaga — ` +
@@ -302,6 +293,31 @@ async function enviarUm(linha, deps) {
   }
 
   try {
+    // Moldura e links montados AQUI, no momento do envio, e nao gravados em
+    // campanhas.corpo_html: o que fica no banco continua sendo o texto que o Jean escreveu
+    // ou revisou, e tudo o mais e derivado a cada envio. Se o dominio da aplicacao mudar
+    // (config.baseUrl), campanhas ja enfileiradas passam a sair com o endereco novo em vez
+    // de carregarem um link morto congelado na criacao.
+    //
+    // MESMA funcao que o botao de e-mail de teste chama (lib/emailTestePromocao) — e o que
+    // garante que o teste mostre exatamente o e-mail que a base vai receber.
+    //
+    // A URL de descadastro sai de montarUrlDescadastro, a MESMA funcao que o adaptador usa
+    // para montar o cabecalho List-Unsubscribe. Nao ha segunda geracao de token: o link do
+    // rodape e o do cabecalho sao a mesma string, vinda da mesma chamada.
+    //
+    // DENTRO do try, e nao antes dele: montarUrlDescadastro LANCA se DESCADASTRO_SECRET
+    // faltar. Fora daqui, essa excecao subiria por enviarUm — que promete nunca propagar —
+    // e derrubaria a leva inteira no primeiro destinatario. Dentro, o destinatario e
+    // marcado como 'falha' com a mensagem do erro, exatamente como quando o proprio
+    // adaptador falha por esse mesmo motivo. O pre-voo do disparo ja barra esse cenario
+    // antes de qualquer campanha ser materializada; isto e a rede embaixo.
+    const corpoFinal = montarCorpoFinal(
+      linha.corpo_html,
+      linha.vaga_slug,
+      montarUrlDescadastro(linha.email, config.baseUrl),
+    );
+
     if (config.entrevista.mock) {
       // Mesmo padrao das outras quatro varreduras: em mock o adaptador nao e tocado, e a
       // linha e marcada MESMO ASSIM. Sem marcar, a campanha nunca sairia de 'enviando' e a

@@ -41,8 +41,13 @@ const dbPadrao = require('../db');
 // EMAIL_CAMPANHA_TRANSPORTE. O botao de teste precisa sair pelo MESMO caminho do disparo
 // real — e o proposito dele —, entao ele nunca pode apontar para um transporte fixo.
 const emailCampanhaPadrao = require('../providers/emailCampanha');
+const { config } = require('../config');
 const { verificarPreCondicoesDisparo } = require('./dispararPromocao');
 const { montarCorpoFinal } = require('./ctaCampanha');
+// A MESMA funcao que o adaptador de envio usa para montar o cabecalho List-Unsubscribe.
+// Chamada aqui para que o link do rodape seja byte a byte o do cabecalho — ver a nota em
+// ctaCampanha.montarCorpoFinal sobre por que a URL chega pronta na montagem.
+const { montarUrlDescadastro } = require('./descadastro');
 
 // Endereco fixo de destino, editavel em /admin/config. Chave NOVA no store `configuracoes`,
 // e nao variavel de ambiente, pelo mesmo motivo das outras cinco chaves operacionais do
@@ -211,12 +216,19 @@ async function enviarEmailTeste({ assunto, corpoHtml, jobId } = {}, deps = {}) {
     // de descadastro e uma das coisas que ele existe para validar.
     //
     // O corpo passa pela MESMA montarCorpoFinal que a varredura de disparo usa (nao ha
-    // segunda implementacao do bloco de CTA). E o que faz este botao valer como teste: o
-    // HTML que chega na caixa de entrada aqui e byte a byte o que a base receberia.
+    // segunda implementacao da moldura, do bloco de CTA nem do rodape). E o que faz este
+    // botao valer como teste: o HTML que chega na caixa de entrada aqui e byte a byte o que
+    // a base receberia.
+    //
+    // A URL de descadastro e montada aqui e passada adiante, EXATAMENTE como a varredura de
+    // disparo faz (dispararPromocao.enviarUm). O link do rodape aponta para o descadastro do
+    // proprio endereco de teste: e o comportamento certo — este botao existe para mostrar o
+    // e-mail REAL, e um rodape apontando para outra coisa testaria uma mensagem que nao
+    // existe. Consequencia a saber: clicar nele descadastra o endereco de teste de verdade.
     await emailCampanha.enviar(
       destinatario,
       PREFIXO_ASSUNTO + assuntoLimpo,
-      montarCorpoFinal(corpoLimpo, vaga.slug),
+      montarCorpoFinal(corpoLimpo, vaga.slug, montarUrlDescadastro(destinatario, config.baseUrl)),
     );
   } catch (err) {
     console.error(`[promocao/teste] falha ao enviar e-mail de teste: ${err.message}`);
