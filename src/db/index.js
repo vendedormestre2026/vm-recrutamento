@@ -133,6 +133,7 @@ module.exports = {
   criarCampanha: driver.criarCampanha,
   listarCampanhas: driver.listarCampanhas,
   obterCampanha: driver.obterCampanha,
+  excluirCampanha: driver.excluirCampanha,
 
   // Promocao de Vagas — disparo (lib/dispararPromocao)
   materializarEnviosCampanha: driver.materializarEnviosCampanha,

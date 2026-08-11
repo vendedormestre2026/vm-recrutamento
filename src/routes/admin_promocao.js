@@ -493,6 +493,32 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       </section>`;
   }
 
+  // ── Bloco "Excluir" da tela de detalhe ──
+  //
+  // Existe SO em rascunho, e some por completo nos demais status — mesma regra de
+  // blocoDisparo, e pela mesma razao registrada la: um botao desabilitado permanente
+  // ensinaria a ignorar o botao. Nos outros status nao ha o que explicar; a propria
+  // ausencia e a mensagem, e o bloco de Disparo acima ja diz em que pe a campanha esta.
+  //
+  // Vem DEPOIS do bloco de disparo na tela: a acao principal de um rascunho e dispara-lo.
+  // Excluir e a saida, e saida fica no fim.
+  function blocoExclusao(campanha) {
+    if (campanha.status !== 'rascunho') return '';
+
+    return `
+      <section class="rel-sec">
+        <h2>Excluir</h2>
+        <p style="color:var(--cinza);font-size:.9rem;margin:.2rem 0 1rem;">
+          Apaga esta campanha definitivamente. Vale só para <b>rascunho</b>: nenhum e-mail
+          foi enviado e nenhum destinatário foi congelado, então não há nada a preservar.
+          Você ainda confirma numa próxima tela.
+        </p>
+        <form method="POST" action="/admin/promocao/${campanha.id}/excluir">
+          <button type="submit" class="btn btn--ghost">Excluir campanha</button>
+        </form>
+      </section>`;
+  }
+
   // Vagas oferecidas na criacao: SO as ativas. Nao existe listarVagasAtivas na camada de
   // dados (listarVagas devolve todas, e obterVagaAtiva devolve UMA so), entao o recorte
   // acontece aqui — e recorte de APRESENTACAO, nao regra de negocio: nao faz sentido
@@ -535,7 +561,20 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
             <td>${badge}</td>
             <td class="col-num">${fmtInt(c.total_destinatarios)}</td>
             <td>${formatarDataHora(c.criado_em)}</td>
-            <td><a class="btn btn--ghost" href="/admin/promocao/${c.id}">Ver</a></td>
+            <td style="display:flex;gap:.4rem;flex-wrap:wrap;">
+              <a class="btn btn--ghost" href="/admin/promocao/${c.id}">Ver</a>
+              ${
+                // SO em rascunho, e sem versao desabilitada nos demais status — mesmo
+                // principio ja documentado em blocoDisparo: "um botao morto so ensinaria o
+                // Jean a ignorar o botao". Aqui ele leva a tela de confirmacao, nunca apaga
+                // direto (o form nao carrega `confirmado`).
+                c.status === 'rascunho'
+                  ? `<form method="POST" action="/admin/promocao/${c.id}/excluir" style="margin:0;">
+                       <button type="submit" class="btn btn--ghost">Excluir</button>
+                     </form>`
+                  : ''
+              }
+            </td>
           </tr>`;
       })
       .join('');
@@ -973,7 +1012,8 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
         </div>
       </section>
 
-      ${blocoDisparo(campanha, erroDisparo)}`;
+      ${blocoDisparo(campanha, erroDisparo)}
+      ${blocoExclusao(campanha)}`;
 
     return paginaAdmin({ titulo: `Campanha — ${campanha.assunto || campanha.id}`, conteudo });
   }
@@ -1110,6 +1150,91 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     }
 
     res.redirect(`/admin/promocao/${campanha.id}`);
+  });
+
+  // ── POST /admin/promocao/:id/excluir ── apaga uma campanha em rascunho ──
+  //
+  // MESMA anatomia de /:id/disparar, e nao uma inventada: uma rota so, que renderiza a
+  // confirmacao quando falta `confirmado=1` e executa quando ele vem. O motivo de copiar e
+  // que as duas acoes tem a mesma forma de risco — irreversiveis, disparadas por um clique
+  // — e duas telas de confirmacao com desenhos diferentes ensinariam o Jean que
+  // confirmacao e um detalhe de cada tela, e nao um sinal de que algo serio vai acontecer.
+  //
+  // POST e nao DELETE: o painel e HTML puro, sem JavaScript, e formulario nao emite DELETE.
+  // Mesma razao pela qual /:id/disparar e POST.
+  //
+  // A ordem das checagens espelha a do disparo: existe? -> estado permite? -> confirmou?
+  // O guard de status vem ANTES da tela de confirmacao de proposito — nao se pede a
+  // ninguem que confirme uma acao que ja se sabe que vai ser recusada.
+  router.post('/:id/excluir', (req, res) => {
+    const id = Number(req.params.id);
+    const campanha = Number.isInteger(id) && id > 0 ? db.obterCampanha(id) : null;
+    if (!campanha) return res.status(404).send(pagina404());
+
+    if (campanha.status !== 'rascunho') {
+      return res.status(409).send(
+        paginaDetalhe(campanha, {
+          erroDisparo:
+            `Esta campanha está em "${ROTULO_STATUS_CAMPANHA[campanha.status] || campanha.status}" ` +
+            'e só é possível excluir uma campanha em rascunho. Uma campanha que já foi ' +
+            'disparada é registro do que saiu, e não pode ser apagada.',
+        }),
+      );
+    }
+
+    const confirmado = (req.body || {}).confirmado === '1';
+
+    if (!confirmado) {
+      // A tela de confirmacao mostra o que sera perdido — assunto, vaga e a data de
+      // criacao —, e nao so "tem certeza?". O que se apaga aqui e texto que alguem
+      // escreveu ou revisou; ver o conteudo antes de perde-lo e o minimo.
+      const conteudo = `
+        <p><a class="btn btn--ghost" href="/admin/promocao/${campanha.id}">← Voltar à campanha</a></p>
+        <h1>Excluir campanha</h1>
+        <p class="aviso-alerta">
+          Esta campanha será <b>apagada definitivamente</b>. Não há desfazer, e o assunto e
+          o corpo do e-mail escritos aqui serão perdidos.
+        </p>
+        <section class="rel-sec">
+          <dl class="rel-id">
+            <div><dt>Assunto</dt><dd>${escapeHtml(campanha.assunto || '(sem assunto)')}</dd></div>
+            <div><dt>Vaga divulgada</dt><dd>${escapeHtml(campanha.vaga_titulo || '(vaga removida)')}</dd></div>
+            <div><dt>Criada em</dt><dd>${escapeHtml(formatarDataHora(campanha.criado_em))}</dd></div>
+          </dl>
+          <p style="margin:1rem 0 0;color:var(--cinza);font-size:.85rem;">
+            Nenhum e-mail foi enviado por esta campanha — ela está em <b>rascunho</b>, e
+            rascunho nunca chegou a congelar destinatários. Excluir aqui não afeta ninguém
+            da base nem nenhuma campanha já disparada.
+          </p>
+        </section>
+        <form method="POST" action="/admin/promocao/${campanha.id}/excluir"
+              style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;">
+          <input type="hidden" name="confirmado" value="1">
+          <button type="submit" class="btn">Sim, excluir esta campanha</button>
+          <a class="btn btn--ghost" href="/admin/promocao/${campanha.id}">Cancelar</a>
+        </form>`;
+
+      return res.send(paginaAdmin({ titulo: 'Excluir campanha', conteudo }));
+    }
+
+    // excluirCampanha refaz as DUAS travas por conta propria (status e envios), dentro de
+    // uma transacao. A checagem de status la em cima e a que da a mensagem boa na tela; a
+    // de dentro e a que fecha a janela entre os dois cliques.
+    const r = db.excluirCampanha(campanha.id);
+    if (!r.ok) {
+      const atualizada = db.obterCampanha(campanha.id);
+      // CAMPANHA_NAO_ENCONTRADA aqui significa que ela sumiu entre os dois cliques (outra
+      // aba, provavelmente). O destino ja e o desejado, entao a listagem e a resposta certa
+      // — repetir um 404 seria assustar por um resultado que a pessoa queria.
+      if (!atualizada) return res.redirect('/admin/promocao');
+      return res
+        .status(r.erroCodigo === 'STATUS_INVALIDO' ? 409 : 500)
+        .send(paginaDetalhe(atualizada, { erroDisparo: r.mensagem }));
+    }
+
+    // Listagem, e nao a tela de detalhe: a campanha nao existe mais, e um redirect para
+    // /:id cairia direto no 404.
+    res.redirect('/admin/promocao');
   });
 
   return router;

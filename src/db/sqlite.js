@@ -2161,6 +2161,99 @@ function contarEnviosCampanha(campanhaId) {
   return contagem;
 }
 
+// Apaga uma campanha em RASCUNHO. O unico DELETE do projeto inteiro.
+//
+// ── POR QUE APAGAR DE VERDADE, num codigo que nunca apagou nada ──
+// Todo o resto do sistema usa soft-delete (applications.deleted_at) ou transicao de
+// status, e por bons motivos: candidatura arquivada e historico, campanha enviada e
+// auditoria, e-mail que saiu nao se desfaz. Nada disso vale para um rascunho: ele nunca
+// produziu efeito no mundo. Nenhum e-mail saiu, nenhum destinatario foi congelado, e o
+// "historico" de um rascunho abandonado e ruido na tela, nao registro.
+//
+// ── AS DUAS TRAVAS, e por que sao duas ──
+// 1. status === 'rascunho'. E o unico estado que nunca tocou ninguem. Uma campanha
+//    'enfileirada' ja congelou o publico; 'enviando' e 'concluida' ja mandaram e-mail;
+//    'cancelada' e registro de uma decisao. Nenhum deles pode sumir do banco.
+// 2. contarEnviosCampanha(id).total === 0. Redundante COM a primeira em teoria — rascunho
+//    nao tem envios, porque a materializacao so acontece no enfileiramento — e proposital
+//    mesmo assim: `enfileirarCampanha` ja trata "rascunho COM envios" como anomalia real
+//    (guard ENVIOS_PREEXISTENTES), sinal de banco editado a mao ou restore parcial. Diante
+//    de estado que "nao deveria existir", a resposta do projeto e recusar e pedir olho
+//    humano — nunca apagar por cima. Apagar seria a pior reacao possivel: destruiria
+//    justamente a evidencia de que algo esta errado.
+//
+// A FK campanha_envios.campanha_id -> campanhas(id) e a terceira linha de defesa, essa no
+// banco: com `foreign_keys = ON` (ver getDb), um DELETE que escapasse das duas travas
+// acima ainda falharia se houvesse envios. NAO existe ON DELETE CASCADE, e nao deve
+// existir — cascata aqui apagaria o registro de quem recebeu e-mail.
+//
+// Resultado DISCRIMINADO, nunca lanca (mesmo contrato de enfileirarCampanha): quem chama e
+// uma rota de painel, que precisa virar mensagem na tela e nao 500.
+//   { ok: true }
+//   { ok: false, erroCodigo: 'CAMPANHA_NAO_ENCONTRADA' | 'STATUS_INVALIDO' | 'TEM_ENVIOS', mensagem }
+//
+// Transacao: a leitura do status, a contagem de envios e o DELETE precisam ver o MESMO
+// estado. Sem ela, uma campanha disparada entre a checagem e o DELETE seria apagada depois
+// de ja ter congelado o publico.
+function excluirCampanha(id) {
+  const campanhaId = Number(id);
+  if (!Number.isInteger(campanhaId) || campanhaId <= 0) {
+    return {
+      ok: false,
+      erroCodigo: 'CAMPANHA_NAO_ENCONTRADA',
+      mensagem: 'Campanha não encontrada.',
+    };
+  }
+
+  const db = getDb();
+
+  const executar = db.transaction(() => {
+    const campanha = db.prepare('SELECT id, status FROM campanhas WHERE id = ?').get(campanhaId);
+    if (!campanha) {
+      return {
+        ok: false,
+        erroCodigo: 'CAMPANHA_NAO_ENCONTRADA',
+        mensagem: 'Campanha não encontrada.',
+      };
+    }
+
+    if (campanha.status !== 'rascunho') {
+      return {
+        ok: false,
+        erroCodigo: 'STATUS_INVALIDO',
+        status: campanha.status,
+        mensagem:
+          `Esta campanha está em "${campanha.status}" e só é possível excluir uma campanha ` +
+          'em rascunho. Uma campanha que já foi disparada é registro do que saiu, e não ' +
+          'pode ser apagada.',
+      };
+    }
+
+    const envios = contarEnviosCampanha(campanhaId);
+    if (envios.total > 0) {
+      console.error(
+        `[promocao] ANOMALIA: campanha ${campanhaId} esta em 'rascunho' mas ja tem ` +
+          `${envios.total} linha(s) em campanha_envios. Exclusao recusada.`,
+      );
+      return {
+        ok: false,
+        erroCodigo: 'TEM_ENVIOS',
+        mensagem:
+          `Esta campanha está em rascunho mas já tem ${envios.total} destinatário(s) ` +
+          'materializados — um estado que não deveria existir. A exclusão foi recusada por ' +
+          'segurança. Verifique o banco antes de tentar de novo.',
+      };
+    }
+
+    db.prepare('DELETE FROM campanhas WHERE id = ?').run(campanhaId);
+    return { ok: true };
+  });
+
+  const r = executar();
+  if (r.ok) console.log(`[promocao] campanha ${campanhaId} (rascunho, sem envios) excluida.`);
+  return r;
+}
+
 // A fila de trabalho da varredura: os envios pendentes de campanhas que AINDA DEVEM sair.
 //
 // O JOIN com `campanhas` nao e conveniencia para trazer assunto e corpo — e um FILTRO DE
@@ -2440,6 +2533,7 @@ module.exports = {
   criarCampanha,
   listarCampanhas,
   obterCampanha,
+  excluirCampanha,
   // Promocao de Vagas — disparo (materializacao + fila de envio)
   materializarEnviosCampanha,
   contarEnviosCampanha,
