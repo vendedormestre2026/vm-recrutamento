@@ -56,6 +56,10 @@ const UTM_SOURCE_CAMPANHA = 'email';
 // o botao em caixa baixa justamente no cliente mais teimoso. Com o texto ja em caixa alta,
 // o CSS vira redundancia barata em vez de unica linha de defesa.
 const TEXTO_BOTAO_CTA = 'VER A VAGA E ME CANDIDATAR';
+
+// A marca, agora em papel de APOIO (11px) e nao de manchete (era 26px laranja, o maior
+// elemento do e-mail). Ver a justificativa em marcaEmail.estiloEyebrow: quem abre uma
+// divulgacao precisa saber em dois segundos QUAL VAGA e — o remetente e contexto.
 const TITULO_CABECALHO = 'VENDEDOR MESTRE';
 const TEXTO_RODAPE =
   'Você recebeu este e-mail porque se candidatou a uma vaga do Vendedor Mestre ou faz ' +
@@ -83,6 +87,74 @@ function montarUrlVaga(slug, baseUrl = config.baseUrl) {
 // ──────────────────────────────────────────────────────────────
 // Pecas da moldura
 // ──────────────────────────────────────────────────────────────
+
+// Capitaliza a primeira letra. Mesma funcao (e mesmo motivo) do `capitalizar` da landing
+// /vaga/:slug: `modalidade` e gravada em minusculo no banco e exibida capitalizada.
+function capitalizar(s) {
+  const t = String(s == null ? '' : s).trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : '';
+}
+
+// Cabecalho da vaga: eyebrow da marca, kicker, titulo e os selos.
+//
+// ── E UMA TRADUCAO DA LANDING /vaga/:slug, NAO UM DESENHO NOVO ──
+// A pagina da vaga ja resolveu este problema: kicker pequeno ("Vaga aberta · Perfil X"),
+// titulo grande, e uma fileira de selos com os detalhes preenchidos (📍 endereco,
+// 🏢 modalidade, 📄 regime, 🕐 horario). O e-mail passa a dizer a MESMA coisa na mesma
+// ordem, para quem clica no botao nao sentir que chegou noutro lugar.
+//
+// ── filter(Boolean): CAMPO VAZIO NAO DEIXA BURACO ──
+// Copiado literalmente da landing. `jobs` tem endereco, modalidade, regime, horario e
+// empresa todos NULLABLE, e a densidade real deles e desconhecida. Selo so existe se o
+// campo existir; uma vaga so com titulo renderiza um cabecalho enxuto, nao um cabecalho
+// esburacado.
+//
+// ── SEM VAGA, degrada para so a marca ──
+// `vaga` chega null quando a vaga foi removida (o LEFT JOIN de
+// listarEnviosPendentesCampanha ja preve isso). O e-mail perde o cabecalho da vaga e
+// mantem o resto — mesma degradacao visivel do bloco de CTA, que tambem some sem slug.
+function blocoCabecalho(vaga) {
+  const v = vaga || {};
+  const titulo = String(v.titulo == null ? '' : v.titulo).trim();
+
+  const eyebrow = `<p style="${marca.estiloEyebrow()}">${TITULO_CABECALHO}</p>`;
+
+  if (!titulo) {
+    return `<tr><td style="padding:0 0 14px;">${eyebrow}</td></tr>`;
+  }
+
+  // Kicker: "Vaga aberta · Perfil Closer". O perfil so entra se existir (e NOT NULL no
+  // schema de jobs, mas a montagem nao pode depender disso — ela recebe um objeto).
+  const perfil = String(v.perfil == null ? '' : v.perfil).trim();
+  const kicker = perfil ? `Vaga aberta · Perfil ${perfil}` : 'Vaga aberta';
+
+  // A empresa entra como PRIMEIRO selo, com 🏙: e a informacao que mais muda a decisao de
+  // quem le ("para quem eu trabalharia?"), e a landing nao a mostra — a campanha vai alem
+  // dela nesse ponto de proposito.
+  const selos = [
+    v.empresa ? ['🏙', v.empresa] : null,
+    v.endereco ? ['📍', v.endereco] : null,
+    v.modalidade ? ['🏢', capitalizar(v.modalidade)] : null,
+    v.regime ? ['📄', v.regime] : null,
+    v.horario ? ['🕐', v.horario] : null,
+  ]
+    .filter(Boolean)
+    .map(([emoji, txt]) => `<span style="${marca.estiloSelo()}">${emoji} ${escapeHtml(String(txt).trim())}</span>`)
+    .join('');
+
+  return [
+    '<tr>',
+    '<td style="padding:0 0 16px;">',
+    eyebrow,
+    `<p style="${marca.estiloKicker()}">${escapeHtml(kicker)}</p>`,
+    `<p style="${marca.estiloTituloVaga()}">${escapeHtml(titulo)}</p>`,
+    selos ? `<div>${selos}</div>` : '',
+    '</td>',
+    '</tr>',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 
 // O bloco do botao de candidatura.
 //
@@ -188,7 +260,7 @@ function blocoRodape(urlDescadastro) {
 // Fragmento (comeca em <table>), sem <!DOCTYPE>/<html>/<head> — igual aos outros quatro.
 // O charset vem do cabecalho MIME do proprio envio, e e por isso que os acentos ja
 // funcionam hoje sem nenhuma <meta> no corpo.
-function montarEmailCampanha({ corpoHtml, urlVaga, urlDescadastro } = {}) {
+function montarEmailCampanha({ corpoHtml, urlVaga, urlDescadastro, vaga } = {}) {
   // O corpo do LLM entra CRU, exatamente como esta no banco. Nao ha sanitizacao nem
   // reescrita: e HTML que o Jean pode ter escrito ou editado a mao, e mexer nele com regex
   // (para injetar style nos <p>, por exemplo) quebraria no primeiro caso torto. A
@@ -202,12 +274,8 @@ function montarEmailCampanha({ corpoHtml, urlVaga, urlDescadastro } = {}) {
     `<td align="center" style="${marca.estiloFundo()}">`,
     `<table role="presentation" width="${marca.LARGURA_MAX}" cellpadding="0" cellspacing="0" border="0" align="center" style="${marca.estiloMoldura()}">`,
 
-    // ── Cabecalho ──
-    '<tr>',
-    // margemBaixo:0 no titulo — o espaco ate o fio vem do padding do <td>, e somar os dois
-    // daria um respiro de 30px que nao foi decidido por ninguem.
-    `<td style="padding:0 0 14px;"><p style="${marca.estiloTitulo({ margemBaixo: 0 })}">${TITULO_CABECALHO}</p></td>`,
-    '</tr>',
+    // ── Cabecalho: marca discreta + a VAGA em destaque ──
+    blocoCabecalho(vaga),
     `<tr><td style="${marca.estiloSeparador()}">&nbsp;</td></tr>`,
 
     // ── Conteudo gerado (a unica parte que o LLM controla) ──
@@ -246,11 +314,26 @@ function montarEmailCampanha({ corpoHtml, urlVaga, urlDescadastro } = {}) {
 // de gerar link de descadastro (aqui e o adaptador de envio), que e exatamente como as duas
 // URLs comecariam a divergir. Recebendo a URL pronta, o link do rodape e byte a byte o
 // mesmo do cabecalho List-Unsubscribe, porque literalmente veio da mesma chamada.
-function montarCorpoFinal(corpoHtml, slug, urlDescadastro, baseUrl = config.baseUrl) {
+// ── POR QUE `vaga` INTEIRA, e nao mais so o slug ──
+// O cabecalho passou a mostrar titulo, empresa, endereco, modalidade, regime e horario, e
+// nenhum deles cabe num slug. Quem chama passa a linha de `jobs` que JA TEM em maos.
+//
+// ── OS DOIS CAMINHOS PRECISAM DA MESMA FONTE ──
+// Esta assinatura muda os dois call sites de envio ao mesmo tempo, de proposito. O botao
+// de teste ja carregava a vaga (db.obterVaga); a varredura de disparo passou a trazer os
+// campos no proprio LEFT JOIN de listarEnviosPendentesCampanha. Se um dos dois montasse o
+// cabecalho com dado diferente do outro, o teste deixaria de testar o e-mail real — que e
+// exatamente o bug historico do link sumido, e o que o teste de igualdade byte a byte em
+// promocaoIntegracao guarda.
+//
+// `vaga` opcional: sem ela o cabecalho degrada para so a marca, mesma degradacao visivel
+// do bloco de CTA sem slug.
+function montarCorpoFinal(corpoHtml, slug, urlDescadastro, vaga = null, baseUrl = config.baseUrl) {
   return montarEmailCampanha({
     corpoHtml,
     urlVaga: montarUrlVaga(slug, baseUrl),
     urlDescadastro,
+    vaga,
   });
 }
 
@@ -260,6 +343,7 @@ module.exports = {
   montarCorpoFinal,
   blocoCta,
   blocoRodape,
+  blocoCabecalho,
   UTM_SOURCE_CAMPANHA,
   TEXTO_BOTAO_CTA,
   TITULO_CABECALHO,

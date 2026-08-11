@@ -2276,9 +2276,16 @@ function listarEnviosPendentesCampanha({ limite = 125 } = {}) {
       // so fecha quando pendente = 0). Um link faltando e um problema; uma campanha
       // eternamente 'enviando' e um vazamento de estado. Com LEFT JOIN o slug vem null e o
       // e-mail sai sem o bloco de CTA — degradacao visivel, nao travamento.
+      // Os campos j.* alem do slug alimentam o CABECALHO do e-mail (titulo, empresa,
+      // endereco, modalidade, regime, horario). Vem daqui, do MESMO LEFT JOIN, e nao de um
+      // db.obterVaga por destinatario: seriam 125 consultas por ciclo para um dado que a
+      // query ja tem em maos. Todos sao nullable — o cabecalho omite o que faltar.
       `SELECT e.id, e.campanha_id, e.email, e.nome,
               c.assunto AS assunto, c.corpo_html AS corpo_html,
-              j.slug AS vaga_slug
+              j.slug AS vaga_slug,
+              j.titulo AS vaga_titulo, j.perfil AS vaga_perfil, j.empresa AS vaga_empresa,
+              j.endereco AS vaga_endereco, j.modalidade AS vaga_modalidade,
+              j.regime AS vaga_regime, j.horario AS vaga_horario
          FROM campanha_envios e
          JOIN campanhas c ON c.id = e.campanha_id
          LEFT JOIN jobs j ON j.id = c.job_id
@@ -2397,6 +2404,12 @@ function listarCandidatosParaCampanha({ dataDe, dataAte } = {}) {
          a.nome        AS nome,
          a.sobrenome   AS sobrenome,
          a.utm_source  AS utm_source,
+         -- applications.cidade e coluna ORFA (ver schema.sql): o fluxo publico nao a
+         -- grava mais, e ela so tem valor quando o recrutador digitou a mao na tela de
+         -- edicao do candidato. Vem assim mesmo porque o filtro de cidade da campanha
+         -- precisa enxergar as duas bases pelo mesmo eixo — e "quase sempre NULL" e um
+         -- resultado honesto, tratado como "sem atributo" la em cima.
+         a.cidade      AS cidade,
          j.perfil      AS perfil,
          (SELECT r.recomendacao
             FROM reports r
@@ -2460,12 +2473,46 @@ function listarTalentosParaCampanha({ dataDe, dataAte } = {}) {
          t.id               AS origem_id,
          t.email            AS email,
          t.nome             AS nome,
-         t.perfil_interesse AS perfil
+         t.perfil_interesse AS perfil,
+         -- categoria alimenta o filtro de BASE da campanha ('legado' vs cadastro
+         -- proprio, que e NULL aqui). NAO filtra nada nesta query de proposito: quem
+         -- decide o recorte e lib/promocaoVagas, e um WHERE por categoria aqui excluiria
+         -- 7.215 pessoas do publico sem que nenhum criterio de tela tivesse pedido.
+         t.categoria        AS categoria,
+         t.cidade           AS cidade
        FROM talentos t
        ${montarClausula(where)}
        ORDER BY t.id`,
     )
     .all(...params);
+}
+
+// Cidades distintas que existem no banco, para montar as opcoes do filtro de campanha.
+//
+// UNIAO das duas bases: `talentos.cidade` (preenchida por backfill nos importados) e
+// `applications.cidade` (coluna orfa, so preenchida quando o recrutador digitou a mao).
+// Ler as duas e o que impede a tela de oferecer um recorte que ignora metade do publico.
+//
+// O SENTINELA NAO ENTRA na lista. 'Todas as cidades' nao e uma cidade: e um coringa que
+// casa com qualquer selecao (ver lib/promocaoVagas). Oferece-lo como opcao marcavel
+// convidaria o operador a marca-lo achando que precisa — e a nao marca-lo seria o erro
+// oposto, mais provavel ainda. Fora da lista, ele funciona sozinho.
+//
+// Ordem alfabetica com localeCompare em pt-BR: 'Balneário' antes de 'Campinas' exige
+// comparacao que entenda acento, e o ORDER BY do SQLite nao entende.
+function listarCidadesDistintas() {
+  const db = getDb();
+  const cru = db
+    .prepare(
+      `SELECT cidade FROM talentos WHERE cidade IS NOT NULL AND TRIM(cidade) <> ''
+       UNION
+       SELECT cidade FROM applications WHERE cidade IS NOT NULL AND TRIM(cidade) <> ''`,
+    )
+    .all()
+    .map((l) => String(l.cidade).trim())
+    .filter((c) => c && c !== 'Todas as cidades');
+
+  return [...new Set(cru)].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
 // E-mails com QUALQUER candidatura na vaga alvo — inclusive arquivada (deleted_at NAO
@@ -2509,6 +2556,7 @@ module.exports = {
   contarAplicacoesComContexto,
   contarEntrevistasConcluidasComContexto,
   listarOrigensDistintas,
+  listarCidadesDistintas,
   obterReportPorInterview,
   registrarAcessoVaga,
   registrarEventoFunil,

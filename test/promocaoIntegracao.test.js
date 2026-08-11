@@ -477,6 +477,7 @@ test('f) a varredura envia so para os esperados, com List-Unsubscribe valido', a
         CAMPOS_CAMPANHA.corpo_html,
         slugVagaAlvo,
         desc.montarUrlDescadastro(destino, config.baseUrl),
+        db.obterVaga(vagaAlvo),
       ),
     );
     assert.match(m.html, /utm_source=email/, 'a campanha precisa ser atribuivel na origem');

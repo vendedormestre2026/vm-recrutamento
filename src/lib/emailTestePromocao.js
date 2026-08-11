@@ -225,10 +225,19 @@ async function enviarEmailTeste({ assunto, corpoHtml, jobId } = {}, deps = {}) {
     // proprio endereco de teste: e o comportamento certo — este botao existe para mostrar o
     // e-mail REAL, e um rodape apontando para outra coisa testaria uma mensagem que nao
     // existe. Consequencia a saber: clicar nele descadastra o endereco de teste de verdade.
+    // A vaga inteira vai para a montagem: o cabecalho mostra titulo, empresa, endereco,
+    // modalidade, regime e horario. `vaga` aqui e a linha de db.obterVaga, e a varredura de
+    // disparo monta um objeto com os MESMOS campos a partir do LEFT JOIN da fila — e isso
+    // que faz os dois caminhos produzirem o mesmo cabecalho.
     await emailCampanha.enviar(
       destinatario,
       PREFIXO_ASSUNTO + assuntoLimpo,
-      montarCorpoFinal(corpoLimpo, vaga.slug, montarUrlDescadastro(destinatario, config.baseUrl)),
+      montarCorpoFinal(
+        corpoLimpo,
+        vaga.slug,
+        montarUrlDescadastro(destinatario, config.baseUrl),
+        vaga,
+      ),
     );
   } catch (err) {
     console.error(`[promocao/teste] falha ao enviar e-mail de teste: ${err.message}`);

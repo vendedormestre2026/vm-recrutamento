@@ -128,6 +128,17 @@ function slugDaVaga(jobId) {
   return uma('SELECT slug FROM jobs WHERE id = ?', jobId).slug;
 }
 
+// O shape que o cabecalho do e-mail consome. A varredura de disparo o monta a partir do
+// LEFT JOIN de listarEnviosPendentesCampanha; aqui montamos da tabela direto, para a
+// igualdade byte a byte comparar contra a MESMA entrada.
+function vagaParaCabecalho(jobId) {
+  return uma(
+    `SELECT titulo, perfil, empresa, endereco, modalidade, regime, horario
+       FROM jobs WHERE id = ?`,
+    jobId,
+  );
+}
+
 function contar(campanhaId) {
   return db.contarEnviosCampanha(campanhaId);
 }
@@ -417,6 +428,9 @@ test('a rotina chama o adaptador SEM headers manuais (List-Unsubscribe vem dele)
         '<p>Temos uma vaga.</p>',
         slugDaVaga(vagaAlvo),
         desc.montarUrlDescadastro(destino, config.baseUrl),
+        // A vaga alimenta o CABECALHO (titulo, empresa, selos). A rotina a monta a partir
+        // do LEFT JOIN da fila; aqui reconstruimos o mesmo shape a partir da linha de jobs.
+        vagaParaCabecalho(vagaAlvo),
       ),
     );
     assert.match(html, /utm_source=email/, 'todo link de campanha carrega a origem');

@@ -312,10 +312,25 @@ async function enviarUm(linha, deps) {
     // marcado como 'falha' com a mensagem do erro, exatamente como quando o proprio
     // adaptador falha por esse mesmo motivo. O pre-voo do disparo ja barra esse cenario
     // antes de qualquer campanha ser materializada; isto e a rede embaixo.
+    // A vaga vem da PROPRIA linha da fila (listarEnviosPendentesCampanha ja traz os campos
+    // no LEFT JOIN), e nao de um db.obterVaga por destinatario — seriam 125 consultas por
+    // ciclo para um dado que a query ja carregou. O shape e o mesmo que o botao de teste
+    // monta a partir de db.obterVaga, e e isso que mantem os dois caminhos identicos.
+    const vaga = {
+      titulo: linha.vaga_titulo,
+      perfil: linha.vaga_perfil,
+      empresa: linha.vaga_empresa,
+      endereco: linha.vaga_endereco,
+      modalidade: linha.vaga_modalidade,
+      regime: linha.vaga_regime,
+      horario: linha.vaga_horario,
+    };
+
     const corpoFinal = montarCorpoFinal(
       linha.corpo_html,
       linha.vaga_slug,
       montarUrlDescadastro(linha.email, config.baseUrl),
+      vaga,
     );
 
     if (config.entrevista.mock) {

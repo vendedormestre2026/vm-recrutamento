@@ -132,6 +132,58 @@ function estiloTitulo({ tamanho = 26, cor = LARANJA, margemBaixo = 16 } = {}) {
   );
 }
 
+// "Eyebrow": a marca, agora em papel de apoio.
+//
+// ── POR QUE ELA ENCOLHEU ──
+// Ate aqui o cabecalho era 'VENDEDOR MESTRE' em 26px laranja, o elemento de maior peso
+// visual do e-mail inteiro. Isso invertia a prioridade: quem abre um e-mail de divulgacao
+// precisa saber em dois segundos QUAL VAGA e — o nome de quem manda e contexto, nao
+// manchete. Agora a marca e a menor coisa do bloco (11px) e o titulo da vaga e a maior.
+//
+// Mantem caixa alta e letter-spacing para continuar lendo como marca, nao como texto solto.
+function estiloEyebrow() {
+  return (
+    `font-family:${FONTE_TITULO};font-weight:700;font-size:11px;line-height:1.2;` +
+    `letter-spacing:0.12em;text-transform:uppercase;color:${LARANJA};margin:0 0 10px;`
+  );
+}
+
+// Kicker: a linha de contexto acima do titulo ("Vaga aberta · Perfil Closer"). Copiado do
+// `vm-kicker` da landing /vaga/:slug, que resolve o mesmo problema — dizer o que a pagina
+// e antes de dizer o nome dela.
+function estiloKicker() {
+  return (
+    `font-family:${FONTE_CORPO};font-size:12px;line-height:1.4;letter-spacing:0.06em;` +
+    `text-transform:uppercase;color:${OFFWHITE};margin:0 0 6px;`
+  );
+}
+
+// O titulo da VAGA — o elemento de maior peso do e-mail, e a razao de o eyebrow ter
+// encolhido. Off-white e nao laranja: o laranja fica para o botao e para a marca, e um
+// titulo laranja de 28px competiria com o CTA (a regra da marca e "laranja com parcimonia").
+function estiloTituloVaga() {
+  return (
+    `font-family:${FONTE_TITULO};font-weight:700;font-size:28px;line-height:1.15;` +
+    `letter-spacing:${ESPACAMENTO_TITULO};color:${OFFWHITE};margin:0 0 10px;`
+  );
+}
+
+// Selo compacto (📍 local, 🏢 modalidade, 📄 regime, 🕐 horario, 🏙 empresa).
+//
+// Copiado do `vm-selo` da landing, com uma diferenca forcada pelo meio: la os selos sao
+// flex numa div; aqui sao <span> inline-block dentro de um <td>, porque cliente de e-mail
+// nao tem flexbox confiavel. O efeito visual e o mesmo — chips que quebram linha sozinhos.
+//
+// Borda em vez de fundo: um bloco preenchido a cada selo brigaria com o botao laranja. O
+// contorno da a leitura de "etiqueta" sem pedir atencao.
+function estiloSelo() {
+  return (
+    `display:inline-block;border:1px solid ${LARANJA};border-radius:4px;` +
+    `font-family:${FONTE_CORPO};font-size:12px;line-height:1.4;color:${OFFWHITE};` +
+    `padding:4px 9px;margin:0 6px 6px 0;`
+  );
+}
+
 // O <td> que HOSPEDA o HTML vindo do LLM.
 //
 // ── ISTO E O QUE FAZ O CORPO GERADO HERDAR A IDENTIDADE ──
@@ -214,6 +266,10 @@ module.exports = {
   estiloFundo,
   estiloMoldura,
   estiloTitulo,
+  estiloEyebrow,
+  estiloKicker,
+  estiloTituloVaga,
+  estiloSelo,
   estiloConteudo,
   estiloBotaoCta,
   estiloSeparador,

@@ -107,6 +107,12 @@ function lerCriteriosDoForm(b = {}) {
     perfilIncluirSemAtributo: marcado('perfil_incluir_sem'),
     utmSource: b.origem ? String(b.origem) : undefined,
     utmSourceIncluirSemAtributo: marcado('origem_incluir_sem'),
+    // Base e Cidade sao MULTI-SELECAO (checkboxes). O express entrega um `name` repetido
+    // como array quando ha 2+ marcados e como STRING quando ha 1 so — dai o `[].concat`.
+    // Sem isso, marcar uma unica cidade viraria um filtro por cada LETRA dela.
+    bases: [].concat(b.base || []).map(String),
+    cidades: [].concat(b.cidade || []).map(String),
+    cidadeIncluirSemAtributo: marcado('cidade_incluir_sem'),
     recomendacao: RECOMENDACOES_VALIDAS.includes(b.recomendacao) ? b.recomendacao : undefined,
     recomendacaoIncluirSemAtributo: marcado('recomendacao_incluir_sem'),
     dataDe: dataIsoValida(b.de) ? b.de : undefined,
@@ -139,9 +145,30 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       </label>`;
   }
 
+  // Grupo de checkboxes de multi-selecao (Base e Cidade). Diferente de `opcoes`, que monta
+  // <option> de dropdown: aqui cada valor e um checkbox proprio, todos com o MESMO `name`,
+  // e o express os entrega como array.
+  //
+  // Nenhum marcado = filtro inativo, exatamente como o "Qualquer" dos dropdowns. Nao ha
+  // opcao "Qualquer" desenhada porque ela ja e o estado natural de nada marcado — um
+  // checkbox "Qualquer" competiria com os outros e criaria um estado ambiguo (marcado
+  // junto com uma cidade, o que significaria?).
+  function checkboxes(nome, pares, marcados) {
+    const marcadosSet = new Set((marcados || []).map(String));
+    return pares
+      .map(
+        ([valor, rotulo]) => `
+        <label class="campo-check" style="margin:.2rem 0 0;font-size:.85rem;">
+          <input type="checkbox" name="${nome}" value="${escapeHtml(valor)}"${marcadosSet.has(valor) ? ' checked' : ''}>
+          <span style="color:var(--cinza);text-transform:none;">${escapeHtml(rotulo)}</span>
+        </label>`,
+      )
+      .join('');
+  }
+
   // Formulario de criacao. `criterios` e `valores` vem preenchidos no re-submit da previa,
   // para o Jean nunca perder o que digitou ao recalcular.
-  function formularioCampanha({ vagas, origens, criterios = {}, valores = {}, erro = '', ok = '' } = {}) {
+  function formularioCampanha({ vagas, origens, cidades = [], criterios = {}, valores = {}, erro = '', ok = '' } = {}) {
     const alerta = erro ? `<p class="aviso-alerta">${escapeHtml(erro)}</p>` : '';
     const confirmacao = ok ? `<p class="aviso-ok">${escapeHtml(ok)}</p>` : '';
 
@@ -308,12 +335,33 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
               ${checkIncluirSem('perfil_incluir_sem', criterios.perfilIncluirSemAtributo, 'incluir sem perfil')}
             </div>
             <div class="filtro">
+              <span>Base</span>
+              ${checkboxes(
+                'base',
+                [
+                  ['candidatura', 'Candidatura'],
+                  ['legado', 'Base legada'],
+                  ['proprio', 'Cadastro próprio'],
+                ],
+                criterios.bases,
+              )}
+              <span style="display:block;color:var(--cinza);font-size:.78rem;margin-top:.35rem;text-transform:none;">
+                Nenhuma marcada = todas. Quem é candidato <b>e</b> talento casa com as duas.
+              </span>
+            </div>
+            <div class="filtro">
               <span>Origem</span>
               <select name="origem">
                 <option value=""${criterios.utmSource ? '' : ' selected'}>Qualquer</option>
                 ${opcoesOrigem}
               </select>
               ${checkIncluirSem('origem_incluir_sem', criterios.utmSourceIncluirSemAtributo, 'incluir sem origem')}
+              <span style="display:block;color:var(--cinza);font-size:.78rem;margin-top:.35rem;text-transform:none;">
+                ⚠️ Origem só existe para <b>candidaturas</b> (vem da UTM do link). Todo
+                talento — legado e cadastro próprio — conta como <b>sem origem</b>, então
+                com este filtro ativo eles ficam de fora a menos que você marque
+                "incluir sem origem".
+              </span>
             </div>
             <div class="filtro">
               <span>Recomendação da IA</span>
@@ -326,6 +374,21 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
                 ])}
               </select>
               ${checkIncluirSem('recomendacao_incluir_sem', criterios.recomendacaoIncluirSemAtributo, 'incluir sem avaliação')}
+            </div>
+            <div class="filtro">
+              <span>Cidade</span>
+              ${
+                cidades.length
+                  ? checkboxes('cidade', cidades.map((c) => [c, c]), criterios.cidades) +
+                    checkIncluirSem('cidade_incluir_sem', criterios.cidadeIncluirSemAtributo, 'incluir sem cidade') +
+                    `<span style="display:block;color:var(--cinza);font-size:.78rem;margin-top:.35rem;text-transform:none;">
+                       Nenhuma marcada = todas. Quem atende <b>todas as cidades</b> entra em
+                       qualquer recorte automaticamente.
+                     </span>`
+                  : `<span style="color:var(--cinza);font-size:.8rem;text-transform:none;">
+                       Nenhuma cidade cadastrada na base ainda.
+                     </span>`
+              }
             </div>
             <label class="filtro">
               <span>Candidatura de</span>
@@ -535,6 +598,11 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       ${formularioCampanha({
         vagas: vagasAtivas(),
         origens: db.listarOrigensDistintas(),
+        // Opcoes montadas a partir do que EXISTE no banco (uniao de talentos.cidade e
+        // applications.cidade), e nao de uma lista fixa: o backfill derivou 9 cidades das
+        // empresas legadas, e uma lista chumbada no codigo divergiria no primeiro dado
+        // novo. O sentinela 'Todas as cidades' fica de fora — ele casa sozinho.
+        cidades: db.listarCidadesDistintas(),
         criterios,
         valores,
         erro,

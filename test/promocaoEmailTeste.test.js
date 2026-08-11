@@ -263,6 +263,9 @@ test('com o endereco configurado: envia o conteudo do formulario com o prefixo [
       CONTEUDO.corpo_html,
       'vaga-email-teste',
       desc.montarUrlDescadastro(DESTINO_TESTE, config.baseUrl),
+      // A vaga alimenta o cabecalho. O botao de teste a carrega com db.obterVaga — a mesma
+      // fonte usada aqui.
+      db.obterVaga(vagaId),
     ),
   );
   // `includes`, e nao `startsWith`: o texto do Jean agora vive dentro do <td> de conteudo,

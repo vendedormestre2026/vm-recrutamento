@@ -35,6 +35,29 @@ const RECOMENDACOES_VALIDAS = ['avancar', 'talvez', 'descartar'];
 const ORIGEM_APPLICATION = 'application';
 const ORIGEM_TALENTO = 'talento';
 
+// ── BASE: de qual cadastro a pessoa veio ──
+//
+// Tres valores, e nao os dois de ORIGEM_*: aquele par diz de qual TABELA a linha veio e
+// resolve a exibicao por precedencia (applications vence). Este eixo e mais fino — separa
+// os 7.215 importados do cadastro proprio dentro da mesma tabela `talentos` — e e
+// ACUMULADO, nao resolvido: quem e candidata E legado casa com os dois filtros.
+const BASE_CANDIDATURA = 'candidatura';
+const BASE_LEGADO = 'legado';
+const BASE_PROPRIO = 'proprio';
+const BASES_VALIDAS = [BASE_CANDIDATURA, BASE_LEGADO, BASE_PROPRIO];
+
+// Valor sentinela de `talentos.cidade`. NAO e uma cidade: marca presenca em qualquer
+// praca (hoje so a Loureiro, 531 pessoas). Quem tem isto casa com QUALQUER cidade
+// selecionada no filtro, sem depender do "incluir sem cidade" — que serve a outra coisa,
+// a AUSENCIA de cidade. Os dois sao opostos e nao podem ser confundidos.
+const CIDADE_TODAS = 'Todas as cidades';
+
+// Categoria de talento -> valor de base. NULL/vazio = cadastro proprio, que era o unico
+// jeito de entrar em `talentos` antes da importacao.
+function baseDoTalento(categoria) {
+  return categoria === 'legado' ? BASE_LEGADO : BASE_PROPRIO;
+}
+
 function nomeCompleto(linha) {
   return [linha.nome, linha.sobrenome].filter(Boolean).join(' ').trim() || null;
 }
@@ -76,6 +99,11 @@ function agruparPessoas(linhasApp, linhasTal, { excluidos }) {
         perfis: new Set(),
         origensUtm: new Set(),
         recomendacoes: new Set(),
+        // Mesmos Sets acumulados por PESSOA que os tres acima, e pela mesma razao: quem
+        // tem candidatura E cadastro legado pertence as duas bases, e um filtro por
+        // qualquer uma delas tem que alcanca-la.
+        bases: new Set(),
+        cidades: new Set(),
       });
     }
     return pessoas.get(email);
@@ -95,6 +123,11 @@ function agruparPessoas(linhasApp, linhasTal, { excluidos }) {
     // 'direto' (mesma convencao do filtro do painel — origemCanonica). Ou seja, nao
     // existe candidatura "sem origem"; so talentos ficam sem este atributo.
     p.origensUtm.add(linha._origemCanonica);
+    p.bases.add(BASE_CANDIDATURA);
+    // `applications.cidade` e coluna orfa e quase sempre NULL — quando ha valor, foi o
+    // recrutador que digitou. Entra no mesmo Set das cidades de talento.
+    const cidadeApp = String(linha.cidade == null ? '' : linha.cidade).trim();
+    if (cidadeApp) p.cidades.add(cidadeApp);
   }
 
   for (const linha of linhasTal) {
@@ -109,8 +142,20 @@ function agruparPessoas(linhasApp, linhasTal, { excluidos }) {
     // candidatura seria perdido — e atributo se acumula por PESSOA, nao pela linha que
     // vence a exibicao. NULL continua significando "sem atributo".
     if (linha.perfil) p.perfis.add(linha.perfil);
+    // Base e cidade tambem entram ANTES do `continue` de precedencia, pela mesma razao:
+    // sao atributos da PESSOA. Alguem com candidatura E cadastro legado pertence as duas
+    // bases, e a linha de applications vencer a EXIBICAO nao apaga o fato de ela estar
+    // tambem no legado.
+    p.bases.add(baseDoTalento(linha.categoria));
+    const cidadeTal = String(linha.cidade == null ? '' : linha.cidade).trim();
+    if (cidadeTal) p.cidades.add(cidadeTal);
     // Talento nao contribui origem de lead (nao ha utm_source na tabela) nem recomendacao
     // (nao passa por entrevista/relatorio) — nesses dois eixos ele segue "sem atributo".
+    //
+    // CONSEQUENCIA CONHECIDA, e a razao de o texto de ajuda do filtro de Origem na tela
+    // avisar sobre ela: com o filtro de Origem ATIVO, todo talento cai fora por ser "sem
+    // atributo", salvo o "incluir sem origem". Depois da importacao isso deixou de ser
+    // detalhe — sao 7.215 pessoas.
 
     // Origem da linha final: applications vence, entao nao sobrescreve o que ja veio de la.
     if (p.origemTipo === ORIGEM_APPLICATION) continue;
@@ -147,6 +192,66 @@ function aplicarFiltroAtributo(pessoas, { ativo, alvo, valores, incluirSemAtribu
     if (conjunto.has(alvo)) mantidos.push(p);
   }
   return { pessoas: mantidos, semAtributo };
+}
+
+// ── Filtro MULTI-SELECAO com allowlist ──
+//
+// Diferente de aplicarFiltroAtributo, que casa contra UM alvo (os filtros de Perfil,
+// Origem e Recomendacao sao dropdowns de escolha unica). Base e Cidade sao checkboxes:
+// o operador marca quantos quiser, e a semantica e OU entre os marcados.
+//
+// Nada marcado = filtro INATIVO, exatamente como o "Qualquer" dos dropdowns. Isso importa:
+// uma lista vazia nao pode significar "ninguem casa", senao abrir a tela sem tocar em nada
+// zeraria o publico.
+//
+// `casaExtra` e o gancho do sentinela de cidade: uma pessoa pode casar mesmo sem ter
+// nenhum dos valores marcados, se tiver o coringa. Sem esse gancho, 'Todas as cidades'
+// precisaria estar entre as opcoes marcaveis — e ai o operador teria que lembrar de
+// marca-lo em TODA campanha, que e o tipo de "depende de lembrar" que ja custou caro
+// neste projeto.
+function aplicarFiltroMulti(pessoas, { selecionados, valores, incluirSemAtributo, casaExtra }) {
+  const alvos = Array.isArray(selecionados) ? selecionados.filter(Boolean) : [];
+  if (!alvos.length) return { pessoas, semAtributo: null };
+
+  const conjuntoAlvo = new Set(alvos);
+  let semAtributo = 0;
+  const mantidos = [];
+
+  for (const p of pessoas) {
+    const conjunto = valores(p);
+    if (conjunto.size === 0) {
+      semAtributo += 1;
+      if (incluirSemAtributo === true) mantidos.push(p);
+      continue;
+    }
+    let casa = false;
+    for (const v of conjunto) {
+      if (conjuntoAlvo.has(v) || (casaExtra && casaExtra(v))) {
+        casa = true;
+        break;
+      }
+    }
+    if (casa) mantidos.push(p);
+  }
+
+  return { pessoas: mantidos, semAtributo };
+}
+
+// Sanea uma lista vinda da tela contra uma allowlist. Valor invalido e DESCARTADO da
+// lista (nao invalida a lista inteira), no mesmo espirito de enumSaneado: entrada torta
+// nunca filtra por algo que ninguem pediu.
+function listaSaneada(valor, validos) {
+  const bruto = Array.isArray(valor) ? valor : valor == null ? [] : [valor];
+  const vistos = new Set();
+  const limpa = [];
+  for (const v of bruto) {
+    const s = String(v);
+    if (validos && !validos.includes(s)) continue;
+    if (vistos.has(s)) continue;
+    vistos.add(s);
+    limpa.push(s);
+  }
+  return limpa;
 }
 
 // Publico de uma campanha.
@@ -230,6 +335,32 @@ function listarPublicoCampanha(criterios = {}, deps = {}) {
   });
   pessoas = passoRecomendacao.pessoas;
 
+  // ── Base ──
+  // SEM "incluir sem atributo", e nao por esquecimento: toda pessoa do publico veio de
+  // alguma base — ou de uma candidatura, ou de um dos dois tipos de talento. Nao existe
+  // "sem base", entao um checkbox ali seria um controle que nunca muda nada.
+  const passoBase = aplicarFiltroMulti(pessoas, {
+    selecionados: listaSaneada(criterios.bases, BASES_VALIDAS),
+    valores: (p) => p.bases,
+  });
+  pessoas = passoBase.pessoas;
+
+  // ── Cidade ──
+  // Allowlist `null`: cidade e texto livre vindo do banco (o backfill derivou 9 valores,
+  // mas a coluna aceita qualquer coisa), entao nao ha enum a validar. O saneamento aqui e
+  // so descartar vazio e duplicata.
+  //
+  // `casaExtra` implementa o sentinela: quem tem 'Todas as cidades' casa com QUALQUER
+  // selecao. Note que ele age sobre o valor DA PESSOA, nao sobre o marcado na tela — e
+  // por isso que o sentinela nem precisa aparecer como opcao marcavel.
+  const passoCidade = aplicarFiltroMulti(pessoas, {
+    selecionados: listaSaneada(criterios.cidades, null),
+    valores: (p) => p.cidades,
+    incluirSemAtributo: criterios.cidadeIncluirSemAtributo,
+    casaExtra: (valorDaPessoa) => valorDaPessoa === CIDADE_TODAS,
+  });
+  pessoas = passoCidade.pessoas;
+
   const itens = pessoas.map((p) => ({
     email: p.email,
     nome: p.nome,
@@ -249,6 +380,10 @@ function listarPublicoCampanha(criterios = {}, deps = {}) {
       perfil: passoPerfil.semAtributo,
       utmSource: passoUtm.semAtributo,
       recomendacao: passoRecomendacao.semAtributo,
+      // Base nunca tem "sem atributo" (todo mundo veio de alguma), entao e sempre null —
+      // mantido no objeto por simetria, para a tela nao precisar de um caso especial.
+      base: passoBase.semAtributo,
+      cidade: passoCidade.semAtributo,
     },
     itens,
   };
@@ -260,4 +395,9 @@ module.exports = {
   RECOMENDACOES_VALIDAS,
   ORIGEM_APPLICATION,
   ORIGEM_TALENTO,
+  BASE_CANDIDATURA,
+  BASE_LEGADO,
+  BASE_PROPRIO,
+  BASES_VALIDAS,
+  CIDADE_TODAS,
 };
