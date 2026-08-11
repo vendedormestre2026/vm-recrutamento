@@ -234,6 +234,17 @@ function migrar() {
   adicionarColunaSeFaltar('talentos', 'cargo', 'TEXT');
   adicionarColunaSeFaltar('talentos', 'campos_extras', 'TEXT');
 
+  // Praca de atuacao. Nasce vazia para todo mundo e e preenchida por BACKFILL nos
+  // importados (src/scripts/limpeza-legado.js), derivada de campos_extras.empresa_origem
+  // por dicionario exato — cada empresa da base antiga atendia uma praca.
+  //
+  // Nullable e sem CHECK como as tres acima: NULL = cidade desconhecida, que e o estado
+  // de todo cadastro proprio (/bancodecurriculos nao coleta cidade). E ha um valor
+  // SENTINELA, 'Todas as cidades', que NAO significa ausencia — significa presenca em
+  // qualquer praca. Um CHECK aqui congelaria a lista de cidades no schema, e cidade e
+  // exatamente o tipo de dado que ganha valor novo sem aviso.
+  adicionarColunaSeFaltar('talentos', 'cidade', 'TEXT');
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

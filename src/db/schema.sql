@@ -225,9 +225,19 @@ CREATE TABLE IF NOT EXISTS talentos (
   -- campos_extras: JSON com os metadados da origem que nao tem coluna propria (empresa
   --   onde a pessoa se candidatou, codigo da vaga original PS000X, utm_source original).
   --   Guardados para auditoria/relatorio; nada no app depende deles hoje.
+  -- cidade: praca de atuacao. Preenchida por BACKFILL para os importados, derivada de
+  --   campos_extras.empresa_origem por dicionario exato (cada empresa da base antiga
+  --   atendia uma praca). NULL = cidade desconhecida — e o estado de todo cadastro
+  --   proprio (/bancodecurriculos nao coleta cidade) e de qualquer legado cuja empresa
+  --   nao esteja no dicionario.
+  --   VALOR SENTINELA 'Todas as cidades': NAO e "sem cidade". Marca presenca ativa em
+  --   qualquer praca (hoje so a Loureiro), e um filtro futuro de cidade deve fazer essa
+  --   pessoa casar com QUALQUER cidade selecionada — sem depender de um "incluir sem
+  --   cidade". Por isso e string literal e nao NULL: os dois significam coisas opostas.
   categoria        TEXT,
   cargo            TEXT,
-  campos_extras    TEXT
+  campos_extras    TEXT,
+  cidade           TEXT
 );
 
 -- Indices uteis

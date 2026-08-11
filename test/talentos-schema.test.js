@@ -35,7 +35,7 @@ const { migrar } = require('../src/db/migrate');
 
 migrar(); // a tabela precisa existir antes de qualquer coisa
 
-const COLUNAS_NOVAS = ['categoria', 'cargo', 'campos_extras'];
+const COLUNAS_NOVAS = ['categoria', 'cargo', 'campos_extras', 'cidade'];
 
 // pragma_table_info devolve uma linha por coluna: { name, type, notnull, dflt_value, pk }.
 const colunasDeTalentos = () =>
@@ -45,10 +45,26 @@ const coluna = (nome) => colunasDeTalentos().find((c) => c.name === nome);
 
 // ── 1. As tres colunas existem ──
 
-test('migrar() adiciona categoria, cargo e campos_extras em talentos', () => {
+test('migrar() adiciona categoria, cargo, campos_extras e cidade em talentos', () => {
   for (const nome of COLUNAS_NOVAS) {
     assert.ok(coluna(nome), `coluna ausente em talentos: ${nome}`);
   }
+});
+
+test('cidade aceita o valor SENTINELA, que nao e ausencia de cidade', () => {
+  // 'Todas as cidades' marca presenca em qualquer praca — o oposto de NULL. Um CHECK na
+  // coluna congelaria a lista de cidades no schema; a distincao vive no app.
+  assert.doesNotThrow(() =>
+    db
+      .getDb()
+      .prepare('INSERT INTO talentos (email, categoria, cidade) VALUES (?, ?, ?)')
+      .run('sentinela@exemplo.com', 'legado', 'Todas as cidades'),
+  );
+  const linha = db
+    .getDb()
+    .prepare("SELECT cidade FROM talentos WHERE email = 'sentinela@exemplo.com'")
+    .get();
+  assert.equal(linha.cidade, 'Todas as cidades');
 });
 
 test('as tres colunas novas sao TEXT', () => {
