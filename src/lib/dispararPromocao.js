@@ -37,8 +37,12 @@
 
 const { config } = require('../config');
 const dbPadrao = require('../db');
-const emailCampanhaPadrao = require('../providers/emailCampanha/smtp');
-const { credenciaisFaltando } = require('../providers/emailCampanha/smtp');
+// FACHADA, e nao ./smtp diretamente: o transporte ativo e escolhido por
+// EMAIL_CAMPANHA_TRANSPORTE (hoje 'api', porque o Railway bloqueia SMTP). As DUAS
+// importacoes abaixo tem que vir do mesmo lugar — se `enviar` viesse da fachada e
+// `credenciaisFaltando` do SMTP, o pre-voo aprovaria um ambiente sem a chave de API.
+const emailCampanhaPadrao = require('../providers/emailCampanha');
+const { credenciaisFaltando } = require('../providers/emailCampanha');
 const { montarUrlDescadastro } = require('./descadastro');
 const { listarPublicoCampanha } = require('./promocaoVagas');
 

@@ -37,7 +37,10 @@
 // campanha configurada, nada sai e a mensagem diz exatamente isso.
 
 const dbPadrao = require('../db');
-const emailCampanhaPadrao = require('../providers/emailCampanha/smtp');
+// Fachada (./emailCampanha), nao ./emailCampanha/smtp: o transporte ativo vem de
+// EMAIL_CAMPANHA_TRANSPORTE. O botao de teste precisa sair pelo MESMO caminho do disparo
+// real — e o proposito dele —, entao ele nunca pode apontar para um transporte fixo.
+const emailCampanhaPadrao = require('../providers/emailCampanha');
 const { verificarPreCondicoesDisparo } = require('./dispararPromocao');
 
 // Endereco fixo de destino, editavel em /admin/config. Chave NOVA no store `configuracoes`,

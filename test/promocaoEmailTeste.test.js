@@ -15,9 +15,13 @@
 //
 // ── ZERO REDE ──
 // Mesma tecnica de promocaoIntegracao.test.js, e pela mesma razao: o adaptador e o REAL
-// (providers/emailCampanha/smtp) com o `jsonTransport` do nodemailer no lugar do socket.
-// Assim o List-Unsubscribe inspecionado aqui e o DE VERDADE, montado pelo codigo de
-// producao — e nao um argumento que um dublê de funcao registrou.
+// (providers/emailCampanha/emailit_api) com um httpClient dublê no lugar do fetch. Assim o
+// List-Unsubscribe inspecionado aqui e o DE VERDADE, montado pelo codigo de producao — e
+// nao um argumento que um dublê de funcao registrou.
+//
+// O dublê e instalado na FACHADA (providers/emailCampanha), que e o que a lib importa. Se
+// fosse instalado em emailit_api diretamente, a fachada continuaria devolvendo o modulo
+// real e o teste abriria socket de verdade.
 //
 // ── NENHUMA CAMPANHA E CRIADA EM NENHUM MOMENTO DESTE ARQUIVO ──
 // POST /admin/promocao (a criacao do rascunho) nunca e chamado aqui, de proposito: e assim
@@ -40,18 +44,20 @@ process.env.SMTP_CAMPANHA_HOST = 'smtp.exemplo-provedor.com';
 process.env.SMTP_CAMPANHA_USUARIO = 'usuario-de-teste';
 process.env.SMTP_CAMPANHA_SENHA = 'senha-de-teste';
 process.env.SMTP_CAMPANHA_FROM_EMAIL = 'vagas@vagas.exemplo.com.br';
+// Credencial do transporte ATIVO (API REST). Sem ela o pre-voo barra o e-mail de teste.
+process.env.EMAILIT_API_KEY = 'em_chave-do-teste';
 process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const nodemailer = require('nodemailer');
 
 const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const { config } = require('../src/config');
 const { criarApp } = require('../src/server');
 const desc = require('../src/lib/descadastro');
-const smtpCampanha = require('../src/providers/emailCampanha/smtp');
+const fachadaCampanha = require('../src/providers/emailCampanha');
+const apiCampanha = require('../src/providers/emailCampanha/emailit_api');
 const emailTeste = require('../src/lib/emailTestePromocao');
 const disparo = require('../src/lib/dispararPromocao');
 
@@ -60,27 +66,33 @@ migrar();
 const DESTINO_TESTE = 'qa.jean@exemplo.com.br';
 
 // ──────────────────────────────────────────────────────────────
-// Adaptador REAL + transporte que nao abre socket
+// Adaptador REAL + http client que nao abre socket
 // ──────────────────────────────────────────────────────────────
 
+// Cada item e o CORPO JSON da requisicao que teria ido para a API do Emailit.
 const enviadas = [];
 
-const transporteCaptura = {
-  async sendMail(mensagem) {
-    const real = nodemailer.createTransport({ jsonTransport: true });
-    const info = await real.sendMail(mensagem);
-    enviadas.push(JSON.parse(info.message));
-    return info;
-  },
+const httpCaptura = async (url, init) => {
+  enviadas.push(JSON.parse(init.body));
+  return {
+    ok: true,
+    status: 200,
+    async json() {
+      return { id: `em_${enviadas.length}`, message_id: `<${enviadas.length}@exemplo>` };
+    },
+    async text() {
+      return '';
+    },
+  };
 };
 
-// A ROTA nao recebe deps — ela chama a lib, que chama o modulo do adaptador. Trocamos o
-// `enviar` do modulo em cache pela versao com transporte injetado: a lib o chama como
-// PROPRIEDADE (`emailCampanha.enviar(...)`), entao a troca vale. Mesma tecnica que
-// promocaoSugestao.test.js usa com providers/llm.
-const enviarOriginal = smtpCampanha.enviar;
-smtpCampanha.enviar = (destino, assunto, html, opcoes = {}) =>
-  enviarOriginal(destino, assunto, html, { ...opcoes, transporter: transporteCaptura });
+// A ROTA nao recebe deps — ela chama a lib, que chama a FACHADA. Trocamos o `enviar` da
+// fachada em cache por uma versao que delega ao adaptador REAL com o http client injetado:
+// a lib o chama como PROPRIEDADE (`emailCampanha.enviar(...)`), entao a troca vale. Mesma
+// tecnica que promocaoSugestao.test.js usa com providers/llm.
+const enviarOriginal = fachadaCampanha.enviar;
+fachadaCampanha.enviar = (destino, assunto, html, opcoes = {}) =>
+  apiCampanha.enviar(destino, assunto, html, { ...opcoes, httpClient: httpCaptura });
 
 // ──────────────────────────────────────────────────────────────
 // Cenario minimo — uma vaga ativa, so para o formulario ter o que oferecer
@@ -234,7 +246,7 @@ test('com o endereco configurado: envia o conteudo do formulario com o prefixo [
   assert.equal(enviadas.length, 1, 'exatamente um e-mail');
 
   const m = enviadas[0];
-  assert.equal(m.to[0].address, DESTINO_TESTE, 'sempre o endereco configurado, nunca outro');
+  assert.equal(m.to, DESTINO_TESTE, 'sempre o endereco configurado, nunca outro');
   assert.equal(
     m.subject,
     `[TESTE] ${CONTEUDO.assunto}`,
@@ -406,21 +418,23 @@ test('sem DESCADASTRO_SECRET o teste e bloqueado pelo pre-voo, sem enviar', asyn
   assert.equal(enviadas.length, antes, 'sem link de descadastro nao sai e-mail de campanha');
 });
 
-test('sem credenciais de SMTP de campanha o teste e bloqueado, sem enviar', async () => {
+test('sem credencial do provedor de campanha o teste e bloqueado, sem enviar', async () => {
+  // A credencial que importa e a do transporte ATIVO. Com a API REST selecionada, esvaziar
+  // host/usuario/senha de SMTP nao bloquearia nada — o pre-voo pergunta ao adaptador ativo.
   zerarCooldown();
   const antes = enviadas.length;
 
-  const hostOriginal = config.provedores.emailCampanha.host;
-  config.provedores.emailCampanha.host = '';
+  const chaveOriginal = config.provedores.emailCampanha.apiKey;
+  config.provedores.emailCampanha.apiKey = '';
   try {
     await comServidor(async (base) => {
       await autenticar(base);
       const res = await semRuido(() => fetch(`${base}/admin/promocao/teste`, form(CONTEUDO)));
       assert.equal(res.status, 503);
-      assert.match(await res.text(), /SMTP_CAMPANHA_HOST/);
+      assert.match(await res.text(), /EMAILIT_API_KEY/);
     });
   } finally {
-    config.provedores.emailCampanha.host = hostOriginal;
+    config.provedores.emailCampanha.apiKey = chaveOriginal;
   }
 
   assert.equal(enviadas.length, antes);
@@ -527,5 +541,5 @@ test('fecho: o fluxo inteiro rodou SEM campanha criada e SEM linha em campanha_e
 });
 
 test.after(() => {
-  smtpCampanha.enviar = enviarOriginal;
+  fachadaCampanha.enviar = enviarOriginal;
 });

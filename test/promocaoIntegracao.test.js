@@ -20,12 +20,17 @@
 // contra ELA — nunca contra o que o codigo devolveu.
 //
 // ── ZERO REDE ──
-// O adaptador de e-mail e o REAL (providers/emailCampanha/smtp), com o `jsonTransport` do
-// nodemailer injetado. Essa escolha e deliberada e mais forte que um dublê de funcao: o
-// jsonTransport monta a mensagem inteira sem abrir socket, entao os cabecalhos
+// O adaptador de e-mail e o REAL (providers/emailCampanha/emailit_api), com um httpClient
+// dublê no lugar do fetch. Essa escolha e deliberada e mais forte que um dublê de funcao: o
+// adaptador monta o corpo inteiro da requisicao sem abrir socket, entao os cabecalhos
 // List-Unsubscribe que este teste inspeciona sao os DE VERDADE, produzidos pelo mesmo
 // codigo que rodaria em producao. Um dublê que so registrasse os argumentos provaria que a
 // rotina chamou o adaptador; este prova que o e-mail SAIU com opt-out valido.
+//
+// MUDOU O TRANSPORTE (era o `jsonTransport` do nodemailer sobre providers/emailCampanha/
+// smtp): o Railway bloqueia egress SMTP, entao o transporte de producao virou a API REST.
+// O teste acompanhou o default de producao de proposito — um teste de integracao que
+// continuasse exercitando o SMTP estaria provando um caminho que nao roda mais.
 
 const os = require('node:os');
 const path = require('node:path');
@@ -43,50 +48,62 @@ process.env.SMTP_CAMPANHA_HOST = 'smtp.exemplo-provedor.com';
 process.env.SMTP_CAMPANHA_USUARIO = 'usuario-de-teste';
 process.env.SMTP_CAMPANHA_SENHA = 'senha-de-teste';
 process.env.SMTP_CAMPANHA_FROM_EMAIL = 'vagas@vagas.exemplo.com.br';
+// Credencial do transporte ATIVO (API REST). Sem ela o pre-voo barra o enfileiramento.
+process.env.EMAILIT_API_KEY = 'em_chave-da-integracao';
 process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const nodemailer = require('nodemailer');
 
 const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const { config } = require('../src/config');
 const { criarApp } = require('../src/server');
 const desc = require('../src/lib/descadastro');
-const smtpCampanha = require('../src/providers/emailCampanha/smtp');
+const apiCampanha = require('../src/providers/emailCampanha/emailit_api');
 const disparo = require('../src/lib/dispararPromocao');
 
 migrar();
 
 // ──────────────────────────────────────────────────────────────
-// Adaptador REAL + transporte que nao abre socket
+// Adaptador REAL + http client que nao abre socket
 // ──────────────────────────────────────────────────────────────
 
+// Cada item e o CORPO JSON da requisicao que teria ido para a API — ou seja, o e-mail como
+// o provedor o receberia. As chaves sao as do payload do Emailit: to, subject, html,
+// headers.
 const enviadas = [];
+// As requisicoes cruas (url + init), para as assercoes sobre transporte.
+const requisicoes = [];
 
-const transporteCaptura = {
-  async sendMail(mensagem) {
-    const real = nodemailer.createTransport({ jsonTransport: true });
-    const info = await real.sendMail(mensagem);
-    enviadas.push(JSON.parse(info.message));
-    return info;
-  },
+const httpCaptura = async (url, init) => {
+  requisicoes.push({ url, init });
+  enviadas.push(JSON.parse(init.body));
+  return {
+    ok: true,
+    status: 200,
+    async json() {
+      return { id: `em_${enviadas.length}`, message_id: `<${enviadas.length}@exemplo>` };
+    },
+    async text() {
+      return '';
+    },
+  };
 };
 
-// O "dublê" injetado na rotina e o adaptador de verdade com o transporte trocado. A rotina
+// O "dublê" injetado na rotina e o adaptador de verdade com o http client trocado. A rotina
 // chama enviar(destino, assunto, html) com TRES argumentos (Incremento 7 nao monta
 // cabecalho); o quarto entra aqui, e so para trocar o transporte.
 const emailCampanhaComCaptura = {
   enviar: (destino, assunto, html) =>
-    smtpCampanha.enviar(destino, assunto, html, { transporter: transporteCaptura }),
+    apiCampanha.enviar(destino, assunto, html, { httpClient: httpCaptura }),
 };
 
 const deps = { db, emailCampanha: emailCampanhaComCaptura };
 
-// Todos os enderecos que receberam alguma mensagem, em ordem de envio.
-const destinatariosEnviados = () =>
-  enviadas.flatMap((m) => (m.to || []).map((d) => d.address));
+// Todos os enderecos que receberam alguma mensagem, em ordem de envio. No payload da API
+// `to` e uma string (um envio por destinatario), e nao a lista de objetos do nodemailer.
+const destinatariosEnviados = () => enviadas.map((m) => m.to);
 
 // ──────────────────────────────────────────────────────────────
 // Helpers de cenario
@@ -427,7 +444,7 @@ test('f) a varredura envia so para os esperados, com List-Unsubscribe valido', a
 
   // ── Cada mensagem carrega opt-out valido ──
   for (const m of enviadas) {
-    const destino = m.to[0].address;
+    const destino = m.to;
 
     const cabecalho = m.headers['List-Unsubscribe'];
     assert.ok(cabecalho, `List-Unsubscribe ausente para ${destino}`);

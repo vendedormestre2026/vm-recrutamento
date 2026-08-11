@@ -37,6 +37,11 @@ process.env.SMTP_CAMPANHA_HOST = 'smtp.exemplo-provedor.com';
 process.env.SMTP_CAMPANHA_USUARIO = 'usuario-de-teste';
 process.env.SMTP_CAMPANHA_SENHA = 'senha-de-teste';
 process.env.SMTP_CAMPANHA_FROM_EMAIL = 'vagas@vagas.exemplo.com.br';
+// Credencial do transporte ATIVO (API REST — o Railway bloqueia SMTP). O pre-voo pergunta
+// ao transporte selecionado o que falta, entao sem esta chave o caminho feliz seria barrado
+// antes de chegar em qualquer assercao sobre a fila. As SMTP_CAMPANHA_* acima ficam porque
+// continuam sendo o que o transporte legado exige, e um teste abaixo troca o transporte.
+process.env.EMAILIT_API_KEY = 'em_chave-de-teste';
 process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
@@ -168,12 +173,17 @@ async function semSegredoDescadastro(fn) {
   }
 }
 
-// Idem para as credenciais de SMTP de campanha (molde de comConfigCampanha,
+// Idem para as credenciais de envio de campanha (molde de comConfigCampanha,
 // emailCampanha.test.js).
-async function semCredenciaisSmtp(fn) {
+//
+// Esvazia a credencial do transporte ATIVO, e nao um conjunto fixo de campos: o pre-voo
+// pergunta ao transporte selecionado o que falta (a fachada roteia credenciaisFaltando
+// junto com enviar), entao zerar `host`/`usuario`/`senha` com a API ativa nao bloquearia
+// nada — o teste passaria a provar o oposto do que afirma.
+async function semCredenciaisEnvio(fn) {
   const cfg = config.provedores.emailCampanha;
   const original = { ...cfg };
-  Object.assign(cfg, { host: '', usuario: '', senha: '' });
+  Object.assign(cfg, { apiKey: '', host: '', usuario: '', senha: '' });
   try {
     return await fn();
   } finally {
@@ -645,21 +655,20 @@ test('sem DESCADASTRO_SECRET, POST /:id/disparar NAO enfileira nem com confirmad
   });
 });
 
-test('sem credenciais SMTP de campanha, POST /:id/disparar NAO enfileira', async () => {
+test('sem credenciais de envio de campanha, POST /:id/disparar NAO enfileira', async () => {
   zerarCampanhas();
   const id = criarRascunho(vagaAlvo);
 
   await comServidor(async (base) => {
     await autenticar(base);
-    await semCredenciaisSmtp(async () => {
+    await semCredenciaisEnvio(async () => {
       for (const corpo of [{}, { confirmado: '1' }]) {
         const res = await fetch(`${base}/admin/promocao/${id}/disparar`, form(corpo));
         assert.equal(res.status, 503);
         const html = await res.text();
-        // A lista de campos vem do adaptador (credenciaisFaltando), nao de uma copia.
-        assert.match(html, /SMTP_CAMPANHA_HOST/);
-        assert.match(html, /SMTP_CAMPANHA_USUARIO/);
-        assert.match(html, /SMTP_CAMPANHA_SENHA/);
+        // A lista de campos vem do adaptador ATIVO (credenciaisFaltando roteado pela
+        // fachada), nao de uma copia — hoje a API REST, entao a chave dela e o que falta.
+        assert.match(html, /EMAILIT_API_KEY/);
         assert.doesNotMatch(html, /Confirmar disparo/);
       }
     });
@@ -683,8 +692,8 @@ test('enfileirarCampanha chamada DIRETO tambem recusa sem DESCADASTRO_SECRET', a
     );
   });
 
-  await semCredenciaisSmtp(() => {
-    assert.throws(() => disparo.enfileirarCampanha(id, deps), /SMTP_CAMPANHA_HOST/);
+  await semCredenciaisEnvio(() => {
+    assert.throws(() => disparo.enfileirarCampanha(id, deps), /EMAILIT_API_KEY/);
   });
 
   assert.equal(statusCampanha(id), 'rascunho');

@@ -207,4 +207,11 @@ module.exports = {
   cabecalhosDescadastro,
   criarTransporter,
   credenciaisFaltando,
+  // Exportada para o adaptador de API REST (./emailit_api.js) REUSAR a montagem de
+  // cabecalho em vez de duplica-la. A regra de opt-out e do dominio "e-mail de campanha",
+  // nao do transporte SMTP — ela mora aqui por precedencia historica (este era o unico
+  // transporte). Se um terceiro transporte aparecer, o movimento certo e extrair
+  // montarCabecalhos + cabecalhosDescadastro para um ./cabecalhos.js compartilhado; com
+  // dois, isso seria cerimonia sem ganho.
+  montarCabecalhos,
 };

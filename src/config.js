@@ -186,10 +186,30 @@ const config = {
     // Uma denuncia de spam numa campanha nao pode derrubar a entrega do e-mail de
     // entrevista de ninguem — por isso remetente, provedor e reputacao sao separados.
     //
-    // SMTP GENERICO (e nao a API REST do Emailit) e a decisao que torna a migracao
-    // barata: quando o Amazon SES for aprovado, troca-se HOST/PORTA/USUARIO/SENHA por
-    // credenciais SES (o SES tambem fala SMTP) e NENHUMA linha de codigo muda.
+    // ── CORRECAO DE ROTA (2026-08-10): SMTP DEIXOU DE SER O DEFAULT ──
+    //
+    // A decisao original registrada aqui era "SMTP generico e nao a API REST do Emailit",
+    // para que trocar de provedor (Emailit -> Amazon SES) fosse mudanca de configuracao e
+    // nao de codigo. O raciocinio continua valido; o que mudou foi um fato do AMBIENTE:
+    // o Railway BLOQUEIA egress SMTP neste servico. Provado por probe TCP de dentro do
+    // container — 587, 465 e 2525 dao timeout contra Emailit, Gmail E SendGrid, enquanto
+    // api.emailit.com:443 abre em ~190 ms. Nao e o provedor, e a plataforma.
+    //
+    // Portanto o transporte default passou a ser a API REST (HTTPS). O SMTP continua
+    // implementado e selecionavel por EMAIL_CAMPANHA_TRANSPORTE=smtp, para o dia em que o
+    // Railway liberar a porta ou o SES entrar — a portabilidade que motivou a escolha
+    // original virou a fachada em providers/emailCampanha/index.js.
     emailCampanha: {
+      // 'api' (default, HTTPS) | 'smtp' (legado, bloqueado no Railway hoje).
+      transporte: String(process.env.EMAIL_CAMPANHA_TRANSPORTE || 'api').trim().toLowerCase(),
+
+      // Credencial da API REST. E DIFERENTE do usuario/senha de SMTP: no Emailit a chave
+      // de API e emitida no painel (formato em_...) e vai no header Authorization como
+      // Bearer. Mandar a senha de SMTP ali devolve 401.
+      apiKey: process.env.EMAILIT_API_KEY || '',
+      // Endpoint sobrescrevivel para apontar a um sandbox sem mexer em codigo.
+      apiUrl: process.env.EMAILIT_API_URL || 'https://api.emailit.com/v2/emails',
+
       host: process.env.SMTP_CAMPANHA_HOST || '',
       porta: num(process.env.SMTP_CAMPANHA_PORTA, 587),
       // `seguro` mapeia direto para a opcao `secure` do nodemailer, e o default FALSE
