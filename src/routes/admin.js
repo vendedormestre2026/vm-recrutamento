@@ -3407,6 +3407,31 @@ const ROTULOS_STATUS_TALENTO = {
   convertido: 'Convertido',
 };
 
+// Rotulos amigaveis da ORIGEM do talento (coluna `categoria`).
+//
+// NULL nao e um estado degradado: e o cadastro proprio, que era o unico jeito de entrar
+// aqui antes da importacao da base legada. Por isso a ausencia de categoria tem rotulo
+// proprio ("Cadastro próprio") em vez do "—" usado nas colunas de dado faltando — o Jean
+// precisa distinguir "veio pelo formulario" de "esta em branco".
+const ROTULOS_CATEGORIA_TALENTO = {
+  legado: 'Base legada',
+};
+const ROTULO_CATEGORIA_PROPRIO = 'Cadastro próprio';
+
+function rotuloCategoriaTalento(categoria) {
+  if (!categoria) return ROTULO_CATEGORIA_PROPRIO;
+  return ROTULOS_CATEGORIA_TALENTO[categoria] || categoria;
+}
+
+// Chip da origem. Contorno sobrio para legado (registro histórico, sem currículo nem
+// consentimento) e laranja para cadastro proprio (entrou pelo funil atual, com tudo).
+// A distincao visual e o ponto: numa lista com 7 mil legados e algumas dezenas de
+// cadastros proprios, os proprios sao a excecao que precisa saltar.
+function badgeCategoriaTalento(categoria) {
+  const classe = categoria === 'legado' ? 'badge--concluido' : 'badge--entrevista';
+  return `<span class="badge ${classe}">${escapeHtml(rotuloCategoriaTalento(categoria))}</span>`;
+}
+
 // Chip do status do talento. Reusa a paleta existente: laranja (contatado/convertido =
 // ativo/positivo), contorno sobrio (descartado = negativo), cinza (novo = neutro inicial).
 function badgeStatusTalento(status) {
@@ -3432,8 +3457,17 @@ function scoreTalentoTexto(analise) {
 // banco_curriculos.js de proposito: aquele usa as classes do site publico (vm-hero/
 // vm-card), tem copy voltada ao candidato e nao renderiza por_criterio. Aqui seguimos o
 // padrao de card de competencia (.comp/.comp-nota) do relatorio de entrevista.
-function analiseTalentoAdminHtml(analise) {
+function analiseTalentoAdminHtml(analise, { ehLegado = false } = {}) {
   if (!analise) {
+    // DUAS ausencias diferentes, com causas diferentes. O texto original culpa o perfil
+    // ideal ausente ou uma falha do motor — verdade para cadastro proprio, e falso para
+    // legado, onde nunca houve currículo para analisar. Dizer "a análise falhou" a quem
+    // olha um registro importado manda o Jean investigar um erro que nao existe.
+    if (ehLegado) {
+      return `<p style="color:var(--cinza);">Não há análise porque não há currículo: este
+        registro veio da base legada, que trazia apenas cargo e contato. Não é falha do
+        motor de análise — não havia arquivo para analisar.</p>`;
+    }
     return `<p style="color:var(--cinza);">Sem análise. Não havia perfil ideal de currículo
       cadastrado para este perfil de interesse no momento do cadastro, ou a análise
       automática falhou. O cadastro do talento foi preservado normalmente.</p>`;
@@ -3478,11 +3512,31 @@ router.get('/talentos', (req, res) => {
   // Saneamento: filtros so valem se pertencerem ao enum; caso contrario = "todos".
   const perfil = PERFIS_VALIDOS.includes(q.perfil) ? q.perfil : '';
   const status = db.STATUS_TALENTO_VALIDOS.includes(q.status) ? q.status : '';
+  // Categoria aceita os valores gravaveis MAIS o sentinela de "cadastro proprio"
+  // (categoria IS NULL), que nao existe no banco e so viaja na query string.
+  const categoriasFiltraveis = [...db.CATEGORIAS_TALENTO_VALIDAS, db.CATEGORIA_FILTRO_PROPRIO];
+  const categoria = categoriasFiltraveis.includes(q.categoria) ? q.categoria : '';
 
-  const talentos = db.listarTalentos({
+  // Pagina 1-indexed, mesmo saneamento do painel de candidatos: inteiro positivo, lixo cai
+  // no default. A camada de dados sanea de novo — aqui o valor tambem desenha os controles.
+  const paginaNum = Number(q.pagina);
+  const pagina = Number.isInteger(paginaNum) && paginaNum > 0 ? paginaNum : 1;
+
+  // Recorte UNICO: o mesmo objeto vai para a tabela e para a contagem do topo. Remontar um
+  // objeto parecido nos dois pontos seria a porta de entrada para o contador divergir da
+  // lista — mesma disciplina de `filtrosLista` no painel de candidatos.
+  const filtrosLista = {
     perfil: perfil || undefined,
     status: status || undefined,
-  });
+    categoria: categoria || undefined,
+  };
+
+  const talentos = db.listarTalentos({ ...filtrosLista, pagina });
+  // Sem `pagina`: contarTalentos a ignora de qualquer forma, mas passar so o recorte deixa
+  // explicito que a paginacao nao entra na conta.
+  const totalTalentos = db.contarTalentos(filtrosLista);
+  const totalGeral = db.contarTalentos({});
+  const totalPaginas = Math.max(1, Math.ceil(totalTalentos / db.TALENTOS_POR_PAGINA));
 
   const linhas = talentos
     .map(
@@ -3491,24 +3545,38 @@ router.get('/talentos', (req, res) => {
           <td><a href="/admin/talentos/${t.id}">${escapeHtml(t.nome || '—')}</a></td>
           <td>${escapeHtml(t.email || '—')}</td>
           <td>${escapeHtml(t.telefone || '—')}</td>
+          <td>${escapeHtml(t.cargo || '—')}</td>
           <td>${escapeHtml(t.perfil_interesse || '—')}</td>
+          <td>${badgeCategoriaTalento(t.categoria)}</td>
           <td>${escapeHtml(scoreTalentoTexto(t.analise))}</td>
           <td>${badgeStatusTalento(t.status)}</td>
           <td>${escapeHtml(formatarDataHora(t.criado_em))}</td>
-          <td><a class="btn btn--ghost" href="/admin/talentos/${t.id}">Ver análise</a></td>
+          <td><a class="btn btn--ghost" href="/admin/talentos/${t.id}">Ver detalhe</a></td>
         </tr>`,
     )
     .join('');
 
   const selPerfil = (v) => (perfil === v ? ' selected' : '');
   const selStatus = (v) => (status === v ? ' selected' : '');
-  const temFiltro = perfil || status;
+  const selCategoria = (v) => (categoria === v ? ' selected' : '');
+  const temFiltro = Boolean(perfil || status || categoria);
   const opcoesStatus = db.STATUS_TALENTO_VALIDOS.map(
     (s) => `<option value="${s}"${selStatus(s)}>${escapeHtml(ROTULOS_STATUS_TALENTO[s] || s)}</option>`,
+  ).join('');
+  const opcoesCategoria = db.CATEGORIAS_TALENTO_VALIDAS.map(
+    (c) => `<option value="${escapeHtml(c)}"${selCategoria(c)}>${escapeHtml(ROTULOS_CATEGORIA_TALENTO[c] || c)}</option>`,
   ).join('');
 
   const filtros = `
     <form method="GET" action="/admin/talentos" class="admin-filtros">
+      <label class="filtro">
+        <span>Origem</span>
+        <select name="categoria">
+          <option value=""${categoria ? '' : ' selected'}>Todas</option>
+          ${opcoesCategoria}
+          <option value="${db.CATEGORIA_FILTRO_PROPRIO}"${selCategoria(db.CATEGORIA_FILTRO_PROPRIO)}>Cadastro próprio</option>
+        </select>
+      </label>
       <label class="filtro">
         <span>Perfil</span>
         <select name="perfil">
@@ -3528,26 +3596,68 @@ router.get('/talentos', (req, res) => {
       ${temFiltro ? '<a class="btn btn--ghost" href="/admin/talentos">Limpar</a>' : ''}
     </form>`;
 
+  // Link de pagina preservando os filtros: sem isto, navegar para a pagina 2 devolveria a
+  // base inteira e o operador perderia o recorte sem perceber.
+  const linkPagina = (n) => {
+    const p = new URLSearchParams();
+    if (categoria) p.set('categoria', categoria);
+    if (perfil) p.set('perfil', perfil);
+    if (status) p.set('status', status);
+    if (n > 1) p.set('pagina', String(n));
+    const qs = p.toString();
+    return `/admin/talentos${qs ? `?${qs}` : ''}`;
+  };
+
+  // Escondida quando ha uma pagina so — nao ha para onde navegar e a barra viraria ruido.
+  // A excecao e `pagina > 1`: quem chegou alem da ultima (URL na mao, ou um filtro que
+  // encolheu o resultado) precisa de caminho de volta. Mesma regra do painel de candidatos.
+  const paginacao =
+    totalPaginas > 1 || pagina > 1
+      ? `
+      <nav class="admin-paginacao" aria-label="Paginação do banco de talentos">
+        ${
+          pagina > 1
+            ? `<a class="btn btn--ghost" rel="prev" href="${linkPagina(Math.min(pagina - 1, totalPaginas))}">← Anterior</a>`
+            : '<span class="btn btn--off">← Anterior</span>'
+        }
+        <span>Página <b>${pagina}</b> de <b>${totalPaginas}</b></span>
+        ${
+          pagina < totalPaginas
+            ? `<a class="btn btn--ghost" rel="next" href="${linkPagina(pagina + 1)}">Próxima →</a>`
+            : '<span class="btn btn--off">Próxima →</span>'
+        }
+      </nav>`
+      : '';
+
+  const contador = temFiltro
+    ? `<b>${totalTalentos}</b> de <b>${totalGeral}</b> talento(s) — recorte filtrado`
+    : `<b>${totalGeral}</b> talento(s) no banco`;
+
   const conteudo = `
     <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
     <h1 style="margin:0 0 .3rem;">Banco de talentos</h1>
-    <p style="color:var(--cinza);font-size:.9rem;margin:0 0 1.25rem;">
-      Cadastros recebidos pelo Banco de Currículos (/bancodecurriculos), com a análise
-      automática do currículo quando havia um perfil ideal cadastrado.</p>
+    <p style="color:var(--cinza);font-size:.9rem;margin:0 0 .6rem;">
+      Duas origens convivem aqui: <b>cadastro próprio</b>, recebido pelo Banco de Currículos
+      (/bancodecurriculos), com currículo em PDF e análise automática quando havia perfil
+      ideal cadastrado; e <b>base legada</b>, importada do sistema anterior, que traz cargo
+      e contato mas não tem currículo, análise nem consentimento registrado na origem.
+      Use o filtro de Origem para separar os dois.</p>
+    <p style="color:var(--cinza);font-size:.9rem;margin:0 0 1.25rem;">${contador}</p>
     ${filtros}
     <div class="admin-tab-scroll">
       <table class="admin-tab">
         <thead>
           <tr>
-            <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Perfil</th>
-            <th>Score</th><th>Status</th><th>Cadastrado em</th><th>Ação</th>
+            <th>Nome</th><th>E-mail</th><th>Telefone</th><th>Cargo</th><th>Perfil</th>
+            <th>Origem</th><th>Score</th><th>Status</th><th>Cadastrado em</th><th>Ação</th>
           </tr>
         </thead>
         <tbody>
-          ${linhas || `<tr><td colspan="8">${temFiltro ? 'Nenhum talento para os filtros aplicados.' : 'Nenhum talento cadastrado ainda.'}</td></tr>`}
+          ${linhas || `<tr><td colspan="10">${temFiltro ? 'Nenhum talento para os filtros aplicados.' : 'Nenhum talento cadastrado ainda.'}</td></tr>`}
         </tbody>
       </table>
-    </div>`;
+    </div>
+    ${paginacao}`;
 
   res.send(paginaAdmin({ titulo: 'Banco de talentos', conteudo }));
 });
@@ -3591,9 +3701,37 @@ router.get('/talentos/:id', (req, res) => {
   const linkedin = talento.linkedin_url
     ? `<a href="${escapeHtml(talento.linkedin_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(talento.linkedin_url)}</a>`
     : '—';
+
+  // ── Registro da base legada: tres textos desta tela mentiriam sem este flag ──
+  //
+  // Os 7.215 importados nao tem currículo, nao tem análise e nao tem consentimento na
+  // origem. A tela foi escrita quando o unico jeito de entrar aqui era o formulario
+  // publico, entao ela explica cada ausencia como se fosse falha do fluxo normal:
+  // "—" no consentimento parece dado faltando por bug; o texto padrao da analise culpa
+  // um perfil ideal ausente ou uma falha do motor; e o botao de currículo aparece
+  // desabilitado sem dizer por que. Nenhuma das tres explicacoes e verdade para legado.
+  //
+  // Para cadastro proprio (categoria NULL) NADA muda — os tres caminhos abaixo caem
+  // exatamente no que a tela ja fazia.
+  const ehLegado = talento.categoria === 'legado';
+
   const botaoCurriculo = talento.curriculo_path
     ? `<a class="btn" href="/admin/talentos/${talento.id}/curriculo">Baixar currículo (PDF)</a>`
-    : `<span class="btn btn--off">Baixar currículo (PDF)</span>`;
+    : ehLegado
+      ? `<p style="color:var(--cinza);margin:0;">Registros da base legada não têm currículo:
+           a importação trouxe cargo e contato, e o sistema anterior não guardava o arquivo.
+           Para receber um currículo desta pessoa, envie o link do
+           <a href="/bancodecurriculos">Banco de Currículos</a>.</p>`
+      : `<span class="btn btn--off" title="Este cadastro não tem PDF anexado.">Baixar currículo (PDF)</span>`;
+
+  // Consentimento: data real quando existe; para legado, a explicacao do porque nao existe.
+  const consentimentoHtml = talento.consent_at
+    ? escapeHtml(formatarDataHora(talento.consent_at))
+    : ehLegado
+      ? `<span style="color:var(--cinza);">Sem consentimento documentado na origem —
+           a base legada não registrava esse dado. Importado em ${escapeHtml(formatarDataHora(talento.criado_em))}
+           como registro histórico.</span>`
+      : '—';
 
   const opcoesStatus = db.STATUS_TALENTO_VALIDOS.map(
     (s) =>
@@ -3616,10 +3754,12 @@ router.get('/talentos/:id', (req, res) => {
         <div><dt>E-mail</dt><dd>${escapeHtml(talento.email || '—')}</dd></div>
         <div><dt>Telefone</dt><dd>${escapeHtml(talento.telefone || '—')}</dd></div>
         <div><dt>LinkedIn</dt><dd>${linkedin}</dd></div>
+        <div><dt>Origem</dt><dd>${badgeCategoriaTalento(talento.categoria)}</dd></div>
+        <div><dt>Cargo</dt><dd>${escapeHtml(talento.cargo || '—')}</dd></div>
         <div><dt>Perfil de interesse</dt><dd>${escapeHtml(talento.perfil_interesse || '—')}</dd></div>
         <div><dt>Status</dt><dd>${badgeStatusTalento(talento.status)}</dd></div>
         <div><dt>Cadastrado em</dt><dd>${escapeHtml(formatarDataHora(talento.criado_em))}</dd></div>
-        <div><dt>Consentimento (LGPD)</dt><dd>${escapeHtml(formatarDataHora(talento.consent_at))}</dd></div>
+        <div><dt>Consentimento (LGPD)</dt><dd>${consentimentoHtml}</dd></div>
       </dl>
     </section>
 
@@ -3636,7 +3776,7 @@ router.get('/talentos/:id', (req, res) => {
 
     <section class="rel-sec">
       <h2>Análise do currículo</h2>
-      ${analiseTalentoAdminHtml(talento.analise)}
+      ${analiseTalentoAdminHtml(talento.analise, { ehLegado })}
     </section>
 
     <section class="rel-sec">

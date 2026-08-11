@@ -508,12 +508,43 @@ function talentoDeLinha(linha) {
   return { ...linha, analise: linha.analise ? lerJson(linha.analise, null) : null };
 }
 
-// Lista talentos com filtro OPCIONAL por perfil_interesse e/ou status, ORDER BY
-// criado_em DESC. Sem filtro, lista todos. Filtros invalidos sao IGNORADOS (tratados
-// como ausentes) — a rota tambem saneia, mas a camada de dados nao confia na entrada.
-function listarTalentos({ perfil, status } = {}) {
+// ── Paginacao da lista de talentos ──
+// Mesmo numero e mesma razao de CANDIDATOS_POR_PAGINA: tamanho FIXO, nao configuravel
+// pela query string, morando num lugar so porque tres pontos precisam do mesmo valor (o
+// LIMIT, o calculo de totalPaginas e os controles de navegacao).
+//
+// A tela de talentos nasceu sem paginacao, quando a tabela tinha zero linha. A importacao
+// da base legada a levou de 0 para 7.215 de uma vez — 434 bytes por linha renderizada, ou
+// ~3 MB de HTML numa requisicao. E exatamente o problema que o painel de candidatos ja
+// tinha tido com 550 leads, e a solucao aqui e a mesma, de proposito.
+const TALENTOS_POR_PAGINA = 25;
+
+// ── Sentinela do filtro de categoria ──
+//
+// `categoria` tem TRES estados na tela, e um deles e NULL — que nao sai de uma comparacao
+// de igualdade. 'legado' e valor real (esta em CATEGORIAS_TALENTO_VALIDAS); "cadastro
+// proprio" e a AUSENCIA de valor, e precisa de um nome para viajar na query string.
+//
+// Este sentinela e de APRESENTACAO, nunca de armazenamento: nenhuma linha do banco tem
+// categoria = 'proprio'. Ele existe so para o formulario poder dizer "quero os que nao tem
+// categoria" — por isso vive aqui, ao lado do filtro que o consome, e nao em
+// CATEGORIAS_TALENTO_VALIDAS, que descreve o que pode ser GRAVADO.
+const CATEGORIA_FILTRO_PROPRIO = 'proprio';
+
+// Monta a clausula WHERE compartilhada por listarTalentos e contarTalentos.
+//
+// UMA funcao para os dois, e nao a condicao repetida em cada query: o denominador da
+// paginacao TEM que ser contado sobre o mesmo recorte que a tabela exibe. Duas copias
+// divergiriam no primeiro filtro novo, e o sintoma seria "Pagina 3 de 7" numa tela vazia.
+// Mesmo espirito de condicoesFiltroCandidatos.
+//
+// Filtro invalido = filtro INATIVO, nunca erro. E a convencao do projeto para entrada
+// vinda de tela/querystring (ver o comentario de enumSaneado em lib/promocaoVagas): o
+// efeito de um valor torto e "nao filtra", jamais "filtra por algo que ninguem pediu".
+function condicoesFiltroTalentos({ perfil, status, categoria } = {}) {
   const where = [];
   const params = [];
+
   if (PERFIS_VALIDOS.includes(perfil)) {
     where.push('perfil_interesse = ?');
     params.push(perfil);
@@ -522,11 +553,53 @@ function listarTalentos({ perfil, status } = {}) {
     where.push('status = ?');
     params.push(status);
   }
+
+  if (categoria === CATEGORIA_FILTRO_PROPRIO) {
+    // Cadastro proprio = o que entrou por /bancodecurriculos. `IS NULL` e nao `= ''`:
+    // criarTalento nunca escreve string vazia nesta coluna, ela simplesmente nao e
+    // informada no INSERT.
+    where.push('categoria IS NULL');
+  } else if (CATEGORIAS_TALENTO_VALIDAS.includes(categoria)) {
+    where.push('categoria = ?');
+    params.push(categoria);
+  }
+
+  return { where, params };
+}
+
+// Lista talentos com filtro OPCIONAL por perfil_interesse, status e/ou categoria,
+// ORDER BY criado_em DESC, uma PAGINA por vez.
+//
+// `pagina` e 1-indexed e saneada aqui tambem (a rota ja saneia): lixo vira 1. Uma pagina
+// alem da ultima nao e erro — o OFFSET devolve vazio e a tela mostra a mensagem de lista
+// vazia que ja existia. Mesmo contrato de listarAplicacoesComContexto.
+function listarTalentos({ perfil, status, categoria, pagina } = {}) {
+  const { where, params } = condicoesFiltroTalentos({ perfil, status, categoria });
+
+  const n = Number(pagina);
+  const p = Number.isInteger(n) && n > 0 ? n : 1;
+
   const sql =
     'SELECT * FROM talentos' +
     (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
-    ' ORDER BY criado_em DESC';
-  return getDb().prepare(sql).all(...params).map(talentoDeLinha);
+    ' ORDER BY criado_em DESC LIMIT ? OFFSET ?';
+
+  return getDb()
+    .prepare(sql)
+    .all(...params, TALENTOS_POR_PAGINA, (p - 1) * TALENTOS_POR_PAGINA)
+    .map(talentoDeLinha);
+}
+
+// Total de talentos do recorte, SEM LIMIT/OFFSET — e o denominador da paginacao e o
+// "X de Y" do topo da tela. Ignora `pagina` de proposito: paginacao e recorte de
+// EXIBICAO, nao filtro, entao passar o mesmo objeto de filtros aqui e em listarTalentos
+// e o comportamento correto (e o que garante que os dois nao divirjam).
+function contarTalentos({ perfil, status, categoria } = {}) {
+  const { where, params } = condicoesFiltroTalentos({ perfil, status, categoria });
+  const sql =
+    'SELECT COUNT(*) AS total FROM talentos' +
+    (where.length ? ` WHERE ${where.join(' AND ')}` : '');
+  return getDb().prepare(sql).get(...params).total;
 }
 
 // Um talento por id, com `analise` ja parseada. null se nao existir.
@@ -2401,11 +2474,14 @@ module.exports = {
   criarTalento,
   criarTalentosLegado,
   listarTalentos,
+  contarTalentos,
   buscarTalento,
   atualizarStatusTalento,
   STATUS_TALENTO_VALIDOS,
   CATEGORIAS_TALENTO_VALIDAS,
   CARGOS_TALENTO_VALIDOS,
+  TALENTOS_POR_PAGINA,
+  CATEGORIA_FILTRO_PROPRIO,
   // aplicacoes
   criarAplicacao,
   obterAplicacao,

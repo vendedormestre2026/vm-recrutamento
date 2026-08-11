@@ -42,11 +42,14 @@ module.exports = {
   criarTalento: driver.criarTalento,
   criarTalentosLegado: driver.criarTalentosLegado,
   listarTalentos: driver.listarTalentos,
+  contarTalentos: driver.contarTalentos,
   buscarTalento: driver.buscarTalento,
   atualizarStatusTalento: driver.atualizarStatusTalento,
   STATUS_TALENTO_VALIDOS: driver.STATUS_TALENTO_VALIDOS,
   CATEGORIAS_TALENTO_VALIDAS: driver.CATEGORIAS_TALENTO_VALIDAS,
   CARGOS_TALENTO_VALIDOS: driver.CARGOS_TALENTO_VALIDOS,
+  TALENTOS_POR_PAGINA: driver.TALENTOS_POR_PAGINA,
+  CATEGORIA_FILTRO_PROPRIO: driver.CATEGORIA_FILTRO_PROPRIO,
 
   // aplicacoes
   criarAplicacao: driver.criarAplicacao,
