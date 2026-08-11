@@ -33,3 +33,11 @@ npm-debug.log*
 
 # Uploads de candidatos (currículos) - chegam na Fase 1
 /uploads
+
+# Exports da base legada (importacao para o Banco de Talentos).
+# A PASTA INTEIRA, e nao o CSV especifico: qualquer export futuro que caia aqui
+# tambem carrega nome, e-mail e telefone de milhares de pessoas reais, e dado
+# pessoal nao entra no historico do git — de onde nao sai mais, nem com rebase.
+# O script de importacao (src/scripts/importar-legado.js) le daqui; o arquivo
+# chega por copia manual, nunca pelo repositorio.
+/dados-legado

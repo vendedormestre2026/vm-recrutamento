@@ -211,6 +211,29 @@ function migrar() {
   adicionarColunaSeFaltar('vaga_acessos', 'utm_content', 'TEXT');
   adicionarColunaSeFaltar('vaga_acessos', 'utm_term', 'TEXT');
 
+  // Importacao da base legada para o Banco de Talentos. As TRES colunas sao aditivas,
+  // nullable e sem CHECK — nenhuma linha existente e tocada, e os ~550 talentos cadastrados
+  // via /bancodecurriculos ficam com as tres em NULL, que e a leitura correta: eles nao sao
+  // legado, nao tem cargo declarado nesse formato e nao tem metadados de origem.
+  //
+  // PRIMEIRA migracao incremental que toca `talentos`: ate aqui a tabela existia so pelo
+  // CREATE TABLE IF NOT EXISTS do schema.sql — que NAO altera tabela ja criada. Sem estas
+  // tres linhas, as colunas novas existiriam apenas em bancos criados do zero, e producao
+  // seguiria sem elas ate alguem perceber pelo erro do INSERT.
+  //
+  // categoria: 'legado' para os importados; NULL para cadastro proprio. Sem CHECK de
+  //   proposito (SQLite nao remove constraint depois; a allowlist mora em sqlite.js, mesmo
+  //   padrao de applications.status_ia).
+  // cargo: cargo normalizado completo da origem. Convive com perfil_interesse em vez de
+  //   substitui-lo — so SDR e Closer mapeiam no enum SDR|CLOSER daquela coluna, e os outros
+  //   quatro cargos ficariam sem representacao fiel se fossem forcados la dentro.
+  // campos_extras: JSON com empresa, codigo da vaga original e utm_source da origem.
+  //   Mesmo nome da coluna homonima de applications, e mesma natureza (saco de metadados),
+  //   mas SEM relacao com ela — aquela esta orfa e nao e mais coletada.
+  adicionarColunaSeFaltar('talentos', 'categoria', 'TEXT');
+  adicionarColunaSeFaltar('talentos', 'cargo', 'TEXT');
+  adicionarColunaSeFaltar('talentos', 'campos_extras', 'TEXT');
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

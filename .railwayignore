@@ -37,6 +37,16 @@ node_modules
 # vivem em /data, ja excluido acima —, entao a regra ampla e segura.
 *.pdf
 
+# Exports da base legada: nome, e-mail e telefone de milhares de pessoas reais.
+# JA estao no .gitignore, e a documentacao do CLI diz que `railway up` respeita os
+# DOIS arquivos por padrao — entao esta linha e redundante hoje. Ela existe pelo
+# mesmo motivo que o resto deste arquivo duplica o .gitignore: `railway up
+# --no-gitignore` desliga o .gitignore e mantem SO este arquivo, e nesse dia o CSV
+# subiria junto, calado, para dentro de uma camada de imagem que nao da para apagar.
+# O script de importacao le o CSV de /tmp no container, para onde ele e copiado a
+# mao no momento do uso e de onde e removido em seguida — nunca pelo deploy.
+/dados-legado
+
 # Ruido local.
 *.mp3
 *.log

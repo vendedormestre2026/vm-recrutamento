@@ -210,7 +210,24 @@ CREATE TABLE IF NOT EXISTS talentos (
   status           TEXT NOT NULL DEFAULT 'novo'
                      CHECK (status IN ('novo', 'contatado', 'descartado', 'convertido')),
   aplicacao_id     INTEGER,         -- referencia logica a applications(id), sem FK rigida
-  criado_em        TEXT NOT NULL DEFAULT (datetime('now'))
+  criado_em        TEXT NOT NULL DEFAULT (datetime('now')),
+  -- ── Importacao da base legada ──
+  -- categoria: de ONDE este talento veio. 'legado' = importado da base antiga (sistema
+  --   anterior, multi-cliente). NULL = cadastro proprio via /bancodecurriculos, que e o
+  --   caso de todos os talentos existentes antes da importacao. SEM CHECK de proposito:
+  --   o SQLite nao remove constraint depois (exigiria recriar a tabela), e o precedente do
+  --   projeto para enum extensivel e validar no app — ver applications.status_ia, tambem
+  --   sem CHECK "para nao travar bancos legados". A allowlist vive em sqlite.js.
+  -- cargo: cargo normalizado da origem, texto completo (ex.: 'Consultor Comercial',
+  --   'Lideranca Comercial'). NAO substitui perfil_interesse: aquele e o enum SDR|CLOSER
+  --   que o motor de campanha usa como atributo de filtro, e so 2 dos 6 cargos mapeiam
+  --   nele. Os outros 4 ficam com perfil_interesse NULL e o cargo fiel aqui.
+  -- campos_extras: JSON com os metadados da origem que nao tem coluna propria (empresa
+  --   onde a pessoa se candidatou, codigo da vaga original PS000X, utm_source original).
+  --   Guardados para auditoria/relatorio; nada no app depende deles hoje.
+  categoria        TEXT,
+  cargo            TEXT,
+  campos_extras    TEXT
 );
 
 -- Indices uteis

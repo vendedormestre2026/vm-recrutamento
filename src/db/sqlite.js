@@ -348,6 +348,159 @@ function criarTalento(talento) {
 const PERFIS_VALIDOS = ['SDR', 'CLOSER'];
 const STATUS_TALENTO_VALIDOS = ['novo', 'contatado', 'descartado', 'convertido'];
 
+// ── Allowlists SEM contraparte no banco ──
+//
+// Ao contrario das duas de cima, estas NAO espelham CHECK nenhum: `categoria` e `cargo`
+// nasceram sem constraint de proposito (SQLite nao remove CHECK depois — mudar a lista
+// exigiria recriar a tabela). Isto aqui e a unica validacao que existe, entao ela nao pode
+// ser "melhor esforco": criarTalentosLegado LANCA diante de valor fora da lista, em vez de
+// ignorar como fazem listarTalentos/atualizarStatusTalento com filtro invalido.
+//
+// A diferenca de tratamento e deliberada e segue a natureza do dado: la a entrada vem de
+// querystring de tela (valor invalido = filtro nao aplicado, dano zero); aqui vem de um
+// arquivo de importacao em lote, e uma categoria escrita errada gravaria 7 mil linhas que
+// nenhum filtro do painel encontraria depois.
+const CATEGORIAS_TALENTO_VALIDAS = ['legado'];
+
+// Os seis cargos canonicos da base legada. Texto completo e acentuado, exatamente como vai
+// para a coluna e como o painel vai exibir — nao ha slug nem codigo intermediario, porque
+// nao ha nada que dependa de comparar estes valores alem da propria validacao.
+const CARGOS_TALENTO_VALIDOS = [
+  'Consultor Comercial',
+  'Vendedor',
+  'SDR',
+  'BDR',
+  'Closer',
+  'Liderança Comercial',
+];
+
+// ── Insercao em LOTE de talentos da base legada ──
+//
+// POR QUE NAO REUSA criarTalento() ──
+// Aquela funcao crava `consent_at = datetime('now')` direto no SQL, sem parametro, e o
+// comentario dela explica o porque: a rota so chega la depois de validar o checkbox, entao
+// criar a linha E o registro do aceite. Essa premissa nao vale para a base legada — nao ha
+// dado de consentimento na origem, e carimbar a data da importacao registraria como fato
+// um aceite que nunca aconteceu. `criado_em` tem o mesmo problema pelo lado oposto: o
+// default `datetime('now')` faria 7 mil pessoas parecerem cadastradas no dia da importacao,
+// e e justamente `criado_em` que o filtro de data da campanha usa (listarTalentosParaCampanha).
+//
+// Entao as duas colunas viram PARAMETROS EXPLICITOS aqui. Nao foi um parametro novo em
+// criarTalento porque os dois caminhos tem invariantes opostas: la, consent_at nunca pode
+// ser nulo; aqui, nunca pode ser inventado.
+//
+// ── TRANSACAO ──
+// db.transaction() do better-sqlite3, e nao 7.215 INSERTs soltos: fora de transacao cada
+// INSERT vira seu proprio commit em disco, e a importacao inteira levaria ordens de
+// grandeza mais tempo. O ganho secundario e o que importa mais — ou entra tudo, ou nao
+// entra nada. Uma importacao interrompida pela metade deixaria o operador sem saber onde
+// parou, e o UNIQUE que resolveria isso nao existe (talentos.email nao e unico).
+//
+// ── IDEMPOTENCIA, em duas camadas ──
+// Quem chama (o script de importacao) ja filtra quem colidiu com a base. Este filtro AQUI e
+// a segunda camada, dentro da mesma transacao: le os e-mails ja existentes em `talentos` e
+// ignora os repetidos. Nao e redundancia gratuita — sem UNIQUE na tabela, um `--commit`
+// rodado duas vezes por engano duplicaria 7 mil pessoas, e nao ha desfazer barato. A
+// comparacao usa normalizarEmail dos DOIS lados (o valor gravado historicamente nao passou
+// por normalizacao nenhuma; ver criarTalento).
+//
+// LANCA diante de categoria/cargo fora da allowlist — e a transacao inteira reverte. Ver o
+// comentario das constantes sobre por que aqui e excecao, e nao "ignora o valor invalido".
+//
+// Devolve { inseridos, ignorados }: os dois numeros importam ao operador, e um total unico
+// esconderia a diferenca entre "importou tudo" e "nao fez nada porque ja estava la".
+function criarTalentosLegado(registros) {
+  const lista = Array.isArray(registros) ? registros : [];
+  if (!lista.length) return { inseridos: 0, ignorados: 0 };
+
+  for (const [i, r] of lista.entries()) {
+    if (!CATEGORIAS_TALENTO_VALIDAS.includes(r.categoria)) {
+      throw new Error(
+        `Registro ${i}: categoria invalida (${JSON.stringify(r.categoria)}). ` +
+          `Validas: ${CATEGORIAS_TALENTO_VALIDAS.join(', ')}.`,
+      );
+    }
+    if (!CARGOS_TALENTO_VALIDOS.includes(r.cargo)) {
+      throw new Error(
+        `Registro ${i}: cargo invalido (${JSON.stringify(r.cargo)}). ` +
+          `Validos: ${CARGOS_TALENTO_VALIDOS.join(', ')}.`,
+      );
+    }
+    // perfil_interesse continua sob o CHECK do schema, entao um valor torto viraria erro de
+    // constraint no meio da transacao. Checar antes da um erro que diz qual registro e qual
+    // campo, em vez de "CHECK constraint failed: talentos".
+    if (r.perfil_interesse != null && !PERFIS_VALIDOS.includes(r.perfil_interesse)) {
+      throw new Error(
+        `Registro ${i}: perfil_interesse invalido (${JSON.stringify(r.perfil_interesse)}). ` +
+          `Validos: ${PERFIS_VALIDOS.join(', ')} ou null.`,
+      );
+    }
+    // `criado_em` e NOT NULL no schema e NAO tem default aplicavel aqui (o default so vale
+    // para INSERT que omite a coluna; este a informa sempre). Sem esta checagem, o sintoma
+    // seria "NOT NULL constraint failed" no meio da transacao, sem dizer qual registro.
+    if (typeof r.criado_em !== 'string' || !r.criado_em.trim()) {
+      throw new Error(
+        `Registro ${i}: criado_em ausente. A data da candidatura de origem e obrigatoria — ` +
+          'sem ela o talento entraria como cadastrado no dia da importacao, e e essa coluna ' +
+          'que o filtro de data da campanha usa.',
+      );
+    }
+  }
+
+  const db = getDb();
+  const inserir = db.prepare(`
+    INSERT INTO talentos
+      (nome, email, telefone, perfil_interesse, categoria, cargo,
+       campos_extras, consent_at, criado_em)
+    VALUES
+      (@nome, @email, @telefone, @perfil_interesse, @categoria, @cargo,
+       @campos_extras, @consent_at, @criado_em)
+  `);
+
+  const emLote = db.transaction((itens) => {
+    const jaExistem = new Set(
+      db
+        .prepare("SELECT email FROM talentos WHERE email IS NOT NULL AND TRIM(email) <> ''")
+        .all()
+        .map((l) => normalizarEmail(l.email))
+        .filter(Boolean),
+    );
+
+    let inseridos = 0;
+    let ignorados = 0;
+    for (const r of itens) {
+      const email = normalizarEmail(r.email);
+      // Sem e-mail nao ha como deduplicar nem como enviar campanha; e linha que so
+      // engordaria a base. O script ja descarta antes, isto e a rede embaixo.
+      if (!email || jaExistem.has(email)) {
+        ignorados += 1;
+        continue;
+      }
+      inserir.run({
+        nome: r.nome || null,
+        email,
+        telefone: r.telefone || null,
+        perfil_interesse: r.perfil_interesse || null,
+        categoria: r.categoria,
+        cargo: r.cargo,
+        campos_extras: r.campos_extras || null,
+        // `?? null` e nao `|| null`: consent_at e SEMPRE null nesta importacao, e o `||`
+        // trataria uma string vazia futura do mesmo jeito — aqui a diferenca entre "ausente"
+        // e "vazio" e justamente o que se quer preservar.
+        consent_at: r.consent_at ?? null,
+        criado_em: r.criado_em,
+      });
+      // O e-mail entra no conjunto para duplicata DENTRO do proprio lote ser ignorada
+      // tambem, e nao so a que ja estava no banco.
+      jaExistem.add(email);
+      inseridos += 1;
+    }
+    return { inseridos, ignorados };
+  });
+
+  return emLote(lista);
+}
+
 // Converte a linha crua em objeto do app, parseando `analise` (JSON) — mesmo padrao de
 // perfilCurriculoDeLinha. `analise` NULL/invalido vira null (nunca quebra a leitura).
 function talentoDeLinha(linha) {
@@ -2246,10 +2399,13 @@ module.exports = {
   atualizarPerfilCurriculo,
   // talentos (Banco de Curriculos)
   criarTalento,
+  criarTalentosLegado,
   listarTalentos,
   buscarTalento,
   atualizarStatusTalento,
   STATUS_TALENTO_VALIDOS,
+  CATEGORIAS_TALENTO_VALIDAS,
+  CARGOS_TALENTO_VALIDOS,
   // aplicacoes
   criarAplicacao,
   obterAplicacao,

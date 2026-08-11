@@ -40,10 +40,13 @@ module.exports = {
 
   // talentos (Banco de Curriculos)
   criarTalento: driver.criarTalento,
+  criarTalentosLegado: driver.criarTalentosLegado,
   listarTalentos: driver.listarTalentos,
   buscarTalento: driver.buscarTalento,
   atualizarStatusTalento: driver.atualizarStatusTalento,
   STATUS_TALENTO_VALIDOS: driver.STATUS_TALENTO_VALIDOS,
+  CATEGORIAS_TALENTO_VALIDAS: driver.CATEGORIAS_TALENTO_VALIDAS,
+  CARGOS_TALENTO_VALIDOS: driver.CARGOS_TALENTO_VALIDOS,
 
   // aplicacoes
   criarAplicacao: driver.criarAplicacao,
