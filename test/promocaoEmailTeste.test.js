@@ -60,6 +60,7 @@ const fachadaCampanha = require('../src/providers/emailCampanha');
 const apiCampanha = require('../src/providers/emailCampanha/emailit_api');
 const emailTeste = require('../src/lib/emailTestePromocao');
 const disparo = require('../src/lib/dispararPromocao');
+const { montarCorpoFinal, montarUrlVaga } = require('../src/lib/ctaCampanha');
 
 migrar();
 
@@ -252,7 +253,11 @@ test('com o endereco configurado: envia o conteudo do formulario com o prefixo [
     `[TESTE] ${CONTEUDO.assunto}`,
     'o prefixo evita confundir o teste com campanha real na caixa de entrada',
   );
-  assert.equal(m.html, CONTEUDO.corpo_html, 'o corpo e o do formulario, sem transformacao');
+  // O corpo e o do formulario MAIS o bloco de candidatura — igualdade exata contra o que
+  // montarCorpoFinal produz, que e a MESMA funcao do disparo real.
+  assert.equal(m.html, montarCorpoFinal(CONTEUDO.corpo_html, 'vaga-email-teste'));
+  assert.ok(m.html.startsWith(CONTEUDO.corpo_html), 'o texto do Jean vem primeiro, intacto');
+  assert.match(m.html, /href="[^"]*\/vaga\/vaga-email-teste\?utm_source=email"/);
 
   // 6. NENHUMA linha em campanha_envios — a razao de existir deste caminho.
   assert.equal(contarEnvios(), enviosAntes, 'o e-mail de teste nao materializa destinatario');

@@ -45,6 +45,7 @@ const emailCampanhaPadrao = require('../providers/emailCampanha');
 const { credenciaisFaltando } = require('../providers/emailCampanha');
 const { montarUrlDescadastro } = require('./descadastro');
 const { listarPublicoCampanha } = require('./promocaoVagas');
+const { montarCorpoFinal } = require('./ctaCampanha');
 
 // Interruptor GERAL do envio de campanha (painel: /admin/config). Default FALSE.
 const CHAVE_ATIVO = 'promocao_ativa';
@@ -284,6 +285,22 @@ async function enviarUm(linha, deps) {
   const db = deps.db || dbPadrao;
   const emailCampanha = deps.emailCampanha || emailCampanhaPadrao;
 
+  // Link de candidatura anexado AQUI, no momento do envio, e nao gravado em
+  // campanhas.corpo_html: o que fica no banco continua sendo o texto que o Jean escreveu ou
+  // revisou, e o link e derivado da vaga a cada envio. Se o dominio da aplicacao mudar
+  // (config.baseUrl), campanhas ja enfileiradas passam a sair com o endereco novo em vez de
+  // carregarem um link morto congelado na criacao.
+  //
+  // MESMA funcao que o botao de e-mail de teste chama (lib/emailTestePromocao) — e o que
+  // garante que o teste mostre exatamente o e-mail que a base vai receber.
+  const corpoFinal = montarCorpoFinal(linha.corpo_html, linha.vaga_slug);
+  if (!linha.vaga_slug) {
+    console.warn(
+      `[promocao] envio ${linha.id} (campanha ${linha.campanha_id}) sem slug de vaga — ` +
+        'o e-mail sai SEM link de candidatura. A vaga foi removida?',
+    );
+  }
+
   try {
     if (config.entrevista.mock) {
       // Mesmo padrao das outras quatro varreduras: em mock o adaptador nao e tocado, e a
@@ -301,7 +318,7 @@ async function enviarUm(linha, deps) {
       // e a unica forma de nao existir um caminho de esquecimento. Se esta chamada um dia
       // ganhar um quarto argumento, ele precisa de justificativa escrita: `semDescadastro`
       // aqui produziria campanha sem opt-out valido.
-      await emailCampanha.enviar(linha.email, linha.assunto, linha.corpo_html);
+      await emailCampanha.enviar(linha.email, linha.assunto, corpoFinal);
     }
     db.marcarEnvioCampanhaEnviado(linha.id);
     return 'enviado';

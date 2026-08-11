@@ -62,6 +62,7 @@ const { criarApp } = require('../src/server');
 const desc = require('../src/lib/descadastro');
 const apiCampanha = require('../src/providers/emailCampanha/emailit_api');
 const disparo = require('../src/lib/dispararPromocao');
+const { montarCorpoFinal } = require('../src/lib/ctaCampanha');
 
 migrar();
 
@@ -168,6 +169,8 @@ async function semRuido(fn) {
 
 // A vaga PROMOVIDA. Quem ja se candidatou a ela e excluido automaticamente (Incremento 4).
 const vagaAlvo = criarVaga('Closer de Vendas — Vaga Alvo', 'CLOSER');
+// Slug lido do banco (e nao repetido a mao): e dele que sai o link de candidatura do e-mail.
+const slugVagaAlvo = uma('SELECT slug FROM jobs WHERE id = ?', vagaAlvo).slug;
 
 // Vagas irrelevantes para a campanha, presentes so para o publico ter variedade de perfil.
 // O `perfil` de um CANDIDATO sai de jobs.perfil da vaga a que ele se candidatou
@@ -464,7 +467,11 @@ test('f) a varredura envia so para os esperados, com List-Unsubscribe valido', a
     // Conteudo: assunto e corpo sao os da campanha, iguais para todos (nao ha
     // personalizacao por nome no e-mail de campanha).
     assert.equal(m.subject, CAMPOS_CAMPANHA.assunto);
-    assert.equal(m.html, CAMPOS_CAMPANHA.corpo_html);
+    // Corpo final = o que o Jean escreveu + o bloco de candidatura anexado no envio.
+    // Igualdade exata contra montarCorpoFinal (a mesma funcao que o botao de teste usa),
+    // e nao um "contem" — o que sai tem que ser exatamente isto.
+    assert.equal(m.html, montarCorpoFinal(CAMPOS_CAMPANHA.corpo_html, slugVagaAlvo));
+    assert.match(m.html, /utm_source=email/, 'a campanha precisa ser atribuivel na origem');
   }
 
   config.entrevista.mock = true;
@@ -542,6 +549,56 @@ test('i) redisparar a MESMA campanha pela tela e recusado (nao ha segunda leva)'
 
   assert.equal(db.contarEnviosCampanha(campanhaId).total, TOTAL_ESPERADO, 'nenhuma linha nova');
   assert.equal(enviadas.length, TOTAL_ESPERADO, 'nenhuma mensagem nova');
+});
+
+// ══════════════════════════════════════════════════════════════
+// FIDELIDADE DO BOTAO DE TESTE — os dois caminhos, o mesmo e-mail
+// ══════════════════════════════════════════════════════════════
+
+test('k) o e-mail de TESTE tem o corpo final IDENTICO ao do disparo real', async () => {
+  // A pergunta que este teste responde e a unica que justifica o botao de teste existir:
+  // "o que eu vi na minha caixa de entrada e exatamente o que a base vai receber?".
+  //
+  // Se um dia alguem montar o bloco de CTA num dos dois caminhos e esquecer o outro — ou
+  // montar diferente —, o botao passa a validar um e-mail que nao existe, e o proximo bug
+  // de link so aparece depois do disparo. Este teste e o que grita antes disso.
+  const emailTeste = require('../src/lib/emailTestePromocao');
+  const fachada = require('../src/providers/emailCampanha');
+
+  // O corpo enviado no cenario principal (teste f), ja capturado.
+  const htmlDoDisparo = enviadas[0].html;
+
+  db.definirConfig(emailTeste.CHAVE_EMAIL_TESTE, 'qa@exemplo.com.br');
+  db.definirConfig(emailTeste.CHAVE_ULTIMO_ENVIO, '0');
+
+  const enviarOriginal = fachada.enviar;
+  fachada.enviar = (destino, assunto, html) =>
+    apiCampanha.enviar(destino, assunto, html, { httpClient: httpCaptura });
+  let r;
+  try {
+    r = await semRuido(() =>
+      emailTeste.enviarEmailTeste(
+        // MESMO corpo e MESMA vaga da campanha do cenario principal.
+        { assunto: CAMPOS_CAMPANHA.assunto, corpoHtml: CAMPOS_CAMPANHA.corpo_html, jobId: vagaAlvo },
+        { db },
+      ),
+    );
+  } finally {
+    fachada.enviar = enviarOriginal;
+  }
+
+  assert.equal(r.ok, true, `o e-mail de teste precisa sair: ${r.mensagem || ''}`);
+
+  const htmlDoTeste = enviadas[enviadas.length - 1].html;
+  assert.equal(htmlDoTeste, htmlDoDisparo, 'os dois caminhos tem que produzir o MESMO HTML');
+  assert.match(htmlDoTeste, /utm_source=email/);
+
+  // O ASSUNTO, ao contrario do corpo, e propositalmente diferente: o prefixo [TESTE] existe
+  // para o e-mail de QA nunca ser confundido com campanha real na caixa de entrada.
+  assert.equal(enviadas[enviadas.length - 1].subject, `[TESTE] ${CAMPOS_CAMPANHA.assunto}`);
+
+  // E o caminho do teste continua sem tocar em campanha_envios (o fecho abaixo reconfirma).
+  assert.equal(db.contarEnviosCampanha(campanhaId).total, TOTAL_ESPERADO, 'nenhuma linha nova');
 });
 
 test('j) fecho: a descadastrada nunca apareceu em NENHUM lugar do fluxo', () => {

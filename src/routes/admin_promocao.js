@@ -718,7 +718,13 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       sugestaoGerada: b.sugestao_gerada === '1',
     };
 
-    const r = await emailTeste.enviarEmailTeste({ assunto: b.assunto, corpoHtml: b.corpo_html });
+    // `jobId` vem dos MESMOS criterios do formulario: o e-mail de teste monta o link de
+    // candidatura da vaga selecionada, igual ao disparo real.
+    const r = await emailTeste.enviarEmailTeste({
+      assunto: b.assunto,
+      corpoHtml: b.corpo_html,
+      jobId: criterios.jobIdAlvo,
+    });
 
     // Recalculo do publico no mesmo molde de /sugestao e /trocar-vaga: os criterios nao
     // mudaram, mas a tela nao pode voltar sem numero a vista so porque o Jean pediu um
@@ -753,6 +759,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       SEM_DESTINATARIO: 400,
       DESTINATARIO_INVALIDO: 400,
       SEM_CONTEUDO: 400,
+      SEM_VAGA: 400,
       PRE_VOO: 503,
       COOLDOWN: 429,
       ENVIO_FALHOU: 502,

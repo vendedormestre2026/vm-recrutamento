@@ -1949,10 +1949,20 @@ function listarEnviosPendentesCampanha({ limite = 125 } = {}) {
   const teto = Number.isInteger(limite) && limite > 0 ? limite : 125;
   return getDb()
     .prepare(
+      // `vaga_slug` alimenta o link de candidatura do e-mail (lib/ctaCampanha).
+      //
+      // LEFT JOIN, e nao JOIN: com INNER, uma vaga removida faria estas linhas SUMIREM da
+      // fila — e some-las nao as resolve. Elas ficariam 'pendente' para sempre, a campanha
+      // nunca perderia o ultimo pendente e nunca seria concluida (concluirCampanhasEsgotadas
+      // so fecha quando pendente = 0). Um link faltando e um problema; uma campanha
+      // eternamente 'enviando' e um vazamento de estado. Com LEFT JOIN o slug vem null e o
+      // e-mail sai sem o bloco de CTA — degradacao visivel, nao travamento.
       `SELECT e.id, e.campanha_id, e.email, e.nome,
-              c.assunto AS assunto, c.corpo_html AS corpo_html
+              c.assunto AS assunto, c.corpo_html AS corpo_html,
+              j.slug AS vaga_slug
          FROM campanha_envios e
          JOIN campanhas c ON c.id = e.campanha_id
+         LEFT JOIN jobs j ON j.id = c.job_id
         WHERE e.status = 'pendente'
           AND c.status IN ('enfileirada', 'enviando')
         ORDER BY e.id

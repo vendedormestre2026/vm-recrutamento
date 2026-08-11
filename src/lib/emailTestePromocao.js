@@ -42,6 +42,7 @@ const dbPadrao = require('../db');
 // real — e o proposito dele —, entao ele nunca pode apontar para um transporte fixo.
 const emailCampanhaPadrao = require('../providers/emailCampanha');
 const { verificarPreCondicoesDisparo } = require('./dispararPromocao');
+const { montarCorpoFinal } = require('./ctaCampanha');
 
 // Endereco fixo de destino, editavel em /admin/config. Chave NOVA no store `configuracoes`,
 // e nao variavel de ambiente, pelo mesmo motivo das outras cinco chaves operacionais do
@@ -110,13 +111,13 @@ function segundosRestantesCooldown(deps = {}, agora = Date.now()) {
 // mensagem na tela e nao em 500.
 //   { ok: true,  destinatario, assunto }
 //   { ok: false, erroCodigo: 'SEM_DESTINATARIO' | 'DESTINATARIO_INVALIDO' | 'SEM_CONTEUDO'
-//                          | 'PRE_VOO' | 'COOLDOWN' | 'ENVIO_FALHOU', mensagem }
+//                          | 'SEM_VAGA' | 'PRE_VOO' | 'COOLDOWN' | 'ENVIO_FALHOU', mensagem }
 //
 // ORDEM DAS CHECAGENS, que nao e arbitraria: primeiro o que o Jean resolve sozinho e de
 // graca (destinatario, conteudo), depois o que depende do servidor (pre-voo), e o cooldown
 // por ULTIMO entre as validacoes — recusar por cooldown um envio que ia falhar de qualquer
 // jeito esconderia o problema real atras de "espere 47 s".
-async function enviarEmailTeste({ assunto, corpoHtml } = {}, deps = {}) {
+async function enviarEmailTeste({ assunto, corpoHtml, jobId } = {}, deps = {}) {
   const db = deps.db || dbPadrao;
   const emailCampanha = deps.emailCampanha || emailCampanhaPadrao;
   const agora = deps.agora || Date.now();
@@ -150,6 +151,25 @@ async function enviarEmailTeste({ assunto, corpoHtml } = {}, deps = {}) {
       mensagem:
         'Preencha o assunto e o corpo do e-mail antes de enviar o teste — é justamente ' +
         'esse conteúdo que o teste mostra na caixa de entrada.',
+    };
+  }
+
+  // ── A VAGA E OBRIGATORIA no e-mail de teste ──
+  //
+  // MUDANCA DE COMPORTAMENTO consciente: antes o teste saia sem vaga selecionada. Agora nao,
+  // porque o e-mail real SEMPRE tem o bloco de candidatura montado a partir da vaga, e um
+  // teste sem esse bloco mostraria uma mensagem diferente da que a base vai receber — que e
+  // exatamente o que este botao existe para impedir. Melhor um erro claro pedindo para
+  // escolher a vaga do que um teste que valida o e-mail errado.
+  const id = Number(jobId);
+  const vaga = Number.isInteger(id) && id > 0 ? db.obterVaga(id) : null;
+  if (!vaga || !vaga.slug) {
+    return {
+      ok: false,
+      erroCodigo: 'SEM_VAGA',
+      mensagem:
+        'Escolha a vaga antes de enviar o teste — o e-mail leva o link de candidatura dela, ' +
+        'e sem a vaga o teste mostraria uma mensagem diferente da que sai de verdade.',
     };
   }
 
@@ -189,7 +209,15 @@ async function enviarEmailTeste({ assunto, corpoHtml } = {}, deps = {}) {
     // List-Unsubscribe e List-Unsubscribe-Post entram sozinhos dentro do adaptador
     // (Incremento 3). Passar `semDescadastro` aqui esvaziaria o teste de sentido — o link
     // de descadastro e uma das coisas que ele existe para validar.
-    await emailCampanha.enviar(destinatario, PREFIXO_ASSUNTO + assuntoLimpo, corpoLimpo);
+    //
+    // O corpo passa pela MESMA montarCorpoFinal que a varredura de disparo usa (nao ha
+    // segunda implementacao do bloco de CTA). E o que faz este botao valer como teste: o
+    // HTML que chega na caixa de entrada aqui e byte a byte o que a base receberia.
+    await emailCampanha.enviar(
+      destinatario,
+      PREFIXO_ASSUNTO + assuntoLimpo,
+      montarCorpoFinal(corpoLimpo, vaga.slug),
+    );
   } catch (err) {
     console.error(`[promocao/teste] falha ao enviar e-mail de teste: ${err.message}`);
     return {

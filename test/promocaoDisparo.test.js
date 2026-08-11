@@ -53,6 +53,7 @@ const { config } = require('../src/config');
 const { criarApp } = require('../src/server');
 const { listarPublicoCampanha } = require('../src/lib/promocaoVagas');
 const disparo = require('../src/lib/dispararPromocao');
+const { montarCorpoFinal } = require('../src/lib/ctaCampanha');
 
 migrar();
 
@@ -118,6 +119,12 @@ function criarRascunho(jobIdAlvo, assunto = 'Vaga aberta') {
 function zerarCampanhas() {
   exec('DELETE FROM campanha_envios');
   exec('DELETE FROM campanhas');
+}
+
+// Slug da vaga, lido do banco: o corpo final esperado depende dele, e derivar do banco (em
+// vez de repetir a string) mantem a assercao valida se a fixture mudar.
+function slugDaVaga(jobId) {
+  return uma('SELECT slug FROM jobs WHERE id = ?', jobId).slug;
 }
 
 function contar(campanhaId) {
@@ -395,7 +402,11 @@ test('a rotina chama o adaptador SEM headers manuais (List-Unsubscribe vem dele)
     const [destino, assunto, html] = args;
     assert.match(destino, /@/);
     assert.equal(assunto, 'Assunto da Campanha');
-    assert.equal(html, '<p>Temos uma vaga.</p>');
+    // O corpo e o da campanha MAIS o bloco de candidatura anexado no envio. Continua sendo
+    // uma assercao de igualdade exata (nao um "contem"), so que contra o corpo FINAL — o
+    // que esta rotina de fato entrega ao adaptador.
+    assert.equal(html, montarCorpoFinal('<p>Temos uma vaga.</p>', slugDaVaga(vagaAlvo)));
+    assert.match(html, /utm_source=email/, 'todo link de campanha carrega a origem');
     assert.doesNotMatch(html, /List-Unsubscribe/i, 'o header nao e responsabilidade da rotina');
   }
 });
