@@ -431,8 +431,11 @@ test('a rotina chama o adaptador SEM headers manuais (List-Unsubscribe vem dele)
         // A vaga alimenta o CABECALHO (titulo, empresa, selos). A rotina a monta a partir
         // do LEFT JOIN da fila; aqui reconstruimos o mesmo shape a partir da linha de jobs.
         vagaParaCabecalho(vagaAlvo),
+        // O link do CTA carrega campanha_id — e o que atribui o clique a ESTA campanha.
+        id,
       ),
     );
+    assert.match(html, new RegExp(`campanha_id=${id}`), 'o link tem que ser atribuivel');
     assert.match(html, /utm_source=email/, 'todo link de campanha carrega a origem');
     assert.doesNotMatch(html, /List-Unsubscribe/i, 'o header nao e responsabilidade da rotina');
   }

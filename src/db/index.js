@@ -139,6 +139,7 @@ module.exports = {
   // Promocao de Vagas — disparo (lib/dispararPromocao)
   materializarEnviosCampanha: driver.materializarEnviosCampanha,
   contarEnviosCampanha: driver.contarEnviosCampanha,
+  contarCliquesCampanha: driver.contarCliquesCampanha,
   listarEnviosPendentesCampanha: driver.listarEnviosPendentesCampanha,
   marcarEnvioCampanhaEnviado: driver.marcarEnvioCampanhaEnviado,
   marcarEnvioCampanhaFalha: driver.marcarEnvioCampanhaFalha,

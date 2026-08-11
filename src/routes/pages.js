@@ -170,8 +170,16 @@ router.get('/vaga/:slug', (req, res) => {
   // Registra o acesso (topo do funil) em fire-and-forget: nunca bloqueia nem quebra
   // o render por causa de metrica. So chega aqui apos os gates 404/inativa acima.
   // Passa a UTM efetiva para atribuir o acesso a uma origem (null quando nao ha UTM).
+  // `campanha_id` sai da QUERY desta visita, e NAO do cookie: ele responde "este acesso foi
+  // um clique naquele e-mail", enquanto a UTM acima responde "de onde essa pessoa veio da
+  // primeira vez". Guardar a campanha no cookie faria todo retorno organico dos 30 dias
+  // seguintes contar como clique de novo.
+  //
+  // Sem saneamento aqui de proposito: registrarAcessoVaga valida o id contra `campanhas` e
+  // grava NULL se nao existir. Um link velho ou um id digitado a mao nao pode impedir o
+  // registro do acesso.
   try {
-    db.registrarAcessoVaga(vaga.id, utmEfetiva);
+    db.registrarAcessoVaga(vaga.id, utmEfetiva, req.query && req.query.campanha_id);
   } catch (e) {
     console.error('[vaga] falha ao registrar acesso (métrica, ignorado):', e.message);
   }

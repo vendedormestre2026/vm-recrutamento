@@ -331,6 +331,9 @@ async function enviarUm(linha, deps) {
       linha.vaga_slug,
       montarUrlDescadastro(linha.email, config.baseUrl),
       vaga,
+      // `campanha_id` no link e o que permite atribuir o clique a ESTA campanha, e nao a
+      // "alguma campanha desta vaga". Vem da propria linha da fila.
+      linha.campanha_id,
     );
 
     if (config.entrevista.mock) {

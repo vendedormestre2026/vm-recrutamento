@@ -52,13 +52,40 @@ test('montarUrlVaga: SO utm_source — sem medium nem campaign', () => {
 });
 
 test('montarUrlVaga: usa config.baseUrl e tolera barra final', () => {
-  assert.match(cta.montarUrlVaga('v', 'https://exemplo.com'), /^https:\/\/exemplo\.com\/vaga\/v\?/);
-  assert.match(cta.montarUrlVaga('v', 'https://exemplo.com/'), /^https:\/\/exemplo\.com\/vaga\/v\?/);
-  assert.match(cta.montarUrlVaga('v', 'https://exemplo.com///'), /^https:\/\/exemplo\.com\/vaga\/v\?/);
+  // baseUrl passou a ser opcao NOMEADA quando `campanhaId` entrou: dois opcionais
+  // posicionais (um numero e uma URL) seriam indistinguiveis para quem le a chamada.
+  for (const base of ['https://exemplo.com', 'https://exemplo.com/', 'https://exemplo.com///']) {
+    assert.match(cta.montarUrlVaga('v', { baseUrl: base }), /^https:\/\/exemplo\.com\/vaga\/v\?/);
+  }
 });
 
 test('montarUrlVaga: o valor default de baseUrl e o da config', () => {
-  assert.equal(cta.montarUrlVaga('v'), cta.montarUrlVaga('v', config.baseUrl));
+  assert.equal(cta.montarUrlVaga('v'), cta.montarUrlVaga('v', { baseUrl: config.baseUrl }));
+});
+
+// ── campanha_id: a atribuicao exata do clique ──
+
+test('montarUrlVaga: inclui campanha_id quando ha campanha', () => {
+  const url = new URL(cta.montarUrlVaga('closer', { campanhaId: 42 }));
+  assert.equal(url.searchParams.get('campanha_id'), '42');
+  assert.equal(url.searchParams.get('utm_source'), 'email', 'a UTM continua junto');
+});
+
+test('montarUrlVaga: SEM campanha, o link nao carrega o parametro', () => {
+  // Um `campanha_id=` vazio na URL seria ruido no link e lixo no banco.
+  for (const semId of [undefined, null, 0, -1, '', 'abc', 1.5]) {
+    const url = new URL(cta.montarUrlVaga('closer', { campanhaId: semId }));
+    assert.equal(url.searchParams.has('campanha_id'), false, `campanhaId=${JSON.stringify(semId)}`);
+  }
+});
+
+test('montarCorpoFinal: repassa o campanhaId para o link do CTA', () => {
+  const comId = cta.montarCorpoFinal('<p>x</p>', 'closer', URL_DESC, null, 7);
+  const semId = cta.montarCorpoFinal('<p>x</p>', 'closer', URL_DESC, null, null);
+
+  assert.match(comId, /campanha_id=7/);
+  assert.doesNotMatch(semId, /campanha_id/);
+  assert.notEqual(comId, semId, 'a campanha tem que mudar o HTML final');
 });
 
 test('montarUrlVaga: slug com caractere especial e encodado', () => {

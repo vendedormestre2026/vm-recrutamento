@@ -237,6 +237,15 @@ async function enviarEmailTeste({ assunto, corpoHtml, jobId } = {}, deps = {}) {
         vaga.slug,
         montarUrlDescadastro(destinatario, config.baseUrl),
         vaga,
+        // campanhaId NULL de proposito: o botao de teste funciona a partir do formulario
+        // AINDA NAO SUBMETIDO — nao existe campanha, e portanto nao existe id. E o
+        // comportamento certo: um clique do Jean no proprio e-mail de teste nao pode
+        // entrar na contagem de desempenho de campanha nenhuma.
+        //
+        // E a UNICA divergencia deliberada entre este caminho e o disparo real, ao lado do
+        // prefixo [TESTE] no assunto. O teste de igualdade byte a byte compara os dois
+        // passando o MESMO campanhaId, entao ele continua guardando tudo o mais.
+        null,
       ),
     );
   } catch (err) {

@@ -124,10 +124,15 @@ const postarPrevia = (pares) =>
 test('o filtro de Base aparece com as tres opcoes, como checkbox', () => {
   return pegar('/admin/promocao/nova').then((html) => {
     assert.match(html, /<span>Base<\/span>/);
+    // Rotulo EXIBIDO x valor INTERNO: a tela mostra os tres nomes que o Rafael usa
+    // ("Candidatos", "Base legada", "Talentos") e o formulario continua enviando
+    // 'candidatura'/'legado'/'proprio'. Este teste guarda os dois lados justamente porque
+    // trocar o valor por causa do rotulo reescreveria o criterio gravado em campanhas ja
+    // disparadas.
     for (const [valor, rotulo] of [
-      ['candidatura', 'Candidatura'],
+      ['candidatura', 'Candidatos'],
       ['legado', 'Base legada'],
-      ['proprio', 'Cadastro próprio'],
+      ['proprio', 'Talentos'],
     ]) {
       assert.match(
         html,

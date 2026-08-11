@@ -336,15 +336,22 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
             </div>
             <div class="filtro">
               <span>Base</span>
-              ${checkboxes(
-                'base',
-                [
-                  ['candidatura', 'Candidatura'],
-                  ['legado', 'Base legada'],
-                  ['proprio', 'Cadastro próprio'],
-                ],
-                criterios.bases,
-              )}
+              ${
+                // Rotulos = os tres nomes que o Rafael usa para as bases. Os VALORES
+                // ('candidatura', 'legado', 'proprio') sao os do motor e nao mudam: eles
+                // viajam na query string, entram em `criterios` e ficam gravados no JSON de
+                // campanhas.criterios como rastro historico. Trocar valor por causa de
+                // rotulo reescreveria o significado de campanhas ja disparadas.
+                checkboxes(
+                  'base',
+                  [
+                    ['candidatura', 'Candidatos'],
+                    ['legado', 'Base legada'],
+                    ['proprio', 'Talentos'],
+                  ],
+                  criterios.bases,
+                )
+              }
               <span style="display:block;color:var(--cinza);font-size:.78rem;margin-top:.35rem;text-transform:none;">
                 Nenhuma marcada = todas. Quem é candidato <b>e</b> talento casa com as duas.
               </span>
@@ -533,6 +540,35 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       : '';
     const rotulo = ROTULO_STATUS_CAMPANHA[campanha.status] || campanha.status;
 
+    // ── Desempenho: recebidos e cliques ──
+    //
+    // "Recebidos" e `c.enviado` — o mesmo numero que ja aparecia como "enviados", so que
+    // rotulado pelo que ele significa para quem le. Nao ha consulta nova: `enviado`
+    // significa ACEITO PELO PROVEDOR, e nao "entregue na caixa" (bounce posterior nao volta
+    // para ca). E o limite honesto do que o dado sabe, e por isso o rotulo diz "receberam"
+    // e nao "leram".
+    //
+    // A taxa so aparece com recebidos > 0. Com uma campanha recem-enfileirada (0 enviados)
+    // nao ha divisao a fazer, e um "0%" ali sugeriria fracasso onde ainda nao houve envio.
+    const cliques = db.contarCliquesCampanha(campanha.id);
+    const taxa = c.enviado > 0 ? Math.round((cliques.total / c.enviado) * 100) : null;
+
+    const blocoDesempenho = `
+      <section class="rel-sec">
+        <h2>Desempenho</h2>
+        <ul class="lista">
+          <li><b>${fmtInt(c.enviado)}</b> receberam o e-mail</li>
+          <li><b>${fmtInt(cliques.total)}</b> clique${cliques.total === 1 ? '' : 's'} no link da vaga${
+            taxa === null ? '' : ` — <b>${taxa}%</b> de quem recebeu`
+          }</li>
+        </ul>
+        <p style="margin:.8rem 0 0;color:var(--cinza);font-size:.8rem;">
+          Cliques conta <b>acessos</b> à página da vaga vindos do link deste e-mail, não
+          pessoas: a página é anônima e a mesma pessoa abrindo duas vezes conta duas vezes.
+          Quem chegou à vaga por outro caminho não entra aqui.
+        </p>
+      </section>`;
+
     return `
       <section class="rel-sec">
         <h2>Disparo</h2>
@@ -553,7 +589,8 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
           roda com <b>Promoção de vagas</b> ligada em
           <a href="/admin/config">Configurações</a>.
         </p>
-      </section>`;
+      </section>
+      ${blocoDesempenho}`;
   }
 
   // ── Bloco "Excluir" da tela de detalhe ──

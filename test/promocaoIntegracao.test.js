@@ -478,8 +478,10 @@ test('f) a varredura envia so para os esperados, com List-Unsubscribe valido', a
         slugVagaAlvo,
         desc.montarUrlDescadastro(destino, config.baseUrl),
         db.obterVaga(vagaAlvo),
+        campanhaId,
       ),
     );
+    assert.match(m.html, new RegExp(`campanha_id=${campanhaId}`), 'clique atribuivel a ESTA campanha');
     assert.match(m.html, /utm_source=email/, 'a campanha precisa ser atribuivel na origem');
 
     // O link VISIVEL do rodape aponta para o MESMO endereco do cabecalho List-Unsubscribe.
@@ -618,8 +620,18 @@ test('k) o e-mail de TESTE tem o corpo final IDENTICO ao do disparo real', async
   // comparar campo a campo: qualquer diferenca nova que alguem introduza num dos caminhos
   // (uma cor, um espaco, um <tr> a mais) quebra aqui, porque nao esta na lista do que pode
   // variar.
+  // DUAS divergencias legitimas, e so duas:
+  //   1. o link de descadastro, assinado com HMAC do e-mail de quem recebe;
+  //   2. o `campanha_id` do link da vaga — o botao de teste funciona a partir do formulario
+  //      AINDA NAO SUBMETIDO, quando nao existe campanha e portanto nao existe id. E o
+  //      comportamento certo: um clique do Jean no proprio e-mail de teste nao pode entrar
+  //      na contagem de desempenho de campanha nenhuma.
+  // Tudo o mais — moldura, cabecalho da vaga, selos, texto, botao, rodape — tem que ser
+  // byte a byte igual, e e o que a comparacao abaixo exige.
   const semDescadastro = (h) =>
-    h.replace(/href="[^"]*\/descadastro\?[^"]*"/, 'href="{{URL_DESCADASTRO}}"');
+    h
+      .replace(/href="[^"]*\/descadastro\?[^"]*"/, 'href="{{URL_DESCADASTRO}}"')
+      .replace(/&amp;campanha_id=\d+/, '');
 
   assert.notEqual(
     semDescadastro(htmlDoTeste),

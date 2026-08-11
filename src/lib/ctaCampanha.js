@@ -75,12 +75,27 @@ const TEXTO_LINK_DESCADASTRO = 'Não quero mais receber divulgação de vagas';
 //
 // Devolve '' quando nao ha slug: e o caso de vaga removida (ver o LEFT JOIN em
 // listarEnviosPendentesCampanha). Sem endereco nao ha link, e blocoCta trata isso.
-function montarUrlVaga(slug, baseUrl = config.baseUrl) {
+// ── PARAMETROS NOMEADOS a partir do segundo ──
+// A funcao ganhou `campanhaId` e ja tinha `baseUrl`, os dois opcionais. Como posicionais,
+// `montarUrlVaga(slug, 7)` e `montarUrlVaga(slug, 'https://...')` seriam indistinguiveis
+// para quem le, e trocar a ordem passaria em qualquer teste de fumaca.
+function montarUrlVaga(slug, { campanhaId, baseUrl = config.baseUrl } = {}) {
   const s = String(slug || '').trim();
   if (!s) return '';
 
   const url = new URL(`/vaga/${encodeURIComponent(s)}`, String(baseUrl || '').replace(/\/+$/, '') + '/');
   url.searchParams.set('utm_source', UTM_SOURCE_CAMPANHA);
+
+  // `campanha_id` e o que permite contar cliques POR CAMPANHA, e nao "acessos com
+  // utm_source=email no periodo". A diferenca aparece no dia em que duas campanhas
+  // divulgarem a MESMA vaga na mesma semana: pela UTM os cliques cairiam num balde so,
+  // sem nada na tela avisando que o numero e a soma das duas.
+  //
+  // So entra quando ha um id valido: um `campanha_id=` vazio ou `campanha_id=abc` na URL
+  // seria ruido no link e lixo no banco.
+  const id = Number(campanhaId);
+  if (Number.isInteger(id) && id > 0) url.searchParams.set('campanha_id', String(id));
+
   return url.toString();
 }
 
@@ -328,10 +343,21 @@ function montarEmailCampanha({ corpoHtml, urlVaga, urlDescadastro, vaga } = {}) 
 //
 // `vaga` opcional: sem ela o cabecalho degrada para so a marca, mesma degradacao visivel
 // do bloco de CTA sem slug.
-function montarCorpoFinal(corpoHtml, slug, urlDescadastro, vaga = null, baseUrl = config.baseUrl) {
+// `campanhaId` vem ANTES de `baseUrl` porque e o parametro que os call sites de verdade
+// passam; baseUrl so e informado em teste. Os dois caminhos de envio o obtem do mesmo
+// lugar em que ja obtem o corpo e a vaga — a linha da fila no disparo, a campanha em
+// edicao no botao de teste (onde ele e null, ver a nota la).
+function montarCorpoFinal(
+  corpoHtml,
+  slug,
+  urlDescadastro,
+  vaga = null,
+  campanhaId = null,
+  baseUrl = config.baseUrl,
+) {
   return montarEmailCampanha({
     corpoHtml,
-    urlVaga: montarUrlVaga(slug, baseUrl),
+    urlVaga: montarUrlVaga(slug, { campanhaId, baseUrl }),
     urlDescadastro,
     vaga,
   });

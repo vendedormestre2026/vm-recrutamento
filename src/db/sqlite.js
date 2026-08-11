@@ -1573,14 +1573,37 @@ function obterReportPorInterview(interviewId) {
 // term }) ou null. Retrocompativel: chamado so com jobId, grava NULL nas cinco colunas
 // de UTM (comportamento historico preservado). Nao ha literal 'direto' aqui — o topo do
 // funil registra a origem observada ou NULL.
-function registrarAcessoVaga(jobId, utm = null) {
+// `campanhaId` (3o parametro) e a atribuicao EXATA do clique a uma campanha. Diferente das
+// UTM acima em dois pontos, os dois deliberados:
+//   - vem da QUERY desta visita, nunca do cookie vm_utm. As UTM sao first-touch e duram 30
+//     dias; um retorno organico de quem clicou na campanha semanas atras carrega
+//     utm_source='email' pelo cookie, e precisa contar como acesso organico — nao como um
+//     segundo clique no e-mail.
+//   - e VALIDADO contra `campanhas` antes de gravar. Um `?campanha_id=999999` na URL (link
+//     velho, id de campanha excluida, alguem mexendo na barra de endereco) vira NULL, e o
+//     acesso e registrado normalmente.
+//
+// Essa validacao e o que garante a promessa mais importante desta funcao: a METRICA nunca
+// derruba o REGISTRO. O acesso a vaga e dado de funil; a atribuicao a campanha e um rotulo
+// em cima dele. Sem a checagem, um id inexistente estouraria a FK, a excecao subiria para o
+// try/catch de fire-and-forget do handler, e o acesso — que aconteceu de verdade —
+// simplesmente nao existiria no funil.
+function registrarAcessoVaga(jobId, utm = null, campanhaId = null) {
   const u = utm || {};
+
+  const id = Number(campanhaId);
+  let campanhaValida = null;
+  if (Number.isInteger(id) && id > 0) {
+    const existe = getDb().prepare('SELECT 1 FROM campanhas WHERE id = ?').get(id);
+    if (existe) campanhaValida = id;
+  }
+
   getDb()
     .prepare(
       `INSERT INTO vaga_acessos
-         (job_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term)
+         (job_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term, campanha_id)
        VALUES
-         (@job_id, @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term)`,
+         (@job_id, @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term, @campanha_id)`,
     )
     .run({
       job_id: jobId,
@@ -1589,6 +1612,7 @@ function registrarAcessoVaga(jobId, utm = null) {
       utm_campaign: u.campaign || null,
       utm_content: u.content || null,
       utm_term: u.term || null,
+      campanha_id: campanhaValida,
     });
 }
 
@@ -2161,6 +2185,32 @@ function contarEnviosCampanha(campanhaId) {
   return contagem;
 }
 
+// Cliques de uma campanha: acessos a pagina da vaga vindos do link daquele e-mail.
+//
+// ── CONTA ACESSOS, NAO PESSOAS — e a limitacao e do dado, nao da consulta ──
+// `vaga_acessos` e uma tabela ANONIMA: a pagina da vaga e publica e o acesso e registrado
+// antes de qualquer identificacao (nao ha login, nao ha token, e o cookie vm_utm guarda a
+// origem, nunca um identificador de pessoa). Nao existe coluna que diga "quem" — nem
+// e-mail, nem sessao, nem fingerprint.
+//
+// Entao o numero e ACESSOS: recarregar a pagina conta de novo, e a mesma pessoa que abre o
+// e-mail no celular e depois no computador conta duas vezes. Consequencia pratica: cliques
+// PODE passar recebidos, e a taxa pode dar mais de 100%.
+//
+// Deduplicar por IP+user-agent, ou por janela de tempo, seria inventar uma identidade que
+// o dado nao tem — e daria um numero mais bonito e menos verdadeiro. A tela rotula
+// "cliques" (nao "pessoas") e essa e a informacao honesta disponivel.
+function contarCliquesCampanha(campanhaId) {
+  const id = Number(campanhaId);
+  if (!Number.isInteger(id) || id <= 0) return { total: 0 };
+
+  const linha = getDb()
+    .prepare('SELECT COUNT(*) AS total FROM vaga_acessos WHERE campanha_id = ?')
+    .get(id);
+
+  return { total: linha.total };
+}
+
 // Apaga uma campanha em RASCUNHO. O unico DELETE do projeto inteiro.
 //
 // ── POR QUE APAGAR DE VERDADE, num codigo que nunca apagou nada ──
@@ -2585,6 +2635,7 @@ module.exports = {
   // Promocao de Vagas — disparo (materializacao + fila de envio)
   materializarEnviosCampanha,
   contarEnviosCampanha,
+  contarCliquesCampanha,
   listarEnviosPendentesCampanha,
   marcarEnvioCampanhaEnviado,
   marcarEnvioCampanhaFalha,

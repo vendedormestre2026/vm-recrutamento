@@ -211,6 +211,18 @@ function migrar() {
   adicionarColunaSeFaltar('vaga_acessos', 'utm_content', 'TEXT');
   adicionarColunaSeFaltar('vaga_acessos', 'utm_term', 'TEXT');
 
+  // Atribuicao exata de clique a uma campanha. Vem do parametro `campanha_id` do link do
+  // e-mail; NULL para todo acesso organico.
+  //
+  // SEM a clausula REFERENCES aqui, ao contrario do schema.sql: o SQLite nao aceita
+  // ADD COLUMN com chave estrangeira (erro "Cannot add a REFERENCES column with non-NULL
+  // default" nao se aplica, mas a FK simplesmente nao e criada em tabela ja existente).
+  // Bancos novos ganham a FK pelo CREATE TABLE; o banco de producao fica sem ela. A
+  // integridade real vem do app, que so grava um id depois de confirmar que a campanha
+  // existe (ver registrarAcessoVaga) — mesma disciplina de campanha_envios.origem_id, que
+  // tambem nao tem FK e por razao parecida.
+  adicionarColunaSeFaltar('vaga_acessos', 'campanha_id', 'INTEGER');
+
   // Importacao da base legada para o Banco de Talentos. As TRES colunas sao aditivas,
   // nullable e sem CHECK — nenhuma linha existente e tocada, e os ~550 talentos cadastrados
   // via /bancodecurriculos ficam com as tres em NULL, que e a leitura correta: eles nao sao

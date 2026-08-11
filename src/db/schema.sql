@@ -126,6 +126,15 @@ CREATE TABLE IF NOT EXISTS vaga_acessos (
   utm_campaign TEXT,
   utm_content  TEXT,
   utm_term     TEXT,
+  -- campanha_id: atribuicao EXATA de clique a uma campanha de Promocao de Vagas. Vem do
+  --   parametro `campanha_id` do link do e-mail, e NAO do cookie vm_utm — ao contrario
+  --   das UTM acima, que sao first-touch e sobrevivem 30 dias. A diferenca e proposital:
+  --   utm_source responde "de onde essa pessoa veio originalmente", enquanto isto responde
+  --   "este acesso foi um clique naquele e-mail". Uma visita organica de quem um dia
+  --   clicou na campanha tem utm_source='email' pelo cookie, e campanha_id NULL — que e a
+  --   leitura correta para contar cliques.
+  -- NULL = acesso que nao veio de campanha (organico, ou anterior ao recurso).
+  campanha_id  INTEGER REFERENCES campanhas(id),
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_vaga_acessos_job ON vaga_acessos(job_id);
