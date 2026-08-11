@@ -253,10 +253,22 @@ test('com o endereco configurado: envia o conteudo do formulario com o prefixo [
     `[TESTE] ${CONTEUDO.assunto}`,
     'o prefixo evita confundir o teste com campanha real na caixa de entrada',
   );
-  // O corpo e o do formulario MAIS o bloco de candidatura — igualdade exata contra o que
-  // montarCorpoFinal produz, que e a MESMA funcao do disparo real.
-  assert.equal(m.html, montarCorpoFinal(CONTEUDO.corpo_html, 'vaga-email-teste'));
-  assert.ok(m.html.startsWith(CONTEUDO.corpo_html), 'o texto do Jean vem primeiro, intacto');
+  // O corpo e o do formulario DENTRO da moldura de campanha — igualdade exata contra o que
+  // montarCorpoFinal produz, que e a MESMA funcao do disparo real. A URL de descadastro do
+  // rodape e a do proprio endereco de teste, montada pela mesma funcao que o adaptador usa
+  // no cabecalho List-Unsubscribe.
+  assert.equal(
+    m.html,
+    montarCorpoFinal(
+      CONTEUDO.corpo_html,
+      'vaga-email-teste',
+      desc.montarUrlDescadastro(DESTINO_TESTE, config.baseUrl),
+    ),
+  );
+  // `includes`, e nao `startsWith`: o texto do Jean agora vive dentro do <td> de conteudo,
+  // depois do cabecalho da marca. O que importa continua sendo que ele entra INTACTO —
+  // nenhuma reescrita, nenhum style injetado nos <p> dele.
+  assert.ok(m.html.includes(CONTEUDO.corpo_html), 'o texto do Jean entra intacto na moldura');
   assert.match(m.html, /href="[^"]*\/vaga\/vaga-email-teste\?utm_source=email"/);
 
   // 6. NENHUMA linha em campanha_envios — a razao de existir deste caminho.

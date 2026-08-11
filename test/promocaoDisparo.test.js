@@ -53,6 +53,7 @@ const { config } = require('../src/config');
 const { criarApp } = require('../src/server');
 const { listarPublicoCampanha } = require('../src/lib/promocaoVagas');
 const disparo = require('../src/lib/dispararPromocao');
+const desc = require('../src/lib/descadastro');
 const { montarCorpoFinal } = require('../src/lib/ctaCampanha');
 
 migrar();
@@ -402,10 +403,22 @@ test('a rotina chama o adaptador SEM headers manuais (List-Unsubscribe vem dele)
     const [destino, assunto, html] = args;
     assert.match(destino, /@/);
     assert.equal(assunto, 'Assunto da Campanha');
-    // O corpo e o da campanha MAIS o bloco de candidatura anexado no envio. Continua sendo
-    // uma assercao de igualdade exata (nao um "contem"), so que contra o corpo FINAL — o
-    // que esta rotina de fato entrega ao adaptador.
-    assert.equal(html, montarCorpoFinal('<p>Temos uma vaga.</p>', slugDaVaga(vagaAlvo)));
+    // O corpo e o da campanha DENTRO da moldura de campanha (cabecalho, botao e rodape).
+    // Continua sendo uma assercao de igualdade exata (nao um "contem"), so que contra o
+    // corpo FINAL — o que esta rotina de fato entrega ao adaptador.
+    //
+    // A URL de descadastro entra no calculo porque o rodape a carrega, e ela e POR
+    // DESTINATARIO: montada com o mesmo desc.montarUrlDescadastro que o adaptador usa no
+    // cabecalho List-Unsubscribe. Se a rotina passasse a gerar o link do rodape por outro
+    // caminho, esta igualdade quebraria — que e exatamente o ponto.
+    assert.equal(
+      html,
+      montarCorpoFinal(
+        '<p>Temos uma vaga.</p>',
+        slugDaVaga(vagaAlvo),
+        desc.montarUrlDescadastro(destino, config.baseUrl),
+      ),
+    );
     assert.match(html, /utm_source=email/, 'todo link de campanha carrega a origem');
     assert.doesNotMatch(html, /List-Unsubscribe/i, 'o header nao e responsabilidade da rotina');
   }

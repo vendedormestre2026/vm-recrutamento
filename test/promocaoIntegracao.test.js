@@ -464,14 +464,30 @@ test('f) a varredura envia so para os esperados, com List-Unsubscribe valido', a
       `o token de descadastro de ${destino} precisa ser valido`,
     );
 
-    // Conteudo: assunto e corpo sao os da campanha, iguais para todos (nao ha
-    // personalizacao por nome no e-mail de campanha).
+    // Conteudo: assunto e corpo sao os da campanha, iguais para todos. NAO ha personalizacao
+    // por nome no e-mail de campanha — a UNICA coisa que varia por destinatario e a URL de
+    // descadastro do rodape, que e assinada com o e-mail de quem recebe.
     assert.equal(m.subject, CAMPOS_CAMPANHA.assunto);
-    // Corpo final = o que o Jean escreveu + o bloco de candidatura anexado no envio.
-    // Igualdade exata contra montarCorpoFinal (a mesma funcao que o botao de teste usa),
-    // e nao um "contem" — o que sai tem que ser exatamente isto.
-    assert.equal(m.html, montarCorpoFinal(CAMPOS_CAMPANHA.corpo_html, slugVagaAlvo));
+    // Corpo final = o texto do Jean dentro da moldura de campanha (cabecalho, botao,
+    // rodape). Igualdade exata contra montarCorpoFinal (a mesma funcao que o botao de teste
+    // usa), e nao um "contem" — o que sai tem que ser exatamente isto.
+    assert.equal(
+      m.html,
+      montarCorpoFinal(
+        CAMPOS_CAMPANHA.corpo_html,
+        slugVagaAlvo,
+        desc.montarUrlDescadastro(destino, config.baseUrl),
+      ),
+    );
     assert.match(m.html, /utm_source=email/, 'a campanha precisa ser atribuivel na origem');
+
+    // O link VISIVEL do rodape aponta para o MESMO endereco do cabecalho List-Unsubscribe.
+    // Dois caminhos de opt-out que divergissem seriam pior que um so: o que o header
+    // promete e o que o rodape entrega tem que ser a mesma coisa.
+    assert.ok(
+      m.html.includes(cabecalho.replace(/^<|>$/g, '').replace(/&/g, '&amp;')),
+      `o link de descadastro do rodape de ${destino} tem que ser o do cabecalho`,
+    );
   }
 
   config.entrevista.mock = true;
@@ -590,7 +606,42 @@ test('k) o e-mail de TESTE tem o corpo final IDENTICO ao do disparo real', async
   assert.equal(r.ok, true, `o e-mail de teste precisa sair: ${r.mensagem || ''}`);
 
   const htmlDoTeste = enviadas[enviadas.length - 1].html;
-  assert.equal(htmlDoTeste, htmlDoDisparo, 'os dois caminhos tem que produzir o MESMO HTML');
+
+  // ── A UNICA divergencia legitima entre os dois caminhos e o link de descadastro ──
+  // Ele e assinado com o e-mail de QUEM RECEBE (HMAC sobre o endereco), entao o e-mail de
+  // teste, que vai para o endereco de QA, nao pode carregar o link do candidato. Tudo o
+  // mais — moldura, cabecalho, o texto do Jean, o botao e a URL da vaga com UTM — tem que
+  // ser byte a byte igual.
+  //
+  // Normalizamos SO esse href e comparamos o resto por igualdade exata. E mais forte que
+  // comparar campo a campo: qualquer diferenca nova que alguem introduza num dos caminhos
+  // (uma cor, um espaco, um <tr> a mais) quebra aqui, porque nao esta na lista do que pode
+  // variar.
+  const semDescadastro = (h) =>
+    h.replace(/href="[^"]*\/descadastro\?[^"]*"/, 'href="{{URL_DESCADASTRO}}"');
+
+  assert.notEqual(
+    semDescadastro(htmlDoTeste),
+    htmlDoTeste,
+    'sanidade: o rodape do e-mail de teste precisa ter um link de descadastro para normalizar',
+  );
+  assert.equal(
+    semDescadastro(htmlDoTeste),
+    semDescadastro(htmlDoDisparo),
+    'fora o link de descadastro (que e por destinatario), os dois caminhos tem que produzir ' +
+      'o MESMO HTML',
+  );
+
+  // E o link normalizado acima nao pode ser "qualquer coisa": no e-mail de teste ele tem que
+  // ser o descadastro VALIDO do endereco de QA. Sem esta assercao, um rodape com link
+  // quebrado passaria pela normalizacao sem ninguem notar.
+  assert.ok(
+    htmlDoTeste.includes(
+      desc.montarUrlDescadastro('qa@exemplo.com.br', config.baseUrl).replace(/&/g, '&amp;'),
+    ),
+    'o rodape do e-mail de teste leva o descadastro do proprio endereco de teste',
+  );
+
   assert.match(htmlDoTeste, /utm_source=email/);
 
   // O ASSUNTO, ao contrario do corpo, e propositalmente diferente: o prefixo [TESTE] existe
