@@ -31,7 +31,7 @@ const { montarCabecalhos } = require('./cabecalhos');
 // armadilha (URL sem protocolo) e duplicar a mensagem faria as duas divergirem no dia em
 // que uma fosse melhorada. E validacao de formato, nao regra de negocio — nao carrega
 // remetente, credencial nem nada que o desenho separa entre os dois fluxos.
-const { garantirUrlValida } = require('../email/zeptomail');
+const { garantirUrlValida, cabecalhoAuth, pistaDeAuth } = require('../email/zeptomail');
 
 // Mesmo recorte de erro dos outros adaptadores de campanha: a coluna `erro` de
 // campanha_envios existe para o Jean entender o que houve, nao para arquivar um HTML de
@@ -126,8 +126,9 @@ async function enviar(destinatario, assunto, html, opcoes = {}) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // NAO e Bearer — o ZeptoMail usa esquema proprio.
-        Authorization: `Zoho-enczapikey ${config.provedores.zeptomail.token}`,
+        // NAO e Bearer — o ZeptoMail usa esquema proprio. cabecalhoAuth normaliza um token
+        // que ja venha com o prefixo colado (o painel exibe a credencial nesse formato).
+        Authorization: cabecalhoAuth(config.provedores.zeptomail.token),
       },
       body: JSON.stringify(corpo),
     });
@@ -142,7 +143,11 @@ async function enviar(destinatario, assunto, html, opcoes = {}) {
     const status = resposta ? resposta.status : 'sem resposta';
     throw new Error(
       `Falha ao enviar e-mail de campanha via API do ZeptoMail: HTTP ${status} — ` +
-        `${await detalheDoErro(resposta)}`,
+        `${await detalheDoErro(resposta)}` +
+        // Tamanhos, nunca o valor. O 500 de corpo vazio que o prefixo duplicado produziu
+        // nao apontava para nada; esta pista teria entregado a causa na 1a tentativa. Vai
+        // para o log E para a coluna `erro` de campanha_envios, e por isso e curta.
+        pistaDeAuth(config.provedores.zeptomail.token),
     );
   }
 

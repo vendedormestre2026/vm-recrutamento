@@ -333,6 +333,25 @@ function validar() {
     }
   }
 
+  // ── Credencial colada com o rotulo junto ──
+  //
+  // O painel do ZeptoMail exibe o token ja no formato de header ("Zoho-enczapikey wSsV..."),
+  // e quem copia leva os 16 caracteres do prefixo. O adaptador prefixa de novo, o header sai
+  // duplicado, e o ZeptoMail responde 500 com CORPO VAZIO — mensagem que nao aponta para
+  // nada. Foi assim que o segundo teste real falhou.
+  //
+  // O adaptador agora NORMALIZA e funciona nos dois casos, entao isto e higiene, nao
+  // bloqueio: avisa para a variavel ser limpa, em vez de deixar a bagunca invisivel porque
+  // "esta funcionando". Mesmo espirito do aviso de URL sem protocolo acima — os dois nascem
+  // do mesmo gesto de colar o que estava na tela.
+  if (/^Zoho-enczapikey\s/i.test(process.env.ZEPTOMAIL_TOKEN || '')) {
+    avisos.push(
+      'ZEPTOMAIL_TOKEN veio com o prefixo "Zoho-enczapikey " colado no valor. O envio ' +
+        'funciona (o adaptador normaliza), mas a variavel deve conter APENAS o token — ' +
+        'o prefixo e do cabecalho HTTP, nao da credencial.',
+    );
+  }
+
   for (const aviso of avisos) {
     console.warn(`[config] aviso: ${aviso}`);
   }

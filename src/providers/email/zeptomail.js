@@ -39,6 +39,55 @@ const MAX_DETALHE_ERRO = 300;
 //
 // Exportada para o adaptador de campanha reusar: as duas verificam a MESMA armadilha, e
 // e a unica coisa que faz sentido compartilhar entre os dois blocos de provedor.
+// O esquema de autenticacao do ZeptoMail, e o prefixo que o painel mostra COLADO no token.
+const ESQUEMA_AUTH = 'Zoho-enczapikey';
+
+// Token sem o prefixo, aceitando as duas formas.
+//
+// ── POR QUE ISTO EXISTE ──
+// O painel do ZeptoMail exibe a credencial ja no formato de header — "Zoho-enczapikey
+// wSsV..." — e quem copia leva o rotulo junto. Foi o que aconteceu aqui: ZEPTOMAIL_TOKEN
+// entrou com os 16 caracteres do prefixo grudados, o adaptador prefixou de novo, e o header
+// saiu "Zoho-enczapikey Zoho-enczapikey wSsV...". O ZeptoMail respondeu 500 com CORPO
+// VAZIO, que nao aponta para nada.
+//
+// E o mesmo erro de ZEPTOMAIL_API_URL, que veio como "api.zeptomail.com" porque o valor foi
+// copiado sem o protocolo: os dois sao "colei o que estava na tela". Normalizar aqui torna
+// as duas formas equivalentes, e o aviso de boot (config.validar) diz qual delas esta em
+// uso — tolerar em silencio esconderia a bagunca.
+//
+// Exportada para o adaptador de campanha reusar, pelo mesmo motivo de garantirUrlValida:
+// e higiene de FORMATO de credencial, nao regra de negocio.
+function normalizarToken(token) {
+  return String(token || '')
+    .trim()
+    .replace(new RegExp(`^${ESQUEMA_AUTH}\\s+`, 'i'), '');
+}
+
+// Header de Authorization pronto, sempre com UM prefixo.
+function cabecalhoAuth(token) {
+  return `${ESQUEMA_AUTH} ${normalizarToken(token)}`;
+}
+
+// Pista de autenticacao anexada a erros 4xx/5xx — TAMANHOS, nunca o valor.
+//
+// O ZeptoMail respondeu 500 com corpo VAZIO quando o header vinha com o prefixo duplicado,
+// e a mensagem resultante ("HTTP 500 — ") nao apontava para nada. Diagnosticar exigiu
+// capturar o payload e comparar o header a mao.
+//
+// Os tres numeros abaixo teriam entregado a causa na primeira tentativa: o token de 160
+// chars normalizando para 144 e a marca de que o prefixo veio colado. Sao tamanhos e um
+// booleano — nada aqui reconstroi a credencial, e por isso pode ir para log e para a coluna
+// `erro` de campanha_envios sem virar vazamento.
+function pistaDeAuth(token) {
+  const bruto = String(token || '');
+  const limpo = normalizarToken(bruto);
+  return (
+    ` [auth: token ${bruto.length} chars, ${limpo.length} apos normalizar` +
+    `${bruto.length !== limpo.length ? ', PREFIXO VEIO COLADO na variavel' : ''}]`
+  );
+}
+
 function garantirUrlValida(url) {
   if (!/^https?:\/\//i.test(String(url || ''))) {
     throw new Error(
@@ -77,7 +126,9 @@ async function enviar(destinatario, assunto, html) {
       headers: {
         'Content-Type': 'application/json',
         // NAO e Bearer: o ZeptoMail usa um esquema proprio, e mandar Bearer devolve 401.
-        Authorization: `Zoho-enczapikey ${cfg.token}`,
+        // cabecalhoAuth normaliza um token que ja venha com o prefixo colado — ver a nota
+        // la sobre por que isso acontece.
+        Authorization: cabecalhoAuth(cfg.token),
       },
       body: JSON.stringify({
         from: { address: remetente.remetente, name: remetente.remetenteNome },
@@ -97,7 +148,8 @@ async function enviar(destinatario, assunto, html) {
   if (!resp.ok) {
     const detalhe = await resp.text().catch(() => '');
     throw new Error(
-      `ZeptoMail retornou erro ${resp.status}: ${detalhe.slice(0, MAX_DETALHE_ERRO)}`,
+      `ZeptoMail retornou erro ${resp.status}: ${detalhe.slice(0, MAX_DETALHE_ERRO)}` +
+        pistaDeAuth(cfg.token),
     );
   }
 
@@ -121,4 +173,12 @@ function extrairId(dados) {
   return (primeiro && (primeiro.message_id || primeiro.messageId)) || dados.request_id || null;
 }
 
-module.exports = { enviar, extrairId, garantirUrlValida };
+module.exports = {
+  enviar,
+  extrairId,
+  garantirUrlValida,
+  normalizarToken,
+  cabecalhoAuth,
+  pistaDeAuth,
+  ESQUEMA_AUTH,
+};

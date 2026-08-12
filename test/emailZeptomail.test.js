@@ -381,6 +381,107 @@ test('o default do config.js e uma URL COMPLETA (protocolo + caminho)', () => {
 });
 
 // ══════════════════════════════════════════════════════════════
+// 2c. Token com o prefixo colado — o erro que custou o segundo teste real
+// ══════════════════════════════════════════════════════════════
+
+const TOKEN_CRU = 'wSsVR61+qRejDabc123';
+const TOKEN_COM_PREFIXO = `Zoho-enczapikey ${TOKEN_CRU}`;
+
+test('normalizarToken: aceita com e sem prefixo, e o resultado e o mesmo', () => {
+  // O painel do ZeptoMail exibe a credencial ja no formato de header, e quem copia leva o
+  // rotulo junto. Foi o que aconteceu: o token entrou com os 16 chars do prefixo, o
+  // adaptador prefixou de novo, e o header saiu "Zoho-enczapikey Zoho-enczapikey wSsV...".
+  assert.equal(zeptoTransacional.normalizarToken(TOKEN_CRU), TOKEN_CRU);
+  assert.equal(zeptoTransacional.normalizarToken(TOKEN_COM_PREFIXO), TOKEN_CRU);
+  // Tolerante a caixa e a espacos extras — o gesto de colar produz as duas variacoes.
+  assert.equal(zeptoTransacional.normalizarToken(`zoho-enczapikey   ${TOKEN_CRU}`), TOKEN_CRU);
+  assert.equal(zeptoTransacional.normalizarToken(`  ${TOKEN_COM_PREFIXO}  `), TOKEN_CRU);
+});
+
+test('normalizarToken: NAO remove um prefixo que faca parte do token', () => {
+  // So remove quando ha separador depois. "Zoho-enczapikeyABC" e um token, nao um prefixo.
+  assert.equal(zeptoTransacional.normalizarToken('Zoho-enczapikeyABC'), 'Zoho-enczapikeyABC');
+});
+
+test('cabecalhoAuth: SEMPRE um prefixo so, venha o token como vier', () => {
+  const esperado = `Zoho-enczapikey ${TOKEN_CRU}`;
+  assert.equal(zeptoTransacional.cabecalhoAuth(TOKEN_CRU), esperado);
+  assert.equal(zeptoTransacional.cabecalhoAuth(TOKEN_COM_PREFIXO), esperado);
+  // A regressao concreta: nunca mais dois prefixos.
+  assert.doesNotMatch(
+    zeptoTransacional.cabecalhoAuth(TOKEN_COM_PREFIXO),
+    /Zoho-enczapikey\s+Zoho-enczapikey/i,
+  );
+});
+
+test('transacional: header sai com UM prefixo mesmo com o token sujo', async () => {
+  const t = httpDeTeste();
+  const salvo = config.provedores.zeptomail.token;
+  config.provedores.zeptomail.token = TOKEN_COM_PREFIXO;
+  try {
+    await comFetchDublado(t.client, () => zeptoTransacional.enviar('a@b.co', 'S', '<p>x</p>'));
+    assert.equal(t.ultima().init.headers.Authorization, `Zoho-enczapikey ${TOKEN_CRU}`);
+  } finally {
+    config.provedores.zeptomail.token = salvo;
+  }
+});
+
+test('campanha: header sai com UM prefixo mesmo com o token sujo', async () => {
+  const t = httpDeTeste();
+  const salvo = config.provedores.zeptomail.token;
+  config.provedores.zeptomail.token = TOKEN_COM_PREFIXO;
+  try {
+    await zeptoCampanha.enviar('p@exemplo.com', 'S', '<p>x</p>', { httpClient: t.client });
+    assert.equal(t.ultima().init.headers.Authorization, `Zoho-enczapikey ${TOKEN_CRU}`);
+  } finally {
+    config.provedores.zeptomail.token = salvo;
+  }
+});
+
+// ── A pista nos erros 4xx/5xx ──
+
+test('pistaDeAuth: informa TAMANHOS, nunca o valor', () => {
+  const pista = zeptoTransacional.pistaDeAuth(TOKEN_COM_PREFIXO);
+  assert.match(pista, /token \d+ chars/);
+  assert.match(pista, /PREFIXO VEIO COLADO/);
+  // O segredo nao pode aparecer — a pista vai para log e para campanha_envios.erro.
+  assert.doesNotMatch(pista, new RegExp(TOKEN_CRU.replace(/[+]/g, '\\+')));
+});
+
+test('pistaDeAuth: token limpo nao acusa prefixo', () => {
+  const pista = zeptoTransacional.pistaDeAuth(TOKEN_CRU);
+  assert.doesNotMatch(pista, /PREFIXO VEIO COLADO/);
+});
+
+test('a pista entra no erro de 500 com corpo VAZIO (o caso real)', async () => {
+  // O 500 do ZeptoMail veio sem corpo: "HTTP 500 — " e mais nada. Sem a pista, a mensagem
+  // nao apontava para lugar nenhum.
+  const t = httpDeTeste({ ok: false, status: 500, texto: '' });
+  const salvo = config.provedores.zeptomail.token;
+  config.provedores.zeptomail.token = TOKEN_COM_PREFIXO;
+  try {
+    await assert.rejects(
+      () => zeptoCampanha.enviar('p@exemplo.com', 'S', '<p>x</p>', { httpClient: t.client }),
+      (err) => {
+        assert.match(err.message, /HTTP 500/);
+        assert.match(err.message, /PREFIXO VEIO COLADO/, 'a pista precisa estar no erro');
+        return true;
+      },
+    );
+  } finally {
+    config.provedores.zeptomail.token = salvo;
+  }
+});
+
+test('a pista tambem entra no erro do transacional', async () => {
+  const t = httpDeTeste({ ok: false, status: 401, texto: '' });
+  await assert.rejects(
+    () => comFetchDublado(t.client, () => zeptoTransacional.enviar('a@b.co', 'S', '<p>x</p>')),
+    /\[auth: token \d+ chars/,
+  );
+});
+
+// ══════════════════════════════════════════════════════════════
 // 3. As fachadas
 // ══════════════════════════════════════════════════════════════
 
