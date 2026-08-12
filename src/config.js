@@ -168,10 +168,40 @@ const config = {
       pastaId: process.env.GOOGLE_DRIVE_FOLDER_ID || '',
       pastaNome: process.env.GOOGLE_DRIVE_FOLDER_NAME || 'Entrevistas VM',
     },
+    // ── ZeptoMail (Zoho): credencial COMPARTILHADA pelos dois fluxos ──
+    //
+    // Bloco proprio, e nao um campo dentro de `email` ou de `emailCampanha`, porque o token
+    // e a URL sao a UNICA coisa que os dois fluxos compartilham. Tudo o mais — remetente,
+    // nome de exibicao, tratamento de opcoes — continua morando no bloco de cada fluxo, e e
+    // isso que preserva a separacao de reputacao explicada logo abaixo mesmo agora que ha
+    // um provedor so.
+    //
+    // O token e o "Send Mail Token" emitido no painel do ZeptoMail. Ele vai no header
+    // Authorization com o esquema PROPRIO `Zoho-enczapikey` — nao e Bearer, e mandar Bearer
+    // devolve 401.
+    zeptomail: {
+      token: process.env.ZEPTOMAIL_TOKEN || '',
+      // Sobrescrevivel para apontar a um sandbox sem mexer em codigo, igual ao
+      // EMAILIT_API_URL que ele substitui.
+      apiUrl: process.env.ZEPTOMAIL_API_URL || 'https://api.zeptomail.com/v1.1/email',
+    },
+
     email: {
       nome: 'resend',
-      // Remetente de TODOS os e-mails (relatorio + retomada). Dominio verificado no Resend.
+      // Remetente de TODOS os e-mails transacionais (relatorio, lembrete, recusa,
+      // follow-up, retomada, notificacao, banco de curriculos).
+      //
+      // A VARIAVEL CONTINUA SENDO RESEND_FROM_EMAIL mesmo depois da migracao para o
+      // ZeptoMail, e isso e decisao, nao descuido: o dominio vendedormestre.com.br esta
+      // verificado no ZeptoMail sem restricao de sender address, entao o endereco nao muda
+      // — e renomear a variavel exigiria mexer no Railway durante a troca de provedor,
+      // somando um passo manual a uma migracao que ja tem outros. O nome fica como divida
+      // registrada, para a limpeza futura que tambem remove o resend.js.
       remetente: process.env.RESEND_FROM_EMAIL || 'jean@vendedormestre.com.br',
+      // Nome de exibicao do remetente. O Resend nao pedia (o `from` era string pura); o
+      // ZeptoMail aceita `{ address, name }`, e um nome legivel na caixa de entrada e a
+      // diferenca entre "jean@vendedormestre.com.br" e "Vendedor Mestre" no cliente.
+      remetenteNome: process.env.ZEPTOMAIL_FROM_NAME || 'Vendedor Mestre',
       resend: { apiKey: process.env.RESEND_API_KEY || '' },
     },
 
@@ -227,6 +257,11 @@ const config = {
       // O valor abaixo e um PLACEHOLDER — a verificacao do dominio no provedor (registros
       // SPF/DKIM/DMARC) e passo MANUAL, fora do codigo e fora deste incremento.
       remetente: process.env.SMTP_CAMPANHA_FROM_EMAIL || 'vagas@vagas.vendedormestre.com.br',
+      // Nome de exibicao do remetente de CAMPANHA. Separado do transacional de proposito:
+      // sao os dois campos que aparecem na caixa de entrada, e uma campanha que se
+      // apresentasse com o mesmo nome do e-mail de entrevista apagaria a distincao que o
+      // resto deste bloco existe para manter.
+      remetenteNome: process.env.ZEPTOMAIL_CAMPANHA_FROM_NAME || 'Vendedor Mestre — Vagas',
     },
   },
 };
@@ -241,6 +276,36 @@ function validar() {
   if (!config.recrutador.email) {
     avisos.push('RECRUITER_EMAIL nao definido (necessario na Fase 4 para envio do relatorio).');
   }
+
+  // ── ZeptoMail selecionado sem token: avisa ALTO no boot ──
+  //
+  // O sintoma de faltar o token so apareceria no primeiro envio — e, no caminho de
+  // campanha, "primeiro envio" significa a varredura marcando destinatarios como 'falha'
+  // TERMINAL, sem retentativa e sem poder rematerializar (UNIQUE(campanha_id, email)). No
+  // transacional e mais brando, mas ainda e um relatorio que nao chega ao recrutador.
+  //
+  // Este projeto ja pagou o preco de uma variavel ausente descoberta tarde, entao o aviso
+  // nomeia a variavel e o transporte que a exige. NAO derruba o processo: `validar()` e
+  // avisos, nao gates, e derrubar o boot por causa do e-mail deixaria o funil inteiro fora
+  // do ar por um subsistema que tem kill-switch proprio. Quem BARRA de fato e o pre-voo do
+  // disparo (credenciaisFaltando), que roda antes de materializar qualquer campanha.
+  const transacionalZepto = (process.env.EMAIL_TRANSPORTE || 'zeptomail') === 'zeptomail';
+  const campanhaZepto = (process.env.EMAIL_CAMPANHA_TRANSPORTE || 'api') === 'zeptomail';
+  if ((transacionalZepto || campanhaZepto) && !config.provedores.zeptomail.token) {
+    const quem = [
+      transacionalZepto ? 'EMAIL_TRANSPORTE' : null,
+      campanhaZepto ? 'EMAIL_CAMPANHA_TRANSPORTE' : null,
+    ]
+      .filter(Boolean)
+      .join(' e ');
+    avisos.push(
+      `ZEPTOMAIL_TOKEN ausente, mas ${quem} aponta para 'zeptomail'. ` +
+        'Nenhum e-mail sai por esse transporte ate a variavel ser definida — e no caso da ' +
+        'campanha, cada tentativa marca o destinatario como falha DEFINITIVA. Defina o ' +
+        'Send Mail Token do painel do ZeptoMail antes de enviar.',
+    );
+  }
+
   for (const aviso of avisos) {
     console.warn(`[config] aviso: ${aviso}`);
   }
