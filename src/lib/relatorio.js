@@ -6,9 +6,10 @@
 //   - NUNCA bloqueia a resposta ao candidato (o caller faz .catch e nunca propaga).
 //   - o candidato nunca ve o relatorio; so o recrutador recebe, por e-mail.
 //
-// Modo mock (config.entrevista.mock=true, default em dev): NAO chama DeepSeek nem
-// Resend de verdade — produz uma avaliacao deterministica e apenas LOGA o e-mail.
-// Modo real (INTERVIEW_MOCK=false): chama o LLM (DeepSeek) e envia via Resend.
+// Modo mock (config.entrevista.mock=true, default em dev): NAO chama DeepSeek nem o
+// provedor de e-mail de verdade — produz uma avaliacao deterministica e apenas LOGA o
+// e-mail. Modo real (INTERVIEW_MOCK=false): chama o LLM (DeepSeek) e envia pelo provedor
+// escolhido em EMAIL_TRANSPORTE (ZeptoMail por padrao).
 //
 // Testabilidade: gerarRelatorio aceita deps injetaveis ({ llm, email,
 // usarMockDeterministico }) para o teste de ponta a ponta com fakes (ETAPA G),
@@ -696,7 +697,12 @@ async function gerarRelatorio(interviewId, deps = {}) {
         `[relatorio] (mock) e-mail NAO enviado. destinatario=${destinatario} assunto="${assunto}" link=${config.baseUrl}/relatorio/${token}`,
       );
     } else {
-      await comTimeout(email.enviar(destinatario, assunto, html), timeoutMs, 'Resend');
+      // Rotulo AGNOSTICO de provedor: ele entra na mensagem "Tempo esgotado ao chamar X"
+      // (lib/entrevista.comTimeout), que vai para o log e para a coluna de erro do report.
+      // Nomear o provedor ali significava reescrever esta linha a cada migracao — e, pior,
+      // significava a mensagem MENTIR no intervalo entre a troca e alguem lembrar de
+      // atualiza-la. Quem envia de fato e decidido por EMAIL_TRANSPORTE em runtime.
+      await comTimeout(email.enviar(destinatario, assunto, html), timeoutMs, 'provedor de e-mail');
     }
     db.atualizarStatusReport(reportId, 'enviado', { destinatario, enviado_em: agoraSqlite() });
   } catch (err) {

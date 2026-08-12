@@ -386,7 +386,7 @@ router.post('/retomar-depois', async (req, res) => {
       await entrevista.comTimeout(
         email.enviar(candidato.email, assunto, html),
         config.entrevista.timeoutMs,
-        'Resend',
+        'provedor de e-mail',
       );
     }
     db.marcarRetomadaEnviada(candidato.id);

@@ -129,7 +129,7 @@ async function enviarParaCandidato(linha, etapa) {
       await entrevista.comTimeout(
         email.enviar(linha.email, assunto, html),
         config.entrevista.timeoutMs,
-        'Resend',
+        'provedor de e-mail',
       );
     }
     // So aqui, DEPOIS do envio (ou do log em mock): marca para nao reenviar. Em mock
