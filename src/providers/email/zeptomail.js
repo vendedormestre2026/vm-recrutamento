@@ -30,6 +30,25 @@ const { config } = require('../../config');
 // de 500 inteiro num log.
 const MAX_DETALHE_ERRO = 300;
 
+// Checagem da URL ANTES do fetch, porque a mensagem que o fetch da nao ensina nada.
+//
+// `fetch('api.zeptomail.com')` lanca "Failed to parse URL from api.zeptomail.com": nao
+// nomeia a variavel, nao diz o que falta e chega ao operador embrulhada no catch de quem
+// chamou. Foi assim que o primeiro teste real do ZeptoMail falhou — a variavel estava no
+// Railway sem o https:// e sem o path.
+//
+// Exportada para o adaptador de campanha reusar: as duas verificam a MESMA armadilha, e
+// e a unica coisa que faz sentido compartilhar entre os dois blocos de provedor.
+function garantirUrlValida(url) {
+  if (!/^https?:\/\//i.test(String(url || ''))) {
+    throw new Error(
+      `ZEPTOMAIL_API_URL invalida: ${JSON.stringify(url)}. ` +
+        'Precisa ser a URL completa, com protocolo e caminho ' +
+        '(ex.: https://api.zeptomail.com/v1.1/email). Remova a variavel para usar o padrao.',
+    );
+  }
+}
+
 async function enviar(destinatario, assunto, html) {
   const cfg = config.provedores.zeptomail;
 
@@ -43,6 +62,7 @@ async function enviar(destinatario, assunto, html) {
   if (!destinatario) {
     throw new Error('Destinatario de e-mail ausente (verifique RECRUITER_EMAIL no .env).');
   }
+  garantirUrlValida(cfg.apiUrl);
 
   // Remetente do fluxo TRANSACIONAL (config.provedores.email), e nao do bloco zeptomail:
   // o token e compartilhado entre os dois fluxos, mas a identidade de quem envia continua
@@ -101,4 +121,4 @@ function extrairId(dados) {
   return (primeiro && (primeiro.message_id || primeiro.messageId)) || dados.request_id || null;
 }
 
-module.exports = { enviar, extrairId };
+module.exports = { enviar, extrairId, garantirUrlValida };

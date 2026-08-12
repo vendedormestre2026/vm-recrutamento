@@ -310,6 +310,29 @@ function validar() {
     );
   }
 
+  // ── URL de API sem protocolo: o erro mais caro de diagnosticar deste subsistema ──
+  //
+  // `fetch('api.zeptomail.com')` nao falha dizendo "faltou https://". Ele lanca
+  // "Failed to parse URL from api.zeptomail.com" — uma mensagem que nao nomeia a variavel,
+  // nao diz o que esta errado nela e nao aparece no boot: so no primeiro envio, dentro do
+  // catch de quem chamou. Foi assim que o primeiro teste real do ZeptoMail falhou.
+  //
+  // Aqui o aviso nomeia a variavel, mostra o valor e diz o formato esperado. Vale para as
+  // duas URLs sobrescreviveis do projeto, porque a armadilha e a mesma nas duas.
+  for (const [nome, valor] of [
+    ['ZEPTOMAIL_API_URL', process.env.ZEPTOMAIL_API_URL],
+    ['EMAILIT_API_URL', process.env.EMAILIT_API_URL],
+  ]) {
+    if (valor && !/^https?:\/\//i.test(valor)) {
+      avisos.push(
+        `${nome} definida sem protocolo: ${JSON.stringify(valor)}. ` +
+          'O fetch() nao aceita esse formato e todo envio por esse transporte vai falhar ' +
+          'com "Failed to parse URL". Use a URL COMPLETA (ex.: ' +
+          'https://api.zeptomail.com/v1.1/email) ou remova a variavel para usar o padrao.',
+      );
+    }
+  }
+
   for (const aviso of avisos) {
     console.warn(`[config] aviso: ${aviso}`);
   }

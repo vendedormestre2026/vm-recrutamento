@@ -308,6 +308,79 @@ test('campanha: credenciaisFaltando nomeia as variaveis, no formato do pre-voo',
 });
 
 // ══════════════════════════════════════════════════════════════
+// 2b. URL de API invalida — o erro que custou o primeiro teste real
+// ══════════════════════════════════════════════════════════════
+
+test('garantirUrlValida: aceita http e https, recusa host sem protocolo', () => {
+  // O caso real: ZEPTOMAIL_API_URL foi definida no Railway como "api.zeptomail.com", e o
+  // fetch lancou "Failed to parse URL from api.zeptomail.com" — mensagem que nao nomeia a
+  // variavel, nao diz o que falta e so aparece no primeiro envio.
+  assert.doesNotThrow(() => zeptoTransacional.garantirUrlValida('https://api.zeptomail.com/v1.1/email'));
+  assert.doesNotThrow(() => zeptoTransacional.garantirUrlValida('http://localhost:3000/email'));
+
+  for (const ruim of ['api.zeptomail.com', '', null, undefined, '//api.zeptomail.com', 'ftp://x.com']) {
+    assert.throws(
+      () => zeptoTransacional.garantirUrlValida(ruim),
+      /ZEPTOMAIL_API_URL invalida/,
+      `deveria recusar ${JSON.stringify(ruim)}`,
+    );
+  }
+});
+
+test('a mensagem de erro NOMEIA a variavel e mostra o formato esperado', () => {
+  try {
+    zeptoTransacional.garantirUrlValida('api.zeptomail.com');
+    assert.fail('deveria ter lancado');
+  } catch (err) {
+    assert.match(err.message, /ZEPTOMAIL_API_URL/, 'precisa nomear a variavel');
+    assert.match(err.message, /api\.zeptomail\.com/, 'precisa mostrar o valor recebido');
+    assert.match(err.message, /https:\/\/api\.zeptomail\.com\/v1\.1\/email/, 'precisa dar o exemplo');
+  }
+});
+
+test('transacional: URL invalida LANCA antes de tocar a rede', async () => {
+  const t = httpDeTeste();
+  const salvo = config.provedores.zeptomail.apiUrl;
+  config.provedores.zeptomail.apiUrl = 'api.zeptomail.com';
+  try {
+    await assert.rejects(
+      () => comFetchDublado(t.client, () => zeptoTransacional.enviar('a@b.co', 'S', '<p>x</p>')),
+      /ZEPTOMAIL_API_URL invalida/,
+    );
+  } finally {
+    config.provedores.zeptomail.apiUrl = salvo;
+  }
+  assert.equal(t.chamadas.length, 0, 'nenhuma requisicao pode ter saido');
+});
+
+test('campanha: URL invalida LANCA antes de tocar a rede', async () => {
+  // Aqui e pior que no transacional: cada tentativa marca o destinatario como 'falha'
+  // TERMINAL, sem retentativa e sem poder rematerializar.
+  const t = httpDeTeste();
+  const salvo = config.provedores.zeptomail.apiUrl;
+  config.provedores.zeptomail.apiUrl = 'api.zeptomail.com';
+  try {
+    await assert.rejects(
+      () => zeptoCampanha.enviar('p@exemplo.com', 'S', '<p>x</p>', { httpClient: t.client }),
+      /ZEPTOMAIL_API_URL invalida/,
+    );
+  } finally {
+    config.provedores.zeptomail.apiUrl = salvo;
+  }
+  assert.equal(t.chamadas.length, 0, 'nenhuma requisicao pode ter saido');
+});
+
+test('o default do config.js e uma URL COMPLETA (protocolo + caminho)', () => {
+  // Sem a variavel de ambiente, o valor precisa funcionar sozinho — e foi justamente a
+  // variavel, e nao o default, que quebrou em producao.
+  assert.match(
+    require('../src/config').config.provedores.zeptomail.apiUrl,
+    /^https:\/\/[^/]+\/.+/,
+    'o default precisa ter protocolo E caminho',
+  );
+});
+
+// ══════════════════════════════════════════════════════════════
 // 3. As fachadas
 // ══════════════════════════════════════════════════════════════
 

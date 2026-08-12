@@ -27,6 +27,11 @@
 
 const { config } = require('../../config');
 const { montarCabecalhos } = require('./cabecalhos');
+// A UNICA coisa importada do bloco transacional, e de proposito: as duas verificam a mesma
+// armadilha (URL sem protocolo) e duplicar a mensagem faria as duas divergirem no dia em
+// que uma fosse melhorada. E validacao de formato, nao regra de negocio — nao carrega
+// remetente, credencial nem nada que o desenho separa entre os dois fluxos.
+const { garantirUrlValida } = require('../email/zeptomail');
 
 // Mesmo recorte de erro dos outros adaptadores de campanha: a coluna `erro` de
 // campanha_envios existe para o Jean entender o que houve, nao para arquivar um HTML de
@@ -87,6 +92,11 @@ async function enviar(destinatario, assunto, html, opcoes = {}) {
         'Token" emitido no painel, e vai no header Authorization como Zoho-enczapikey.',
     );
   }
+
+  // Antes de montar o corpo: uma URL sem protocolo faz o fetch lancar "Failed to parse
+  // URL", mensagem que nao nomeia a variavel nem diz o que falta. Na campanha isso e pior
+  // que no transacional — cada tentativa marca o destinatario como 'falha' TERMINAL.
+  garantirUrlValida(config.provedores.zeptomail.apiUrl);
 
   const http = opcoes.httpClient || fetch;
 
