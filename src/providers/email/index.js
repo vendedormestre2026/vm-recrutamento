@@ -10,11 +10,10 @@
 // literalmente `const nome = 'resend'`. Agora ha dois, e a escolha vem de EMAIL_TRANSPORTE
 // — espelhando EMAIL_CAMPANHA_TRANSPORTE, que ja fazia isso do outro lado.
 //
-// O ganho concreto e ROLLBACK SEM REDEPLOY: se o ZeptoMail recusar entrega, atrasar ou
-// devolver erro em producao, voltar ao Resend e trocar uma variavel de ambiente e
-// reiniciar — mesmo espirito dos kill-switches do painel, onde a reacao a um problema nao
-// pode depender de uma build. E por isso que ./resend.js FICA no repositorio por enquanto,
-// mesmo sem ser o default: um plano de rollback que exige commit nao e plano de rollback.
+// O ganho concreto e ROLLBACK SEM REDEPLOY nos dois sentidos: trocar uma variavel e
+// reiniciar, em vez de subir codigo — mesmo espirito dos kill-switches do painel, onde a
+// reacao a um problema nao pode depender de uma build. E por isso que ./resend.js FICA no
+// repositorio: um plano de rollback que exige commit nao e plano de rollback.
 //
 // Valor desconhecido NAO cai silenciosamente num default. Um typo em EMAIL_TRANSPORTE que
 // resultasse em "manda pelo outro provedor mesmo" e o tipo de coisa cujo sintoma (e-mails
@@ -26,7 +25,17 @@ const adaptadores = {
   resend: () => require('./resend'),
 };
 
-const PADRAO = 'zeptomail';
+// ── O DEFAULT CONTINUA 'resend', e isso e deliberado ──
+//
+// Subir este codigo NAO pode, sozinho, trocar o provedor dos sete fluxos transacionais. A
+// troca e decisao de DEPLOY — feita definindo EMAIL_TRANSPORTE=zeptomail no Railway, depois
+// de confirmar que ZEPTOMAIL_TOKEN esta la e validado —, e nao efeito colateral de um
+// merge. Enquanto a variavel nao existir, tudo continua saindo pelo Resend exatamente como
+// antes desta migracao.
+//
+// E o mesmo criterio ja aplicado a fachada de campanha, que tambem manteve seu default em
+// 'api' (Emailit): o codigo novo chega inerte, e quem o liga e um ato explicito.
+const PADRAO = 'resend';
 
 function selecionar() {
   // Lido a CADA chamada, e nao no load do modulo: o teste precisa conseguir trocar o

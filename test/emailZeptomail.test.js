@@ -311,9 +311,23 @@ test('campanha: credenciaisFaltando nomeia as variaveis, no formato do pre-voo',
 // 3. As fachadas
 // ══════════════════════════════════════════════════════════════
 
-test('fachada transacional: default e zeptomail', () => {
+test('fachada transacional: o default CONTINUA resend — subir codigo nao troca provedor', () => {
+  // A garantia mais importante desta fachada hoje. Se este teste virar 'zeptomail', o
+  // proximo deploy troca o provedor dos sete fluxos transacionais sozinho, sem ninguem ter
+  // decidido isso. A troca e ato explicito: EMAIL_TRANSPORTE=zeptomail no Railway.
   const salvo = process.env.EMAIL_TRANSPORTE;
   delete process.env.EMAIL_TRANSPORTE;
+  try {
+    assert.equal(fachadaTransacional.selecionar(), require('../src/providers/email/resend'));
+  } finally {
+    if (salvo === undefined) delete process.env.EMAIL_TRANSPORTE;
+    else process.env.EMAIL_TRANSPORTE = salvo;
+  }
+});
+
+test('fachada transacional: EMAIL_TRANSPORTE=zeptomail liga o provedor novo', () => {
+  const salvo = process.env.EMAIL_TRANSPORTE;
+  process.env.EMAIL_TRANSPORTE = 'zeptomail';
   try {
     assert.equal(fachadaTransacional.selecionar(), zeptoTransacional);
   } finally {
@@ -322,7 +336,9 @@ test('fachada transacional: default e zeptomail', () => {
   }
 });
 
-test('fachada transacional: EMAIL_TRANSPORTE=resend faz o rollback sem redeploy', () => {
+test('fachada transacional: EMAIL_TRANSPORTE=resend e o rollback explicito', () => {
+  // Redundante com o default hoje, e proposital: quando o default virar 'zeptomail' na
+  // limpeza futura, este teste continua guardando o caminho de volta.
   const salvo = process.env.EMAIL_TRANSPORTE;
   process.env.EMAIL_TRANSPORTE = 'resend';
   try {

@@ -289,7 +289,11 @@ function validar() {
   // avisos, nao gates, e derrubar o boot por causa do e-mail deixaria o funil inteiro fora
   // do ar por um subsistema que tem kill-switch proprio. Quem BARRA de fato e o pre-voo do
   // disparo (credenciaisFaltando), que roda antes de materializar qualquer campanha.
-  const transacionalZepto = (process.env.EMAIL_TRANSPORTE || 'zeptomail') === 'zeptomail';
+  // Os defaults aqui espelham os das duas fachadas ('resend' e 'api'): o aviso so faz
+  // sentido para quem de fato vai enviar pelo ZeptoMail, e um default diferente do real
+  // faria este bloco avisar sobre um transporte que ninguem selecionou — ou, pior, calar
+  // sobre o que esta selecionado.
+  const transacionalZepto = (process.env.EMAIL_TRANSPORTE || 'resend') === 'zeptomail';
   const campanhaZepto = (process.env.EMAIL_CAMPANHA_TRANSPORTE || 'api') === 'zeptomail';
   if ((transacionalZepto || campanhaZepto) && !config.provedores.zeptomail.token) {
     const quem = [
