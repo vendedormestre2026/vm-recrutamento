@@ -36,11 +36,19 @@
 
 const { config } = require('../../config');
 
+// `api` continua sendo o Emailit por compatibilidade: o valor ja esta em uso e trocar o
+// significado de uma string existente faria um ambiente nao atualizado mudar de provedor
+// sozinho. O ZeptoMail entra com nome proprio.
 const adaptadores = {
+  zeptomail: () => require('./zeptomail'),
   api: () => require('./emailit_api'),
   smtp: () => require('./smtp'),
 };
 
+// O DEFAULT NAO MUDA NESTE COMMIT. A troca de transporte em producao e decisao de deploy,
+// feita por variavel de ambiente (EMAIL_CAMPANHA_TRANSPORTE=zeptomail) depois da validacao
+// pelo botao de e-mail de teste — e nao um efeito colateral de subir codigo. Enquanto isso
+// nao acontece, tudo continua saindo pelo Emailit, exatamente como antes deste commit.
 const PADRAO = 'api';
 
 function selecionar() {
