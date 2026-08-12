@@ -29,11 +29,11 @@
 // intercambiavel com a coisa real, sem camada de adaptacao no meio.
 //
 // Os cabecalhos List-Unsubscribe / List-Unsubscribe-Post continuam AUTOMATICOS, e pela
-// MESMA funcao que o adaptador SMTP usa (montarCabecalhos, importada de ./smtp) — nao ha
+// MESMA funcao que o adaptador SMTP usa (montarCabecalhos, agora em ./cabecalhos) — nao ha
 // copia. Se a regra de opt-out mudar, ela muda uma vez e vale para os dois transportes.
 
 const { config } = require('../../config');
-const { montarCabecalhos } = require('./smtp');
+const { montarCabecalhos } = require('./cabecalhos');
 
 // Recorte da resposta de erro do provedor guardada na mensagem da excecao. Mesmo espirito
 // do MAX_DETALHE_ERRO de smtp.js: a coluna `erro` de campanha_envios existe para o Jean

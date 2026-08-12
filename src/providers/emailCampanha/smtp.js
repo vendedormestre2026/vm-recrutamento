@@ -32,7 +32,9 @@
 
 const nodemailer = require('nodemailer');
 const { config } = require('../../config');
-const { montarUrlDescadastro } = require('../../lib/descadastro');
+// Os cabecalhos de opt-out sairam daqui para ./cabecalhos.js: a regra e do DOMINIO
+// "e-mail de campanha", nao deste transporte, e agora ha tres transportes consumindo-a.
+const { cabecalhosDescadastro, montarCabecalhos } = require('./cabecalhos');
 
 // Transporter em cache. LAZY (criado no primeiro envio, nao no load do modulo) por dois
 // motivos: o modulo pode ser carregado num processo que nunca envia campanha (o app
@@ -105,57 +107,6 @@ function obterTransporter() {
   return _transporter;
 }
 
-// Os dois cabecalhos que a RFC 8058 exige de quem envia em volume. Sem eles, Gmail e
-// Yahoo degradam ou recusam a entrega de remetentes em massa (regra em vigor desde 2024)
-// — ou seja, isto nao e cortesia com o destinatario, e requisito de ENTREGABILIDADE.
-//
-// A URL sai de lib/descadastro.montarUrlDescadastro (Incremento 2), entao o link do
-// cabecalho e exatamente o mesmo do rodape do e-mail, assinado com o mesmo HMAC. LANCA
-// se DESCADASTRO_SECRET faltar — de novo, falhar ANTES do envio, porque um e-mail de
-// campanha sem opt-out valido e pior do que um e-mail nao enviado.
-//
-// `List-Unsubscribe-Post` e o que habilita o One-Click: o CLIENTE DE E-MAIL faz um POST
-// direto nessa URL, sem abrir pagina e sem corpo de formulario. Por isso o handler
-// POST /descadastro le `e`/`t` tambem da query string (ver routes/pages.js).
-function cabecalhosDescadastro(destinatario) {
-  const url = montarUrlDescadastro(destinatario, config.baseUrl);
-  return {
-    'List-Unsubscribe': `<${url}>`,
-    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-  };
-}
-
-// Cabecalhos finais da mensagem: os de descadastro POR PADRAO, mais os que o chamador
-// tenha passado.
-//
-// A inclusao e automatica de proposito. Se dependesse de quem chama lembrar de passar
-// `headers: cabecalhosDescadastro(email)`, um esquecimento produziria uma campanha
-// entregue SEM opt-out valido — e o sintoma disso nao e um erro, e queda de entrega
-// semanas depois, com o dominio ja marcado. O caminho seguro tem que ser o default.
-//
-// PRECEDENCIA: o que o chamador passou SEMPRE vence (o spread dos informados vem por
-// ultimo). Se alguem definiu 'List-Unsubscribe' na mao, foi de proposito e nao cabe a
-// este modulo sobrescrever. Observacao consciente: nesse caso o
-// 'List-Unsubscribe-Post' automatico continua valendo junto com a URL do chamador —
-// quem trocar a URL por uma que NAO aceite POST precisa passar tambem o
-// 'List-Unsubscribe-Post' (ou omiti-lo via semDescadastro), porque anunciar One-Click
-// numa URL que nao o suporta e pior do que nao anunciar.
-//
-// semDescadastro: VALVULA DE ESCAPE, nao caminho esperado. Este adaptador existe para
-// CAMPANHA, e campanha sem opt-out nao deveria sair — hoje nao ha no projeto um unico
-// cenario legitimo para isto. Existe para o caso de um dia haver (ex.: uma mensagem
-// operacional a uma lista interna que ja tem outro mecanismo de saida), e para que esse
-// dia exija uma decisao EXPLICITA e visivel no call site, em vez de um header faltando
-// silenciosamente.
-function montarCabecalhos(destinatario, opcoes) {
-  const informados = opcoes.headers || {};
-  if (opcoes.semDescadastro === true) return informados;
-  // cabecalhosDescadastro LANCA se DESCADASTRO_SECRET faltar. Isso agora barra TODA
-  // tentativa de envio de campanha sem descadastro configurado, e nao so as que
-  // lembrassem de pedir o header — que e exatamente a intencao.
-  return { ...cabecalhosDescadastro(destinatario), ...informados };
-}
-
 async function enviar(destinatario, assunto, html, opcoes = {}) {
   // Antes de qualquer coisa que custe conexao: sem destinatario nao ha o que enviar.
   if (!destinatario) {
@@ -204,14 +155,13 @@ async function enviar(destinatario, assunto, html, opcoes = {}) {
 
 module.exports = {
   enviar,
-  cabecalhosDescadastro,
   criarTransporter,
   credenciaisFaltando,
-  // Exportada para o adaptador de API REST (./emailit_api.js) REUSAR a montagem de
-  // cabecalho em vez de duplica-la. A regra de opt-out e do dominio "e-mail de campanha",
-  // nao do transporte SMTP — ela mora aqui por precedencia historica (este era o unico
-  // transporte). Se um terceiro transporte aparecer, o movimento certo e extrair
-  // montarCabecalhos + cabecalhosDescadastro para um ./cabecalhos.js compartilhado; com
-  // dois, isso seria cerimonia sem ganho.
+  // REEXPORTADAS, e nao definidas aqui: as duas mudaram-se para ./cabecalhos.js quando o
+  // terceiro transporte chegou (era exatamente o gatilho previsto no comentario que este
+  // substitui). Continuam saindo daqui para nao quebrar quem ja as importava deste modulo
+  // — hoje so test/emailCampanha.test.js. A reexportacao sai junto com este arquivo,
+  // quando o transporte SMTP for removido.
+  cabecalhosDescadastro,
   montarCabecalhos,
 };
