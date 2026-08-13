@@ -32,7 +32,7 @@
 
 const dbPadrao = require('../db');
 const { normalizarCidade } = require('./cidades');
-const { normalizarTelefoneWhatsapp } = require('./whatsapp');
+const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('./whatsapp');
 
 // Sentinela de `talentos.cidade`: marca presenca em QUALQUER praca (531 pessoas no legado).
 //
@@ -48,6 +48,40 @@ const CIDADE_TODAS = 'Todas as cidades';
 // template do n8n resolve a saudacao sem ele; inventar "Candidato" seria pior.
 function primeiroNome(nome) {
   return String(nome || '').trim().split(/\s+/)[0] || '';
+}
+
+// ── O TELEFONE PRECISA SOBREVIVER A IDA E A VOLTA ──
+//
+// Incidente do primeiro disparo real (Joinville): o item 11 saiu daqui como
+// "555547988301250" — 15 digitos, DDI 55 duplicado. A Meta aceitou e enviou (corrigindo o
+// numero por conta propria, devolvendo um wa_id diferente), mas o POST /marcar-status
+// REJEITOU o mesmo valor, e o disparo travou no meio com a mensagem ja entregue e nada
+// registrado.
+//
+// A causa nao e o normalizador: e o DADO. O banco guarda literalmente "+55 +5547988301250"
+// — o seletor de DDI do formulario prefixa "+55 " e a pessoa digitou o numero ja com +55.
+// normalizarTelefoneWhatsapp aceita porque 15 digitos cabe no teto [10,15]; ja
+// normalizarTelefoneRecebido, ao ver 15 digitos, nao reconhece o padrao 55+10/11, trata
+// como nacional, prefixa 55 outra vez, chega a 17 e devolve null. Dai o 400.
+//
+// A regra aqui e o CONTRATO DE IDA E VOLTA: um telefone so entra na lista se, ao voltar
+// pela fronteira da API, produzir exatamente ele mesmo. E a mesma funcao da rota — nao uma
+// segunda validacao paralela que poderia divergir dela amanha.
+//
+// FAIL CLOSED: quem nao passa fica de FORA do disparo. A alternativa (mandar assim mesmo)
+// e o que acabou de acontecer — mensagem entregue a um numero que o proprio sistema nao
+// consegue registrar, e que volta na fila no ciclo seguinte para receber de novo.
+//
+// O log e a unica forma de esses registros nao sumirem de vista: eles nao aparecem em tela
+// nenhuma, e o unico sintoma seria a fila ser menor do que alguem esperava.
+function telefoneUtilizavel(telefone, contexto) {
+  if (normalizarTelefoneRecebido(telefone) === telefone) return true;
+  console.warn(
+    `[disparo-wpp] telefone EXCLUIDO da fila por nao sobreviver a ida e volta: ` +
+      `${telefone} (${contexto}). Origem provavel: DDI duplicado no cadastro. ` +
+      'Corrija o telefone na base para que a pessoa volte a ser elegivel.',
+  );
+  return false;
 }
 
 // Lista quem ainda NAO recebeu o convite do grupo daquela praca.
@@ -84,6 +118,7 @@ function listarPendentesPorCidade(cidade, deps = {}) {
   for (const linha of db.listarCandidatosPorCidadeVaga(praca)) {
     const telefone = normalizarTelefoneWhatsapp(linha.telefone);
     if (!telefone) continue; // numero inutilizavel nao vira convite
+    if (!telefoneUtilizavel(telefone, `application ${linha.id}, ${praca}`)) continue;
     // `has` protege a precedencia DENTRO da propria origem tambem: uma pessoa com duas
     // candidaturas na mesma praca aparece duas vezes na consulta, e a primeira vence.
     if (porTelefone.has(telefone)) continue;
@@ -107,6 +142,7 @@ function listarPendentesPorCidade(cidade, deps = {}) {
     if (String(linha.cidade || '').trim() === CIDADE_TODAS) continue;
     const telefone = normalizarTelefoneWhatsapp(linha.telefone);
     if (!telefone) continue;
+    if (!telefoneUtilizavel(telefone, `talento ${linha.id}, ${praca}`)) continue;
     if (porTelefone.has(telefone)) continue;
     porTelefone.set(telefone, {
       telefone,

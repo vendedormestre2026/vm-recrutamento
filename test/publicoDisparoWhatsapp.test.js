@@ -27,6 +27,15 @@ const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const { listarPendentesPorCidade } = require('../src/lib/publicoDisparoWhatsapp');
+const { normalizarTelefoneRecebido } = require('../src/lib/whatsapp');
+
+// O guard de ida e volta emite console.warn por registro excluido — legitimo em producao,
+// ruido aqui. Silencia so durante a chamada, e sempre restaura.
+function semRuido(fn) {
+  const warn = console.warn;
+  console.warn = () => {};
+  try { return fn(); } finally { console.warn = warn; }
+}
 
 migrar();
 
@@ -347,4 +356,64 @@ test('praca com as duas origens, sobreposicao e ja-enviados', () => {
   // Bruno aparece com os dados de CANDIDATO, nao de legado.
   const bruno = lista.find((p) => p.telefone === '5547900000002');
   assert.deepEqual(bruno, { telefone: '5547900000002', nome_primeiro: 'Bruno', cargo: 'CLOSER' });
+});
+
+// ══════════════════ Contrato de ida e volta do telefone ══════════════════
+//
+// INCIDENTE REAL (primeiro disparo, Joinville): o item 11 saiu da API como
+// "555547988301250" — DDI 55 duplicado. A Meta aceitou e enviou (corrigindo o numero por
+// conta propria), mas o POST /marcar-status rejeitou o MESMO valor, e o disparo travou no
+// meio: mensagem entregue, nada registrado, e a pessoa de volta na fila para receber outra
+// vez no ciclo seguinte.
+//
+// A causa nao e o normalizador — e o dado: o banco guarda literalmente
+// "+55 +5547988301250", porque o seletor de DDI do formulario prefixa "+55 " e a pessoa
+// digitou o numero ja com +55. Sao 48 registros assim em producao.
+
+test('telefone com DDI duplicado NAO entra na fila', () => {
+  zerar();
+  const vaga = criarVaga('Joinville');
+  // Exatamente o valor bruto que quebrou o disparo (applications id 355 em producao).
+  criarCandidatura(vaga, 'Silvana', '+55 +5547988301250');
+  criarCandidatura(vaga, 'Sadia', '+55 (47) 99958-2500');
+
+  const lista = semRuido(() => listarPendentesPorCidade('Joinville'));
+  // Fail CLOSED: quem o proprio sistema nao consegue registrar de volta nao recebe mensagem.
+  assert.deepEqual(telefonesDe(lista), ['5547999582500']);
+});
+
+test('o mesmo vale para o legado', () => {
+  zerar();
+  criarLegado('Cindel', '+55 +5547992551100', 'Joinville');
+  criarLegado('Valida', '+55 47 99958-2500', 'Joinville');
+  assert.deepEqual(telefonesDe(semRuido(() => listarPendentesPorCidade('Joinville'))), ['5547999582500']);
+});
+
+test('todo telefone devolvido sobrevive a volta pela fronteira da API', () => {
+  // A invariante que fecha o ciclo: qualquer item da lista pode ser marcado de volta sem
+  // 400. E o teste que, se tivesse existido antes, teria pego o incidente.
+  zerar();
+  const vaga = criarVaga('Joinville');
+  criarCandidatura(vaga, 'A', '+55 +5547988301250');   // 15 digitos
+  criarCandidatura(vaga, 'B', '+55 119972122344');     // 14 digitos
+  criarCandidatura(vaga, 'C', '+55 (47) 99958-2500');  // ok
+  criarLegado('D', '+55 55479925511', 'Joinville');    // 13 digitos, DDD 55 (RS) — VALIDO
+
+  for (const p of semRuido(() => listarPendentesPorCidade('Joinville'))) {
+    assert.equal(
+      normalizarTelefoneRecebido(p.telefone),
+      p.telefone,
+      `${p.telefone} nao sobrevive a ida e volta`,
+    );
+  }
+});
+
+test('DDD 55 (Rio Grande do Sul) NAO e confundido com DDI duplicado', () => {
+  // "5555..." com 13 digitos e DDI(55) + DDD(55) + 9 digitos — numero legitimo. Sao 37 em
+  // producao. Uma regra que barrasse por prefixo "5555" cortaria todos eles do disparo.
+  zerar();
+  criarLegado('Gaucho', '+55 55987711950', 'Joinville');
+  const lista = semRuido(() => listarPendentesPorCidade('Joinville'));
+  assert.deepEqual(telefonesDe(lista), ['5555987711950']);
+  assert.equal(normalizarTelefoneRecebido('5555987711950'), '5555987711950');
 });
