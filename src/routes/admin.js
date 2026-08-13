@@ -24,6 +24,7 @@ const lembreteInicio = require('../lib/lembreteInicio');
 const limpezaAudio = require('../lib/limpezaAudio');
 const dispararPromocao = require('../lib/dispararPromocao');
 const emailTestePromocao = require('../lib/emailTestePromocao');
+const { CIDADES_VALIDAS, normalizarCidade } = require('../lib/cidades');
 const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
@@ -2321,6 +2322,11 @@ const REGIMES = [
   ['CLT', 'CLT'],
   ['PJ', 'PJ'],
 ];
+// Cidade usa o MESMO shape [value, rotulo] dos dois acima, mas a lista NAO mora aqui: ela
+// vem de lib/cidades, porque o formulario e so um dos tres consumidores (os outros sao o
+// normalizador e o prompt do import por briefing). Value igual ao rotulo — o que se guarda
+// e o proprio nome canonico da praca, nao um codigo.
+const CIDADES = CIDADES_VALIDAS.map((c) => [c, c]);
 
 // Gera um slug-base a partir do titulo: sem acentos, minusculo, so [a-z0-9-].
 function gerarSlugBase(titulo) {
@@ -2426,6 +2432,17 @@ function lerCamposRicos(b, vagaAnterior = null) {
   return {
     potencial_ganhos: String(b.potencial_ganhos || '').trim(),
     endereco: String(b.endereco || '').trim(),
+    // Praca da vaga. Guarda NULL (e nao '') quando vazia ou fora da lista: aqui NULL tem
+    // significado — "esta vaga nao tem praca", que e o caso legitimo da vaga remota — e um
+    // filtro por cidade precisa distinguir isso de string vazia. Os dois vizinhos usam ''
+    // porque nasceram assim; a coluna nova nao herda o defeito.
+    //
+    // A validacao vem de normalizarCidade, e nao de um `CIDADES.some(...)` como modalidade
+    // e regime fazem logo acima. A diferenca importa: aquele compara byte a byte e
+    // recusaria "Sao Paulo" sem acento; este mapeia ao canonico. Como o mesmo campo tambem
+    // e preenchido pelo LLM do import por briefing, tolerar a grafia sem acento e o que
+    // impede um til virar ausencia de dado.
+    cidade: normalizarCidade(b.cidade),
     modalidade,
     regime,
     horario: String(b.horario || '').trim(),
@@ -2502,6 +2519,15 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
     <label class="campo">
       <span>Endereço / Localização</span>
       <input type="text" name="endereco" value="${escapeHtml(vaga.endereco || '')}" placeholder="Ex.: Av. Paulista, 1000 — São Paulo/SP">
+    </label>
+
+    <label class="campo">
+      <span>Cidade (praça)</span>
+      <select name="cidade">${opcoesSelect(vaga.cidade, CIDADES)}</select>
+      <small style="color:var(--cinza);font-size:.8rem">
+        Usada para recortar a base por região. Deixe em branco para vaga remota —
+        o endereço acima continua sendo o texto exibido na página da vaga.
+      </small>
     </label>
 
     <label class="campo">

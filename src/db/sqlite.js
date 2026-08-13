@@ -108,13 +108,13 @@ function criarVaga(vaga) {
     INSERT INTO jobs
       (slug, titulo, perfil, faixa_pagamento, potencial_ganhos, skills,
        beneficios, atividades, requisitos, requisitos_obrigatorios, secoes_extras,
-       endereco, modalidade, regime, horario,
+       endereco, cidade, modalidade, regime, horario,
        descricao, sobre_empresa, cultura_empresa, empresa, video_intro_tipo, video_intro_ref,
        roteiro_id, ativo, entrevista_ativa)
     VALUES
       (@slug, @titulo, @perfil, @faixa_pagamento, @potencial_ganhos, @skills,
        @beneficios, @atividades, @requisitos, @requisitos_obrigatorios, @secoes_extras,
-       @endereco, @modalidade, @regime, @horario,
+       @endereco, @cidade, @modalidade, @regime, @horario,
        @descricao, @sobre_empresa, @cultura_empresa, @empresa, @video_intro_tipo, @video_intro_ref,
        @roteiro_id, @ativo, @entrevista_ativa)
   `);
@@ -125,6 +125,10 @@ function criarVaga(vaga) {
     faixa_pagamento: vaga.faixa_pagamento || null,
     potencial_ganhos: vaga.potencial_ganhos || null,
     endereco: vaga.endereco || null,
+    // `|| null` uniforme com os vizinhos. Aqui ele nunca converte nada de fato:
+    // normalizarCidade ja devolve null ou um canonico da lista, nunca ''. Fica pela
+    // simetria e para o dia em que outro chamador passar '' sem saber disso.
+    cidade: vaga.cidade || null,
     modalidade: vaga.modalidade || null,
     regime: vaga.regime || null,
     horario: vaga.horario || null,
@@ -166,6 +170,7 @@ function atualizarVaga(id, campos) {
          requisitos_obrigatorios = @requisitos_obrigatorios,
          secoes_extras    = @secoes_extras,
          endereco         = @endereco,
+         cidade           = @cidade,
          modalidade       = @modalidade,
          regime           = @regime,
          horario          = @horario,
@@ -185,6 +190,7 @@ function atualizarVaga(id, campos) {
       faixa_pagamento: campos.faixa_pagamento || null,
       potencial_ganhos: campos.potencial_ganhos || null,
       endereco: campos.endereco || null,
+      cidade: campos.cidade || null,
       modalidade: campos.modalidade || null,
       regime: campos.regime || null,
       horario: campos.horario || null,
