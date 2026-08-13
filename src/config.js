@@ -186,6 +186,35 @@ const config = {
       apiUrl: process.env.ZEPTOMAIL_API_URL || 'https://api.zeptomail.com/v1.1/email',
     },
 
+    // ── SendGrid (Twilio): provedor de CAMPANHA, e SO de campanha ──
+    //
+    // O ZeptoMail confirmou por e-mail que so homologa trafego TRANSACIONAL. Ele fica com os
+    // sete call sites do funil; a campanha sai para o SendGrid. Os dois fluxos passam a ter
+    // provedores diferentes de fato — que e a separacao de reputacao que este arquivo vinha
+    // sustentando por remetente desde o inicio, agora tambem por conta.
+    //
+    // BLOCO PROPRIO, e nao um campo dentro de `emailCampanha`, apesar de um fluxo so usa-lo.
+    // Credencial e endpoint pertencem ao PROVEDOR; remetente e nome de exibicao pertencem ao
+    // FLUXO. O bloco `emailCampanha` abaixo mistura os dois (guarda a apiKey do Emailit ao
+    // lado de host/porta de SMTP) por acidente de historia, e e justamente essa mistura que
+    // torna dificil ler qual credencial serve a qual transporte. Nao repetimos aqui.
+    //
+    // ── SEM SENDGRID_API_URL, DE PROPOSITO ──
+    // O endpoint e fixo (https://api.sendgrid.com/v3/mail/send) e mora no proprio adaptador.
+    // As duas URLs sobrescreviveis que existem no projeto (ZEPTOMAIL_API_URL, EMAILIT_API_URL)
+    // nasceram da ideia de "apontar para um sandbox sem mexer em codigo" e cobraram caro por
+    // isso: ZEPTOMAIL_API_URL entrou no Railway sem protocolo, derrubou o primeiro teste real
+    // com "Failed to parse URL" e ainda exigiu uma funcao de validacao, um aviso de boot e uma
+    // entrada na classificacao de erro. O sandbox que a variavel prometia nunca foi usado.
+    // Uma variavel que so existe para ser digitada errada nao paga o proprio custo — os testes
+    // injetam `opcoes.httpClient`, que e um ponto de troca melhor e nao existe em producao.
+    //
+    // A chave e a "API Key" emitida no painel, formato SG.xxxx.yyyy, e vai no header
+    // Authorization como Bearer.
+    sendgrid: {
+      apiKey: process.env.SENDGRID_API_KEY || '',
+    },
+
     email: {
       nome: 'resend',
       // Remetente de TODOS os e-mails transacionais (relatorio, lembrete, recusa,
@@ -307,8 +336,29 @@ function validar() {
     avisos.push(
       `ZEPTOMAIL_TOKEN ausente, mas ${quem} aponta para 'zeptomail'. ` +
         'Nenhum e-mail sai por esse transporte ate a variavel ser definida — e no caso da ' +
-        'campanha, cada tentativa marca o destinatario como falha DEFINITIVA. Defina o ' +
-        'Send Mail Token do painel do ZeptoMail antes de enviar.',
+        'campanha, cada ciclo de envio ABORTA no primeiro destinatario, sem marcar ninguem: ' +
+        'a campanha fica presa em "enviando" e ninguem recebe. Defina o Send Mail Token do ' +
+        'painel do ZeptoMail antes de enviar.',
+    );
+  }
+
+  // ── SendGrid selecionado sem chave: mesmo aviso, mesmo motivo ──
+  //
+  // Espelha o bloco do ZeptoMail acima de proposito, inclusive na consequencia descrita: sem
+  // credencial, o adaptador LANCA antes de tocar a rede, a varredura classifica como erro de
+  // configuracao e aborta o ciclo. Ninguem e marcado, e ninguem recebe.
+  //
+  // So a campanha e checada aqui: 'sendgrid' nao e valor valido de EMAIL_TRANSPORTE (o fluxo
+  // transacional fica no ZeptoMail). Se um dia for, este bloco vira gemeo do de cima.
+  if (
+    (process.env.EMAIL_CAMPANHA_TRANSPORTE || 'api') === 'sendgrid' &&
+    !config.provedores.sendgrid.apiKey
+  ) {
+    avisos.push(
+      "SENDGRID_API_KEY ausente, mas EMAIL_CAMPANHA_TRANSPORTE aponta para 'sendgrid'. " +
+        'Nenhuma campanha sai ate a variavel ser definida: cada ciclo aborta no primeiro ' +
+        'destinatario e a campanha fica presa em "enviando". A chave e a API Key do painel ' +
+        'do SendGrid (formato SG.xxxx.yyyy), com permissao de Mail Send.',
     );
   }
 
@@ -351,6 +401,29 @@ function validar() {
       'ZEPTOMAIL_TOKEN veio com o prefixo "Zoho-enczapikey " colado no valor. O envio ' +
         'funciona (o adaptador normaliza), mas a variavel deve conter APENAS o token — ' +
         'o prefixo e do cabecalho HTTP, nao da credencial.',
+    );
+  }
+
+  // Mesma armadilha, terceira variavel. A documentacao do SendGrid mostra o header inteiro
+  // nos exemplos de curl ("Authorization: Bearer SG.xxx"), entao o gesto que colou
+  // "Zoho-enczapikey " no ZEPTOMAIL_TOKEN cola "Bearer " aqui. O adaptador normaliza, igual.
+  const chaveSendgrid = process.env.SENDGRID_API_KEY || '';
+  if (/^Bearer\s/i.test(chaveSendgrid)) {
+    avisos.push(
+      'SENDGRID_API_KEY veio com o prefixo "Bearer " colado no valor. O envio funciona (o ' +
+        'adaptador normaliza), mas a variavel deve conter APENAS a chave — o prefixo e do ' +
+        'cabecalho HTTP, nao da credencial.',
+    );
+  }
+  // Terceiro modo de errar a credencial do SendGrid, e o unico SILENCIOSO: o painel exibe a
+  // "API Key ID" ao lado da chave, e a chave completa so aparece UMA vez, na criacao. Quem
+  // volta na tela depois encontra so o ID — que tem cara de credencial e nao comeca com SG.
+  // Sem este aviso, o sintoma seria um 401 generico no primeiro envio.
+  if (chaveSendgrid && !/^(Bearer\s+)?SG\./i.test(chaveSendgrid)) {
+    avisos.push(
+      'SENDGRID_API_KEY nao comeca com "SG.". Confira se o que foi colado e a API Key ' +
+        'inteira, e nao a "API Key ID" que o painel mostra ao lado dela — a chave completa ' +
+        'so e exibida no momento da criacao.',
     );
   }
 
