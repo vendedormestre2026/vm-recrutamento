@@ -321,6 +321,16 @@ CREATE TABLE IF NOT EXISTS campanha_envios (
                 CHECK (status IN ('pendente', 'enviado', 'falha', 'cancelado')),
   enviado_em  TEXT,
   erro        TEXT,
+  -- tentativas: quantas vezes o envio desta linha ja foi tentado e falhou de forma
+  --   RETENTAVEL. Existe porque nem toda falha e do destinatario: 2.945 linhas viraram
+  --   'falha' terminal por limite de vazao do provedor (HTTP 429 do Emailit, teto diario
+  --   do ZeptoMail) — erros que teriam passado numa segunda tentativa.
+  --   Com ela, um erro transitorio mantem a linha em 'pendente' e incrementa o contador; a
+  --   linha volta sozinha no ciclo seguinte (o proprio intervalo de 15 min e o backoff). So
+  --   ao estourar o teto ela vira 'falha' de verdade.
+  --   O UNIQUE(campanha_id, email) e o motivo de a retentativa ser UPDATE na mesma linha e
+  --   nao INSERT de outra: nao ha como ter duas linhas para a mesma pessoa na campanha.
+  tentativas  INTEGER NOT NULL DEFAULT 0,
   criado_em   TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (campanha_id, email)
 );

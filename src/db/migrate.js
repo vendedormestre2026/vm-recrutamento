@@ -257,6 +257,15 @@ function migrar() {
   // exatamente o tipo de dado que ganha valor novo sem aviso.
   adicionarColunaSeFaltar('talentos', 'cidade', 'TEXT');
 
+  // Contador de tentativas de envio de campanha. NOT NULL DEFAULT 0 e seguro em ADD COLUMN
+  // porque o default e constante — as 6.230 linhas ja existentes recebem 0, que e a leitura
+  // correta: elas nunca foram retentadas, porque retentativa nao existia.
+  //
+  // Nasce da apuracao das 2.945 falhas: TODAS foram limite de vazao (429 do Emailit, teto
+  // diario do ZeptoMail), nenhuma foi bounce ou endereco invalido. Sem contador nao ha como
+  // distinguir "falhou uma vez por rajada" de "falhou cinco vezes, desista".
+  adicionarColunaSeFaltar('campanha_envios', 'tentativas', 'INTEGER NOT NULL DEFAULT 0');
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();
