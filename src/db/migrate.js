@@ -82,6 +82,18 @@ function migrar() {
   adicionarColunaSeFaltar('jobs', 'regime', 'TEXT'); // 'CLT'|'PJ'
   adicionarColunaSeFaltar('jobs', 'horario', 'TEXT');
 
+  // Praca da vaga, com vocabulario FECHADO (lib/cidades.CIDADES_VALIDAS). Fica ao lado de
+  // `endereco` porque as duas respondem perguntas diferentes: `endereco` e "onde
+  // exatamente" (texto livre, continua como esta); esta e "qual praca" — dado categorico,
+  // no mesmo pe de `modalidade` e `regime`, que ja sao enums neste mesmo bloco.
+  //
+  // NULL e valor legitimo e esperado: vaga remota nao tem praca. Dai TEXT simples, sem
+  // NOT NULL e sem CHECK — o CHECK, alem de nao poder ser adicionado depois no SQLite sem
+  // recriar a tabela, travaria a lista no schema. O precedente do projeto para enum
+  // extensivel e validar no app (ver a nota de talentos.categoria em schema.sql), e e o
+  // que normalizarCidade fara.
+  adicionarColunaSeFaltar('jobs', 'cidade', 'TEXT');
+
   // Fase 5 - gravacao de video: link compartilhavel do Google Drive por entrevista.
   adicionarColunaSeFaltar('interviews', 'video_url', 'TEXT');
 
