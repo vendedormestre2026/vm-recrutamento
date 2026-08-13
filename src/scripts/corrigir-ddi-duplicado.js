@@ -2,13 +2,13 @@
 
 // Corrige `applications.telefone` com DDI 55 DUPLICADO ("+55 +5547988301250").
 //
-// SOMENTE DRY-RUN NESTA VERSAO. Nao existe `--commit` de proposito: a escrita e em telefone
-// de candidato real, e a revisao linha a linha vem antes. O caminho de gravacao entra depois
-// da aprovacao, e nao antes — um `--commit` "so por precaucao" e um `--commit` que alguem
-// roda por engano.
+// DRY-RUN POR PADRAO. O `--commit` so passou a existir DEPOIS da revisao linha a linha das
+// 44 correcoes propostas — nao antes. Um `--commit` escrito "por precaucao" e um `--commit`
+// que alguem roda por engano.
 //
 // Uso:
-//   node src/scripts/corrigir-ddi-duplicado.js
+//   node src/scripts/corrigir-ddi-duplicado.js            # dry-run (nao grava nada)
+//   node src/scripts/corrigir-ddi-duplicado.js --commit   # aplica, em transacao unica
 //
 // ── DE ONDE VEM O PROBLEMA ──
 // O seletor de DDI do formulario publico prefixa "+55 " e a pessoa digita o numero ja com
@@ -45,6 +45,29 @@ const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('../l
 // Chutar qual digito sobra produz o telefone de um terceiro. Nao se adivinha.
 const IDS_EXCLUIDOS = new Set([165, 210, 513, 336]);
 
+// Caracteres de FORMATACAO Unicode invisiveis, que aparecem quando o telefone e colado de um
+// app de mensagens: marcas de direcao de texto (U+202A-U+202E, U+2066-U+2069), espacos de
+// largura zero (U+200B-U+200F), BOM (U+FEFF) e hifen suave (U+00AD).
+//
+// O registro 739 escapou do lote original por causa deles: o bruto e
+// "+55 <U+202A>+55 19 97124<U+2011>4233<U+202C>", entao um LIKE '+55 +55%' no SQL NAO casa —
+// ha um caractere invisivel entre o primeiro "+55 " e o segundo. O defeito e identico aos
+// outros 43; so a forma escrita difere.
+//
+// Por isso o casamento passou do SQL para o JS: no SQL seria preciso empilhar REPLACE() por
+// codepoint, ilegivel e facil de deixar um de fora.
+const INVISIVEIS = /[\u00AD\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
+// Forma comparavel do bruto: sem invisiveis, para o criterio enxergar o "+55 +55" real.
+function limpar(bruto) {
+  return String(bruto || '').replace(INVISIVEIS, '');
+}
+
+// O CRITERIO, em um lugar so: DDI 55 escrito duas vezes no inicio.
+function temDdiDuplicado(bruto) {
+  return /^\+55\s*\+55/.test(limpar(bruto));
+}
+
 // Remove UMA ocorrencia do 55 duplicado e devolve no formato do formulario ("+55 NNNNNNNNNNN").
 //
 // Trabalha sobre os DIGITOS, e nao sobre a string bruta: os brutos variam em mascara
@@ -59,21 +82,24 @@ function corrigir(bruto) {
   return `+55 ${semDuplicata.slice(2)}`; // "+55 " + (DDD + numero)
 }
 
+function lerArgumentos(argv) {
+  return { commit: argv.slice(2).includes('--commit') };
+}
+
 function main() {
-  console.log('Correcao de DDI duplicado em applications.telefone — DRY-RUN');
-  console.log('(este script NAO grava; nao existe --commit nesta versao)');
+  const { commit } = lerArgumentos(process.argv);
+  console.log(
+    `Correcao de DDI duplicado em applications.telefone — ${commit ? 'COMMIT (vai gravar)' : 'DRY-RUN (nao grava nada)'}`,
+  );
   console.log('');
 
-  // Padrao BRUTO, o mesmo do relatorio. LIKE com o literal '+55 +55' — sem regex, para o
-  // criterio ser legivel direto no SQL.
+  // Criterio em JS, e nao no SQL: ver a nota de INVISIVEIS. Le todos e filtra — sao 755
+  // linhas, o custo e irrelevante e a regra fica legivel num lugar so.
   const candidatos = db
     .getDb()
-    .prepare(
-      `SELECT id, nome, telefone FROM applications
-        WHERE telefone LIKE '+55 +55%'
-        ORDER BY id`,
-    )
-    .all();
+    .prepare('SELECT id, nome, telefone FROM applications WHERE telefone IS NOT NULL ORDER BY id')
+    .all()
+    .filter((r) => temDdiDuplicado(r.telefone));
 
   const aplicaveis = [];
   const excluidosPorDecisao = [];
@@ -113,7 +139,7 @@ function main() {
   }
   console.log('═'.repeat(118));
   console.log('');
-  console.log(`  casaram com o padrao "+55 +55" : ${candidatos.length}`);
+  console.log(`  casaram com o criterio "+55 +55": ${candidatos.length}`);
   console.log(`  excluidos por decisao humana   : ${excluidosPorDecisao.length} ${excluidosPorDecisao.length ? `(ids ${excluidosPorDecisao.map((r) => r.id).join(', ')})` : ''}`);
   console.log(`  APLICAVEIS (passam ida-e-volta): ${aplicaveis.length}`);
   console.log(`  reprovados na validacao        : ${reprovados.length}`);
@@ -146,8 +172,47 @@ function main() {
   console.log(`  destes, cobertos por esta correcao            : ${quebradosHoje.length - quebradosForaDaCorrecao.length}`);
   console.log(`  destes, que CONTINUARAO quebrados            : ${quebradosForaDaCorrecao.length} ${quebradosForaDaCorrecao.length ? `(ids ${quebradosForaDaCorrecao.map((r) => r.id).join(', ')})` : ''}`);
 
+  if (!commit) {
+    console.log('');
+    console.log('DRY-RUN: nada foi gravado. Para aplicar:');
+    console.log('  node src/scripts/corrigir-ddi-duplicado.js --commit');
+    return;
+  }
+
+  // Guarda final, redundante com o laco acima e mantida de proposito: nada com ida-e-volta
+  // reprovada chega ao UPDATE, nem que alguem mexa na montagem da lista amanha.
+  if (reprovados.length) {
+    console.error('');
+    console.error('ABORTADO: ha registros reprovados na validacao. Nada foi gravado.');
+    process.exit(1);
+  }
+
+  // Transacao unica: as 44 linhas ou nenhuma. Uma correcao pela metade deixaria parte da base
+  // com telefone novo e parte com o antigo, sem nada indicando quais — e o proximo diagnostico
+  // teria que reconstruir isso a mao.
+  //
+  // UPDATE por ID, um a um: o valor corrigido e DIFERENTE por linha, entao nao ha um
+  // "UPDATE ... WHERE id IN (...)" unico que sirva. O IN esta no filtro de quem entra, nao na
+  // escrita.
+  const aplicar = db.getDb().transaction(() => {
+    const stmt = db.getDb().prepare('UPDATE applications SET telefone = ? WHERE id = ?');
+    let n = 0;
+    for (const r of aplicaveis) n += stmt.run(r.corrigido, r.id).changes;
+    return n;
+  });
+  const alteradas = aplicar();
+
   console.log('');
-  console.log('DRY-RUN: nada foi gravado. O caminho de escrita nao existe neste script.');
+  console.log(`APLICADO: ${alteradas} linha(s) atualizadas.`);
+  console.log('');
+  console.log('  SELECT id, telefone FROM applications WHERE id IN (<corrigidos>)');
+  const ids = aplicaveis.map((r) => r.id);
+  const marcadores = ids.map(() => '?').join(',');
+  for (const r of db.getDb().prepare(`SELECT id, nome, telefone FROM applications WHERE id IN (${marcadores}) ORDER BY id`).all(...ids)) {
+    const n = normalizarTelefoneWhatsapp(r.telefone);
+    const ok = n && normalizarTelefoneRecebido(n) === n;
+    console.log(`    ${String(r.id).padStart(3)} | ${String(r.telefone).padEnd(20)} | ${n} | ida-e-volta: ${ok ? 'OK' : 'FALHOU'}`);
+  }
 }
 
 main();

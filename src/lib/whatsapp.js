@@ -59,6 +59,31 @@ function normalizarTelefoneWhatsapp(telefone, { ddiPadrao = DDI_PADRAO } = {}) {
 // PROCEDENCIA do dado, e mudar a original alteraria o comportamento do formulario publico,
 // que hoje esta correto. Use esta em toda fronteira que recebe telefone de fora (API, CSV,
 // webhook); use a outra para telefone digitado por gente.
+//
+// ── DEBITO CONHECIDO E ACEITO: ESTA FUNCAO E BR-ONLY ──
+//
+// A deteccao reconhece SO o padrao brasileiro (^55 + 10 ou 11 digitos). Um numero
+// internacional legitimo, ja normalizado, NAO casa — e cai na regra "sem '+' e nacional",
+// que prefixa 55 e produz lixo:
+//
+//     "351912437103"  (celular de Portugal, valido)  ->  "55351912437103"
+//
+// A consequencia e SILENCIOSA, que e o que a torna digna de comentario: todo candidato
+// estrangeiro reprova no teste de ida e volta de lib/publicoDisparoWhatsapp e fica de fora
+// do disparo — com um log dizendo "DDI duplicado no cadastro", diagnostico que no caso dele
+// e FALSO. Ninguem investiga porque nada parece errado.
+//
+// EXEMPLO CONHECIDO EM PRODUCAO: applications id 741 (Xavier), "+351 912437103". Numero
+// portugues correto, excluido da fila por limitacao DAQUI, nao por defeito do dado. Ficou
+// deliberadamente de fora da correcao em massa de DDI duplicado (2026-08-13, 44 registros)
+// por nao ser o mesmo problema.
+//
+// QUEM FOR GENERALIZAR: o conserto nao e alargar a regex para outros DDIs um a um — e
+// separar as duas perguntas que hoje estao coladas. "Ja tem codigo de pais?" nao se responde
+// por TAMANHO; se responde por tabela de DDIs, ou por uma lib de telefonia
+// (libphonenumber). Enquanto a base for ~100% brasileira, essa dependencia nao se paga —
+// mas no dia em que se pagar, o teto [10,15] de normalizarTelefoneWhatsapp precisa ser
+// revisto junto, porque ele tambem assume numero BR.
 function normalizarTelefoneRecebido(telefone) {
   const digitos = String(telefone || '').replace(/\D/g, '');
   const jaTemDdiBr = /^55\d{10,11}$/.test(digitos);
