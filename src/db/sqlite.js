@@ -2330,7 +2330,10 @@ function listarEnviosPendentesCampanha({ limite = 125 } = {}) {
       // endereco, modalidade, regime, horario). Vem daqui, do MESMO LEFT JOIN, e nao de um
       // db.obterVaga por destinatario: seriam 125 consultas por ciclo para um dado que a
       // query ja tem em maos. Todos sao nullable — o cabecalho omite o que faltar.
-      `SELECT e.id, e.campanha_id, e.email, e.nome,
+      // `e.tentativas` decide, no momento da falha, entre devolver a linha a fila ou
+      // encerra-la: quem compara com o teto e a varredura, e ela so tem em maos o que esta
+      // consulta trouxer. Sem esta coluna aqui, a retentativa seria infinita.
+      `SELECT e.id, e.campanha_id, e.email, e.nome, e.tentativas,
               c.assunto AS assunto, c.corpo_html AS corpo_html,
               j.slug AS vaga_slug,
               j.titulo AS vaga_titulo, j.perfil AS vaga_perfil, j.empresa AS vaga_empresa,
@@ -2367,7 +2370,31 @@ function marcarEnvioCampanhaEnviado(id) {
 function marcarEnvioCampanhaFalha(id, erro) {
   const info = getDb()
     .prepare(
-      `UPDATE campanha_envios SET status = 'falha', erro = ?
+      // tentativas + 1 tambem aqui: a tentativa que ESGOTOU o teto foi uma tentativa como
+      // as outras. Sem incrementar, o contador gravado ficaria um abaixo do numero real de
+      // e-mails que sairam por esta linha — e esse contador e o que o painel e a apuracao
+      // vao ler depois para saber quanto o provedor custou.
+      `UPDATE campanha_envios SET status = 'falha', erro = ?, tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(String(erro || '').slice(0, 300), id);
+  return info.changes;
+}
+
+// Registra uma tentativa que FALHOU MAS PODE DAR CERTO DEPOIS: conta o esforco, guarda o
+// erro e DEIXA A LINHA EM 'pendente'. E a contrapartida de marcarEnvioCampanhaFalha — a
+// mesma escrita, menos a parte que tira a linha da fila.
+//
+// Nao ha agendamento nem fila de retentativa: quem reapresenta a linha e a propria varredura
+// de 15 em 15 min, porque 'pendente' e exatamente o criterio de
+// listarEnviosPendentesCampanha. O intervalo do ciclo JA E o backoff.
+//
+// Condicional ao 'pendente' pela mesma razao das duas irmas: se outro caminho ja resolveu
+// esta linha, esta escrita nao pode ressuscita-la para a fila.
+function registrarTentativaEnvioCampanha(id, erro) {
+  const info = getDb()
+    .prepare(
+      `UPDATE campanha_envios SET erro = ?, tentativas = tentativas + 1
         WHERE id = ? AND status = 'pendente'`,
     )
     .run(String(erro || '').slice(0, 300), id);
@@ -2639,6 +2666,7 @@ module.exports = {
   listarEnviosPendentesCampanha,
   marcarEnvioCampanhaEnviado,
   marcarEnvioCampanhaFalha,
+  registrarTentativaEnvioCampanha,
   listarCampanhasEmAndamento,
   marcarCampanhaEnviando,
   concluirCampanha,

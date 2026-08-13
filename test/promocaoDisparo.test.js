@@ -67,7 +67,12 @@ let falharPara = new Set();
 const emailCampanhaDuble = {
   async enviar(...args) {
     const [destinatario] = args;
-    if (falharPara.has(destinatario)) throw new Error(`falha simulada para ${destinatario}`);
+    // Erro TERMINAL de proposito ("bounce"): os testes deste arquivo que usam `falharPara`
+    // verificam isolamento de falha e contagem no painel — cenarios em que a linha precisa
+    // acabar em 'falha' na MESMA passada. Um erro generico hoje seria classificado como
+    // retentavel e a linha continuaria pendente, medindo outra coisa. A retentativa tem
+    // arquivo proprio (promocaoRetentativa.test.js), com as quatro categorias.
+    if (falharPara.has(destinatario)) throw new Error(`bounce: falha simulada para ${destinatario}`);
     enviosFeitos.push(args);
     return { id: `fake-${enviosFeitos.length}` };
   },

@@ -46,6 +46,7 @@ const { credenciaisFaltando } = require('../providers/emailCampanha');
 const { montarUrlDescadastro } = require('./descadastro');
 const { listarPublicoCampanha } = require('./promocaoVagas');
 const { montarCorpoFinal } = require('./ctaCampanha');
+const { classificarErroEnvio } = require('./classificarErroEnvio');
 
 // Interruptor GERAL do envio de campanha (painel: /admin/config). Default FALSE.
 const CHAVE_ATIVO = 'promocao_ativa';
@@ -299,8 +300,17 @@ function enfileirarCampanha(campanhaId, deps = {}) {
 // ──────────────────────────────────────────────────────────────
 
 // Envia UM destinatario e marca a linha conforme o resultado.
-// Devolve 'enviado' | 'falha'. Erro NUNCA propaga: quem chama precisa seguir para o
-// proximo da leva, mesmo que este tenha explodido.
+// Devolve 'enviado' | 'falha' | 'retentar' | 'abortar'. Erro NUNCA propaga: quem chama
+// precisa seguir para o proximo da leva, mesmo que este tenha explodido.
+//
+// Os quatro retornos, e o que cada um faz com a linha:
+//   'enviado'   status 'enviado'. Fim.
+//   'falha'     status 'falha'. Fim — ou porque o endereco foi recusado, ou porque o teto
+//               de tentativas da categoria se esgotou.
+//   'retentar'  a linha CONTINUA 'pendente', com tentativas + 1. Volta sozinha no proximo
+//               ciclo; o intervalo de 15 min e o backoff.
+//   'abortar'   nada foi escrito nesta linha. O ambiente esta quebrado e o ciclo inteiro
+//               precisa parar — ver o tratamento em varrerDisparoPromocao.
 //
 // ORDEM QUE IMPORTA: envia PRIMEIRO, marca DEPOIS. Marcar antes tornaria uma queda entre
 // as duas operacoes indistinguivel de um envio bem-sucedido, e a pessoa nunca receberia.
@@ -311,6 +321,7 @@ function enfileirarCampanha(campanhaId, deps = {}) {
 async function enviarUm(linha, deps) {
   const db = deps.db || dbPadrao;
   const emailCampanha = deps.emailCampanha || emailCampanhaPadrao;
+  const classificar = deps.classificarErro || classificarErroEnvio;
 
   if (!linha.vaga_slug) {
     console.warn(
@@ -384,17 +395,59 @@ async function enviarUm(linha, deps) {
     db.marcarEnvioCampanhaEnviado(linha.id);
     return 'enviado';
   } catch (err) {
+    const detalhe = String((err && err.message) || err).slice(0, MAX_ERRO);
+    const classe = classificar(err);
+
+    // ── AMBIENTE QUEBRADO: nao e falha DESTE destinatario ──
+    // Nada e escrito na linha: nem status, nem contador. Ela sai deste ciclo exatamente
+    // como entrou, e o proximo a reapresenta intacta. Contar tentativa aqui seria cobrar do
+    // destinatario um erro que e do servidor — 100 ciclos com o token errado esgotariam o
+    // teto de gente que nunca teve um e-mail sequer TENTADO de verdade.
+    //
+    // O log e propositalmente feio. Ele precisa saltar num painel de logs do Railway com
+    // milhares de linhas de rotina: quando isto aparece, alguem tem que ir mexer no .env, e
+    // ate la nenhuma campanha anda.
+    if (classe.categoria === 'configuracao') {
+      console.error('[promocao] ================ ERRO DE CONFIGURACAO ================');
+      console.error(
+        `[promocao] CICLO ABORTADO. Motivo: ${classe.motivo}. ` +
+          `Nenhum destinatario foi marcado como falha e nenhuma tentativa foi contada. ` +
+          `Corrija o ambiente e o proximo ciclo retoma do mesmo ponto. Detalhe: ${detalhe}`,
+      );
+      console.error('[promocao] =======================================================');
+      return 'abortar';
+    }
+
+    // A partir daqui a falha e desta linha. `tentativas` vem da fila (ja inclui as dos
+    // ciclos anteriores) e ainda NAO conta esta — dai o +1 na comparacao com o teto.
+    const jaTentou = Number(linha.tentativas) || 0;
+    const esgotou = classe.teto === null || jaTentou + 1 >= classe.teto;
+    // Motivo junto da mensagem crua: quem abrir a coluna `erro` no painel precisa ver a
+    // leitura que o sistema fez do erro, e nao so o texto do provedor. Sem isso, "por que
+    // esta linha desistiu na 5a e aquela continua na 30a?" nao tem resposta no banco.
+    const registro = `[${classe.motivo}] ${detalhe}`.slice(0, MAX_ERRO);
+
     console.error(
-      `[promocao] falha ao enviar (envio_id=${linha.id} campanha=${linha.campanha_id}): ${err.message}`,
+      `[promocao] falha ao enviar (envio_id=${linha.id} campanha=${linha.campanha_id}) ` +
+        `[${classe.categoria}, tentativa ${jaTentou + 1}` +
+        `${classe.teto === null ? '' : `/${classe.teto}`}]: ${err.message}`,
     );
+
     try {
-      db.marcarEnvioCampanhaFalha(linha.id, String(err.message || err).slice(0, MAX_ERRO));
+      if (esgotou) {
+        db.marcarEnvioCampanhaFalha(linha.id, registro);
+        return 'falha';
+      }
+      db.registrarTentativaEnvioCampanha(linha.id, registro);
+      return 'retentar';
     } catch (erroAoMarcar) {
       // Falhar ao registrar a falha nao pode derrubar a leva. A linha continua 'pendente'
       // e volta no proximo ciclo — que e o comportamento seguro quando o banco reclama.
+      // Contabilizada como 'falha' no resumo do ciclo, e nao como 'retentar': o resumo
+      // relata o que ACONTECEU nesta passada, e aqui nao houve escrita nenhuma.
       console.error(`[promocao] falha ao marcar erro do envio ${linha.id}: ${erroAoMarcar.message}`);
+      return 'falha';
     }
-    return 'falha';
   }
 }
 
@@ -432,7 +485,10 @@ function concluirCampanhasEsgotadas(deps) {
 // Retorna { enviados, falhas } (numeros), util para log e para teste.
 async function varrerDisparoPromocao(deps = {}) {
   const db = deps.db || dbPadrao;
-  const resumo = { enviados: 0, falhas: 0 };
+  // `retentativas` e um numero novo no resumo, e nao um subtipo de falha: sao linhas que
+  // continuam vivas na fila. Somar com `falhas` esconderia exatamente a distincao que este
+  // incremento existe para criar.
+  const resumo = { enviados: 0, falhas: 0, retentativas: 0 };
 
   // Interruptor checado ANTES de qualquer acesso ao banco: com ele desligado, o ciclo nao
   // le fila, nao conclui campanha e nao escreve nada. Mesmo contrato de lembreteInicio.
@@ -465,30 +521,50 @@ async function varrerDisparoPromocao(deps = {}) {
   const intervaloMs = deps.intervaloMs === undefined ? ENVIO_INTERVALO_MS : deps.intervaloMs;
   const dormir = deps.dormir || dormirPadrao;
 
+  let abortado = false;
+
   for (const [i, linha] of pendentes.entries()) {
     const r = await enviarUm(linha, deps);
     if (r === 'enviado') resumo.enviados += 1;
-    else resumo.falhas += 1;
+    else if (r === 'retentar') resumo.retentativas += 1;
+    else if (r === 'abortar') {
+      // PARA O CICLO INTEIRO, na primeira ocorrencia. Insistir nos 124 restantes com o
+      // ambiente quebrado nao tem chance de dar certo — so produz 124 repeticoes do mesmo
+      // erro no log e 124 chamadas inuteis ao provedor, que e como reputacao de dominio se
+      // perde. Ninguem foi marcado; a fila continua exatamente como estava.
+      abortado = true;
+      break;
+    } else resumo.falhas += 1;
 
     // Pausa ENTRE envios, nao DEPOIS do ultimo: dormir apos o derradeiro so atrasaria o
     // fim do ciclo sem proteger nada — nao ha proxima chamada para espacar.
     if (i < pendentes.length - 1) await dormir(intervaloMs);
   }
 
-  // DEPOIS do laco, e sempre — inclusive quando a leva veio vazia. E o que fecha as
-  // campanhas cujo ultimo pendente saiu no ciclo anterior e as de publico vazio.
-  try {
-    concluirCampanhasEsgotadas(deps);
-  } catch (err) {
-    console.error(`[promocao] falha ao concluir campanhas esgotadas: ${err.message}`);
+  // Concluir campanha e afirmar "o trabalho desta campanha acabou". Depois de um aborto por
+  // configuracao nao ha base para afirmar isso: o ciclo parou no meio, por um motivo que
+  // nao tem nada a ver com a campanha. Uma campanha de publico vazio espera mais 15 min
+  // para fechar — preco baixo por nao fechar nada em cima de um ambiente quebrado.
+  if (!abortado) {
+    // DEPOIS do laco, e sempre — inclusive quando a leva veio vazia. E o que fecha as
+    // campanhas cujo ultimo pendente saiu no ciclo anterior e as de publico vazio.
+    try {
+      concluirCampanhasEsgotadas(deps);
+    } catch (err) {
+      console.error(`[promocao] falha ao concluir campanhas esgotadas: ${err.message}`);
+    }
   }
 
-  if (resumo.enviados || resumo.falhas) {
+  if (resumo.enviados || resumo.falhas || resumo.retentativas) {
     console.log(
-      `[promocao] varredura concluida — enviados: ${resumo.enviados}, falhas: ${resumo.falhas}`,
+      `[promocao] varredura concluida — enviados: ${resumo.enviados}, ` +
+        `falhas: ${resumo.falhas}, a retentar: ${resumo.retentativas}` +
+        `${abortado ? ' (CICLO ABORTADO por erro de configuracao)' : ''}`,
     );
   }
-  return resumo;
+  // `abortado` so aparece quando e verdade, mesmo padrao do `desativado` acima: quem le o
+  // resumo no caminho feliz nao deve precisar filtrar campos falsos.
+  return abortado ? { ...resumo, abortado: true } : resumo;
 }
 
 // ── Trava em memoria contra execucoes sobrepostas ──

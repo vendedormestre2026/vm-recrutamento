@@ -143,6 +143,7 @@ module.exports = {
   listarEnviosPendentesCampanha: driver.listarEnviosPendentesCampanha,
   marcarEnvioCampanhaEnviado: driver.marcarEnvioCampanhaEnviado,
   marcarEnvioCampanhaFalha: driver.marcarEnvioCampanhaFalha,
+  registrarTentativaEnvioCampanha: driver.registrarTentativaEnvioCampanha,
   listarCampanhasEmAndamento: driver.listarCampanhasEmAndamento,
   marcarCampanhaEnviando: driver.marcarCampanhaEnviando,
   concluirCampanha: driver.concluirCampanha,
