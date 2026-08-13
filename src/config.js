@@ -295,6 +295,19 @@ const config = {
   },
 };
 
+// ── Disparo em massa por WhatsApp (rotas /api/disparos, consumidas pelo n8n) ──
+//
+// Bloco de PRIMEIRO NIVEL, e nao dentro de `provedores`: nao ha provedor aqui. O envio em
+// si acontece fora deste sistema (n8n + WhatsApp); o que mora aqui e a chave que protege as
+// rotas que entregam a base de telefones.
+//
+// SEM DEFAULT, e de proposito. Uma chave "de desenvolvimento" com valor conhecido, num
+// endpoint que devolve telefone de 7.963 pessoas, e pior que endpoint nenhum. Vazia = toda
+// requisicao e negada (ver routes/api_whatsapp: o modo de falha e FECHADO).
+config.disparoWhatsapp = {
+  apiKey: process.env.DISPARO_WHATSAPP_API_KEY || '',
+};
+
 // Validacao leve: avisa (sem derrubar) sobre configuracoes fracas em producao.
 // Nesta fase nao exigimos chaves de API (os provedores ainda sao stubs).
 function validar() {

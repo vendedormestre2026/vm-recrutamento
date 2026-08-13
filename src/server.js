@@ -18,6 +18,7 @@ const api = require('./routes/api');
 const admin = require('./routes/admin');
 const { router: bancoCurriculos } = require('./routes/banco_curriculos');
 const apiBancoCurriculos = require('./routes/api_banco_curriculos');
+const apiWhatsapp = require('./routes/api_whatsapp');
 const followupEntrevista = require('./lib/followupEntrevista');
 const emailRecusa = require('./lib/emailRecusa');
 const lembreteInicio = require('./lib/lembreteInicio');
@@ -85,6 +86,9 @@ function criarApp() {
   // Rotas
   app.use('/api', api);
   app.use('/api', apiBancoCurriculos); // Banco de Curriculos (API; fluxo independente do funil)
+  // Disparo por WhatsApp. Consumidor e o n8n, nao o navegador: auth por chave de servico
+  // (x-disparo-api-key), 401 JSON em vez de redirect. Ver routes/api_whatsapp.
+  app.use('/api', apiWhatsapp);
   app.use('/admin', admin); // painel do recrutador (protegido por adminAuth interno)
   app.use('/bancodecurriculos', bancoCurriculos); // Banco de Curriculos (paginas publicas)
   app.use('/', paginas);
