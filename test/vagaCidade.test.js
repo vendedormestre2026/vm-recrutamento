@@ -236,3 +236,57 @@ test('import: cidade recusada NAO afeta endereco nem os demais campos', () => {
   assert.equal(r.vaga.modalidade, 'presencial');
   assert.equal(r.vaga.titulo, 'T');
 });
+
+// ══════════════════ listarCidadesDistintas ══════════════════
+
+test('as pracas de VAGA entram na lista do filtro', () => {
+  // A funcao alimenta as opcoes do filtro de cidade da campanha. Antes lia so `talentos` e
+  // `applications`; uma vaga em Curitiba sem nenhum talento de la seria uma praca invisivel
+  // — ninguem a procura, porque ninguem sabe que existe.
+  db.getDb().prepare('DELETE FROM jobs').run();
+  db.criarVaga({
+    slug: 'praca-1', titulo: 'V', perfil: 'CLOSER', cidade: 'Curitiba',
+    skills: [], beneficios: [], atividades: [], requisitos: [],
+    requisitos_obrigatorios: [], secoes_extras: [], ativo: 1, entrevista_ativa: 1,
+  });
+  assert.ok(db.listarCidadesDistintas().includes('Curitiba'));
+});
+
+test('vaga remota (cidade NULL) nao polui a lista', () => {
+  db.getDb().prepare('DELETE FROM jobs').run();
+  db.criarVaga({
+    slug: 'praca-2', titulo: 'V', perfil: 'CLOSER', cidade: null, modalidade: 'remoto',
+    skills: [], beneficios: [], atividades: [], requisitos: [],
+    requisitos_obrigatorios: [], secoes_extras: [], ativo: 1, entrevista_ativa: 1,
+  });
+  assert.deepEqual(db.listarCidadesDistintas(), []);
+});
+
+test('a lista nao repete praca que ja veio de talentos, e segue ordenada em pt-BR', () => {
+  db.getDb().prepare('DELETE FROM jobs').run();
+  db.getDb().prepare('DELETE FROM talentos').run();
+  db.getDb()
+    .prepare("INSERT INTO talentos (nome, email, cidade) VALUES ('T', 't@x.co', 'Joinville')")
+    .run();
+  for (const [slug, cidade] of [['p3', 'Joinville'], ['p4', 'Balneário Camboriú']]) {
+    db.criarVaga({
+      slug, titulo: 'V', perfil: 'CLOSER', cidade,
+      skills: [], beneficios: [], atividades: [], requisitos: [],
+      requisitos_obrigatorios: [], secoes_extras: [], ativo: 1, entrevista_ativa: 1,
+    });
+  }
+  // UNION (nao UNION ALL) + Set: 'Joinville' vem das duas fontes e aparece uma vez so.
+  assert.deepEqual(db.listarCidadesDistintas(), ['Balneário Camboriú', 'Joinville']);
+});
+
+test('a praca de vaga tambem respeita a exclusao do sentinela', () => {
+  // 'Todas as cidades' nao esta em CIDADES_VALIDAS, entao nao deveria chegar aqui por
+  // caminho normal — mas o filtro da funcao e a ultima linha de defesa, e vale para as tres
+  // fontes igualmente.
+  db.getDb().prepare('DELETE FROM jobs').run();
+  db.getDb().prepare('DELETE FROM talentos').run();
+  db.getDb()
+    .prepare("INSERT INTO jobs (slug, titulo, perfil, cidade) VALUES ('p5', 'V', 'CLOSER', 'Todas as cidades')")
+    .run();
+  assert.deepEqual(db.listarCidadesDistintas(), []);
+});

@@ -2588,9 +2588,28 @@ function listarTalentosParaCampanha({ dataDe, dataAte } = {}) {
 
 // Cidades distintas que existem no banco, para montar as opcoes do filtro de campanha.
 //
-// UNIAO das duas bases: `talentos.cidade` (preenchida por backfill nos importados) e
-// `applications.cidade` (coluna orfa, so preenchida quando o recrutador digitou a mao).
-// Ler as duas e o que impede a tela de oferecer um recorte que ignora metade do publico.
+// UNIAO de TRES fontes: `talentos.cidade` (preenchida por backfill nos importados),
+// `applications.cidade` (coluna orfa, so preenchida quando o recrutador digitou a mao) e
+// `jobs.cidade` (praca da vaga, enum fechado de lib/cidades).
+// Ler as tres e o que impede a tela de oferecer um recorte que ignora parte do publico.
+//
+// ── POR QUE jobs.cidade ENTRA DIRETO, e nao por join com applications ──
+// A alternativa seria unir so as pracas de vagas QUE TEM CANDIDATO, o que a primeira vista
+// parece mais honesto: nao oferecer um filtro que devolve zero. Duas razoes contra:
+//
+//   1. `jobs.cidade` e ENUM FECHADO. Ela nao traz sujeira nem variacao de grafia — que era
+//      o motivo original de esta funcao existir em vez de um SELECT DISTINCT solto. Vaga
+//      sem praca (remota) tem a coluna NULL e ja e filtrada pelo WHERE, entao o join nao
+//      protegeria de nada que o proprio dominio nao proteja.
+//   2. O join criaria uma lista que MUDA sozinha. Uma vaga nova em Curitiba so apareceria
+//      no filtro depois da primeira candidatura, e a praca sumiria de novo se a candidatura
+//      fosse arquivada. Opcao de filtro que aparece e desaparece conforme o movimento da
+//      base e pior que uma opcao que devolve zero: a segunda o operador entende na hora, a
+//      primeira parece bug.
+//
+// O custo de errar para este lado e uma opcao a mais na lista, que devolve publico vazio e
+// se explica sozinha. O custo do outro lado e uma praca invisivel — que ninguem procura,
+// porque ninguem sabe que existe.
 //
 // O SENTINELA NAO ENTRA na lista. 'Todas as cidades' nao e uma cidade: e um coringa que
 // casa com qualquer selecao (ver lib/promocaoVagas). Oferece-lo como opcao marcavel
@@ -2605,7 +2624,9 @@ function listarCidadesDistintas() {
     .prepare(
       `SELECT cidade FROM talentos WHERE cidade IS NOT NULL AND TRIM(cidade) <> ''
        UNION
-       SELECT cidade FROM applications WHERE cidade IS NOT NULL AND TRIM(cidade) <> ''`,
+       SELECT cidade FROM applications WHERE cidade IS NOT NULL AND TRIM(cidade) <> ''
+       UNION
+       SELECT cidade FROM jobs WHERE cidade IS NOT NULL AND TRIM(cidade) <> ''`,
     )
     .all()
     .map((l) => String(l.cidade).trim())
