@@ -31,41 +31,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const db = require('../db');
-const { normalizarTelefoneWhatsapp } = require('../lib/whatsapp');
+const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 
 const CSV_PADRAO = path.resolve(__dirname, '../../dados-legado/historico_enviados_whatsapp.csv');
 const ORIGEM = 'historico_airtable';
 
-// ── O CSV JA VEM NORMALIZADO, E ISSO E UMA ARMADILHA ──
-//
-// `normalizarTelefoneWhatsapp` so reconhece que ha codigo de pais quando a string comeca
-// com '+'. O CSV traz digitos puros ja com DDI ("5547988221521"), entao passa-lo direto
-// pela funcao prefixa 55 DE NOVO:
-//
-//     5547988221521  ->  555547988221521
-//
-// E o pior tipo de erro: 15 digitos ainda cabe no teto de sanidade da funcao, entao NAO ha
-// recusa — a linha entra no banco com um numero que nao existe. Os 1.037 registros ficariam
-// impossiveis de casar com a fila de pendentes, e todas essas pessoas receberiam de novo um
-// convite que ja receberam. Exatamente o que este import existe para impedir.
-//
-// A correcao e reconhecer o DDI que ja esta la e devolver o '+' antes de normalizar. Os
-// tamanhos sao inequivocos para o Brasil:
-//
-//     55 + DDD(2) + numero(8 ou 9)  =  12 ou 13 digitos  -> JA tem DDI
-//          DDD(2) + numero(8 ou 9)  =  10 ou 11 digitos  -> falta DDI
-//
-// Fora dessas faixas, entrega-se o valor cru para a funcao decidir (e recusar).
-//
-// NAO mexemos em lib/whatsapp: la a regra "sem '+' significa numero nacional" esta certa
-// para a origem dela (telefone digitado em formulario, com seletor de DDI). O que muda aqui
-// e a PROCEDENCIA do dado, e essa e uma peculiaridade deste CSV.
-function telefoneDoCsv(valor) {
-  const digitos = String(valor || '').replace(/\D/g, '');
-  const jaTemDdiBr = /^55\d{10,11}$/.test(digitos);
-  return normalizarTelefoneWhatsapp(jaTemDdiBr ? `+${digitos}` : String(valor || ''));
-}
-
+// O CSV traz o telefone JA normalizado (so digitos, com DDI, sem '+'), entao a normalizacao
+// usa normalizarTelefoneRecebido — a versao de FRONTEIRA. A outra prefixaria 55 de novo
+// ("5547988221521" -> "555547988221521"), sem recusar, e os 1.037 registros ficariam
+// impossiveis de casar com a fila. Ver a nota inteira em lib/whatsapp.
 function lerArgumentos(argv) {
   const args = argv.slice(2);
   return {
@@ -147,7 +121,7 @@ function main() {
   let duplicadosNoCsv = 0;
 
   for (const [i, r] of registros.entries()) {
-    const telefone = telefoneDoCsv(r.telefone);
+    const telefone = normalizarTelefoneRecebido(r.telefone);
     if (!telefone) {
       invalidos.push({ linha: i + 2, valor: r.telefone });
       continue;

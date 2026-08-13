@@ -34,6 +34,37 @@ function normalizarTelefoneWhatsapp(telefone, { ddiPadrao = DDI_PADRAO } = {}) {
   return digitos;
 }
 
+// Normaliza um telefone que pode JA VIR NORMALIZADO (so digitos, com DDI, sem '+').
+//
+// ── O BUG QUE ESTA FUNCAO EXISTE PARA IMPEDIR ──
+// normalizarTelefoneWhatsapp so reconhece codigo de pais quando a string comeca com '+'.
+// Isso esta certo para a origem dela — telefone digitado em formulario, com seletor de DDI
+// que grava "+55 ...". Mas quebra para dado que vem de VOLTA do nosso proprio sistema:
+//
+//   GET /api/disparos/pendentes  devolve  "5547999582500"
+//   o n8n manda esse mesmo valor de volta no POST
+//   normalizarTelefoneWhatsapp   grava    "555547999582500"   <- 55 prefixado duas vezes
+//
+// E o pior tipo de erro: 15 digitos ainda cabe no teto de sanidade, entao NAO ha recusa. A
+// linha entra no livro-razao com um numero que nao existe, ninguem sai da fila de pendentes,
+// e o ciclo seguinte reenvia para TODA a base. Um teste de fluxo completo entrou em laco
+// infinito por causa disso — em producao, seria reenvio infinito.
+//
+// A deteccao e por TAMANHO, inequivoco para o Brasil:
+//   55 + DDD(2) + numero(8 ou 9)  =  12 ou 13 digitos  -> JA tem DDI
+//        DDD(2) + numero(8 ou 9)  =  10 ou 11 digitos  -> falta DDI
+// Fora dessas faixas, entrega o valor cru para normalizarTelefoneWhatsapp decidir (e recusar).
+//
+// Funcao SEPARADA, e nao um ajuste na outra: as duas tem contratos diferentes por
+// PROCEDENCIA do dado, e mudar a original alteraria o comportamento do formulario publico,
+// que hoje esta correto. Use esta em toda fronteira que recebe telefone de fora (API, CSV,
+// webhook); use a outra para telefone digitado por gente.
+function normalizarTelefoneRecebido(telefone) {
+  const digitos = String(telefone || '').replace(/\D/g, '');
+  const jaTemDdiBr = /^55\d{10,11}$/.test(digitos);
+  return normalizarTelefoneWhatsapp(jaTemDdiBr ? `+${digitos}` : String(telefone || ''));
+}
+
 // Monta o link wa.me a partir do telefone (normalizado) e uma mensagem opcional.
 // Telefone invalido -> null (o chamador desabilita o botao). Mensagem vazia -> link sem
 // ?text=. A mensagem vai URL-encoded (neutraliza espacos/acentos/quebras de linha).
@@ -201,6 +232,7 @@ function mensagemNovaCandidatura({ nome, email, telefone, vaga, empresa } = {}) 
 
 module.exports = {
   normalizarTelefoneWhatsapp,
+  normalizarTelefoneRecebido,
   montarLinkWhatsapp,
   mensagemWhatsappCandidato,
   // candidato -> recrutador

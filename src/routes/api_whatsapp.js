@@ -29,7 +29,7 @@ const { config } = require('../config');
 const db = require('../db');
 const { CIDADES_VALIDAS, normalizarCidade } = require('../lib/cidades');
 const { listarPendentesPorCidade } = require('../lib/publicoDisparoWhatsapp');
-const { normalizarTelefoneWhatsapp } = require('../lib/whatsapp');
+const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 
 const router = express.Router();
 
@@ -126,7 +126,10 @@ router.get('/disparos/pendentes', (req, res) => {
 router.post('/disparos/marcar-status', (req, res) => {
   const b = req.body || {};
 
-  const telefone = normalizarTelefoneWhatsapp(b.telefone);
+  // normalizarTelefoneRecebido, e NAO normalizarTelefoneWhatsapp: o n8n devolve o mesmo
+  // telefone que o GET entregou — ja normalizado, so digitos, sem '+'. A outra funcao
+  // prefixaria 55 de novo, gravaria um numero inexistente, e ninguem sairia da fila.
+  const telefone = normalizarTelefoneRecebido(b.telefone);
   if (!telefone) {
     return res.status(400).json({
       erro: 'Telefone ausente ou inválido.',
