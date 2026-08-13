@@ -110,12 +110,20 @@ const EMAIL_PRE_VOO = 'pre-voo@vendedormestre.invalid';
 // esta funcao existir em vez de um paragrafo no README.
 //
 // O CENARIO CONCRETO: sem DESCADASTRO_SECRET, o adaptador LANCA em todo envio (o
-// List-Unsubscribe e obrigatorio e a URL depende do HMAC). A varredura entao marca cada
-// linha como 'falha' — e falha e TERMINAL, sem retentativa. Some-se o
-// UNIQUE(campanha_id, email), que impede materializar a mesma campanha de novo para as
-// mesmas pessoas, e o resultado de ligar `promocao_ativa` na ordem errada e uma campanha
-// inteira queimada, sem caminho de volta pela aplicacao. Um erro de SEQUENCIA de
-// configuracao nao pode custar isso.
+// List-Unsubscribe e obrigatorio e a URL depende do HMAC). Hoje a varredura reconhece isso
+// como erro de CONFIGURACAO e aborta o ciclo sem marcar ninguem (ver classificarErroEnvio),
+// entao a campanha nao e mais queimada por esta porta — ela simplesmente nao anda.
+//
+// O pre-voo continua existindo, e por duas razoes que a rede de baixo nao cobre:
+//   - travar ANTES de materializar e melhor que travar depois. Uma campanha enfileirada num
+//     ambiente quebrado fica parada consumindo atencao ate alguem descobrir por que nada
+//     sai; barrada no clique, o operador le o que falta e resolve na hora;
+//   - nem todo erro de ambiente e reconhecivel pelo texto da excecao. A classificacao le
+//     mensagens; o pre-voo le a configuracao. Sao redes diferentes, e a de cima e mais
+//     barata.
+//
+// O UNIQUE(campanha_id, email) segue impedindo materializar a mesma campanha de novo para
+// as mesmas pessoas — e continua sendo o motivo de errar aqui ser caro.
 //
 // O QUE NAO E CHECADO AQUI, de proposito:
 //   - verificacao do dominio no provedor (SPF/DKIM/DMARC): o codigo nao tem como saber, e
@@ -140,7 +148,7 @@ function verificarPreCondicoesDisparo() {
       chave: 'DESCADASTRO_SECRET',
       detalhe:
         'Sem ele, todo e-mail de campanha falha na hora de montar o link de descadastro ' +
-        `(List-Unsubscribe), e a falha e definitiva por destinatário. Detalhe: ${err.message}`,
+        `(List-Unsubscribe), e nenhum ciclo de envio consegue avançar. Detalhe: ${err.message}`,
     });
   }
 
@@ -151,8 +159,8 @@ function verificarPreCondicoesDisparo() {
     pendencias.push({
       chave: faltando.join(', '),
       detalhe:
-        'Sem as credenciais do provedor de campanha, nenhum e-mail sai — e cada tentativa ' +
-        'marca o destinatário como falha definitiva.',
+        'Sem as credenciais do provedor de campanha, nenhum e-mail sai — cada ciclo de ' +
+        'envio aborta no primeiro destinatário e a campanha fica parada.',
     });
   }
 

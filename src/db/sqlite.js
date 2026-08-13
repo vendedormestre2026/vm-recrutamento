@@ -2364,9 +2364,25 @@ function marcarEnvioCampanhaEnviado(id) {
 }
 
 // Marca UM envio como falho, com a mensagem truncada. Tambem condicional, pela mesma razao.
-// A linha SAI da fila: uma falha de envio em massa raramente e transitoria (endereco morto,
-// recusa do provedor) e retentar automaticamente a cada 15 min queimaria reputacao do
-// dominio. Reprocessar e decisao humana, nao automatica.
+// A linha SAI da fila, definitivamente.
+//
+// ── CORRECAO DE UM COMENTARIO QUE ESTAVA AQUI E ESTAVA ERRADO ──
+// Ate agora este bloco afirmava que "uma falha de envio em massa raramente e transitoria
+// (endereco morto, recusa do provedor)" e que por isso toda falha era terminal. A afirmacao
+// nao tinha dado por tras, e quando o dado chegou ele disse o OPOSTO: das 2.945 linhas
+// perdidas, 2.945 eram transitorias — 2.793 HTTP 429 por rajada e 152 HTTP 403 por cota
+// diaria. Nenhum endereco morto. Nenhuma recusa de endereco. O comentario nao era so
+// impreciso: ele era a justificativa escrita de um desenho que custou a base inteira de uma
+// campanha.
+//
+// O que sobrou de verdadeiro nele: retentar SEM CRITERIO a cada 15 min queimaria reputacao
+// de dominio. E por isso que quem decide chamar esta funcao e classificarErroEnvio, e nao o
+// catch cru — ela so e chamada quando a falha e do ENDERECO (bounce, recusa) ou quando o
+// teto de tentativas da categoria se esgotou. O caso transitorio vai para
+// registrarTentativaEnvioCampanha, logo abaixo, e a linha continua na fila.
+//
+// Continua valendo que reprocessar uma linha ja em 'falha' e decisao humana: nada na
+// aplicacao devolve uma linha de 'falha' para 'pendente'.
 function marcarEnvioCampanhaFalha(id, erro) {
   const info = getDb()
     .prepare(

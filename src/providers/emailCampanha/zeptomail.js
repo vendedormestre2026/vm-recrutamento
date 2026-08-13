@@ -94,8 +94,10 @@ async function enviar(destinatario, assunto, html, opcoes = {}) {
   }
 
   // Antes de montar o corpo: uma URL sem protocolo faz o fetch lancar "Failed to parse
-  // URL", mensagem que nao nomeia a variavel nem diz o que falta. Na campanha isso e pior
-  // que no transacional — cada tentativa marca o destinatario como 'falha' TERMINAL.
+  // URL", mensagem que nao nomeia a variavel nem diz o que falta. Lancar COM o nome da
+  // variavel e o que permite a varredura classificar isso como erro de configuracao e
+  // abortar o ciclo inteiro (lib/classificarErroEnvio le exatamente este texto), em vez de
+  // gastar 125 chamadas contra uma URL que nao existe.
   garantirUrlValida(config.provedores.zeptomail.apiUrl);
 
   const http = opcoes.httpClient || fetch;
@@ -153,7 +155,10 @@ async function enviar(destinatario, assunto, html, opcoes = {}) {
 
   // 2xx = aceito pelo provedor. A partir daqui, nada que dependa de PARSEAR o corpo pode
   // transformar um envio bem-sucedido em erro: o e-mail ja foi aceito, e devolver excecao
-  // faria a varredura marcar como 'falha' (terminal) alguem que de fato vai receber.
+  // faria a varredura tratar como falha alguem que de fato vai receber. Com a retentativa,
+  // o estrago mudou de forma e nao diminuiu — um erro de parse aqui e desconhecido para
+  // classificarErroEnvio, logo retentavel, logo a MESMA pessoa receberia o e-mail ate 5
+  // vezes. Trocar "nao recebe" por "recebe cinco vezes" nao e melhora nenhuma.
   let dados = null;
   try {
     dados = await resposta.json();

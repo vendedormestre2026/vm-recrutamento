@@ -20,8 +20,9 @@
 // credenciaisFaltando() para barrar uma campanha que sairia so em falha. Se a fachada
 // roteasse `enviar` para a API mas `credenciaisFaltando` continuasse apontando para o SMTP,
 // o pre-voo aprovaria um ambiente com SMTP_CAMPANHA_* preenchidas e EMAILIT_API_KEY VAZIA —
-// e a campanha inteira seria materializada para depois falhar destinatario a destinatario,
-// com `falha` terminal e o UNIQUE(campanha_id, email) impedindo refazer. As duas funcoes
+// e a campanha inteira seria materializada para nunca sair: a varredura reconhece credencial
+// ausente como erro de configuracao e aborta o ciclo (ver lib/classificarErroEnvio), de novo
+// e de novo, a cada 15 min. Ninguem e marcado como falha, e ninguem recebe. As duas funcoes
 // PRECISAM sair do mesmo implementador; e por isso que as duas passam por aqui.
 //
 // ── SELECAO ──

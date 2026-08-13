@@ -280,9 +280,11 @@ function validar() {
   // ── ZeptoMail selecionado sem token: avisa ALTO no boot ──
   //
   // O sintoma de faltar o token so apareceria no primeiro envio — e, no caminho de
-  // campanha, "primeiro envio" significa a varredura marcando destinatarios como 'falha'
-  // TERMINAL, sem retentativa e sem poder rematerializar (UNIQUE(campanha_id, email)). No
-  // transacional e mais brando, mas ainda e um relatorio que nao chega ao recrutador.
+  // campanha, "primeiro envio" significa a varredura abortando o ciclo por erro de
+  // configuracao (ver lib/classificarErroEnvio) e nao andando mais: sem token, nenhum ciclo
+  // avanca e a campanha fica presa em 'enviando' ate alguem olhar o log. Ninguem e queimado,
+  // mas ninguem recebe. No transacional e mais brando, mas ainda e um relatorio que nao
+  // chega ao recrutador.
   //
   // Este projeto ja pagou o preco de uma variavel ausente descoberta tarde, entao o aviso
   // nomeia a variavel e o transporte que a exige. NAO derruba o processo: `validar()` e

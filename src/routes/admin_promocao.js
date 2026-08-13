@@ -1164,8 +1164,9 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     }
 
     // PRE-VOO, antes dos dois caminhos. Se o ambiente nao consegue enviar campanha, a tela
-    // de confirmacao NAO aparece: nao se pede a alguem que confirme um disparo que so
-    // produziria falhas definitivas. Barrar aqui (e nao no clique final) tambem evita o
+    // de confirmacao NAO aparece: nao se pede a alguem que confirme um disparo que ficaria
+    // parado, com todos os ciclos abortando no primeiro destinatario e nada saindo ate
+    // alguem ler o log do servidor. Barrar aqui (e nao no clique final) tambem evita o
     // pior desenho possivel — a pessoa ler "vou enviar para 412 pessoas", clicar em sim, e
     // so entao descobrir que nada podia sair.
     const preVoo = verificarPreCondicoesDisparo();
