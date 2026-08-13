@@ -39,8 +39,14 @@ const { config } = require('../../config');
 
 // `api` continua sendo o Emailit por compatibilidade: o valor ja esta em uso e trocar o
 // significado de uma string existente faria um ambiente nao atualizado mudar de provedor
-// sozinho. O ZeptoMail entra com nome proprio.
+// sozinho. O ZeptoMail entra com nome proprio, e o SendGrid tambem — pela mesma regra.
+//
+// QUATRO adaptadores para um fluxo so nao e indecisao: e o registro de que este subsistema
+// trocou de provedor tres vezes por motivos EXTERNOS ao codigo (Railway bloqueia SMTP,
+// Emailit limita a 2 msg/s, ZeptoMail nao homologa marketing). Nenhum deles foi decisao de
+// arquitetura, e nenhum foi previsivel. E por isso que a fachada existe e que a lista fica.
 const adaptadores = {
+  sendgrid: () => require('./sendgrid'),
   zeptomail: () => require('./zeptomail'),
   api: () => require('./emailit_api'),
   smtp: () => require('./smtp'),
