@@ -619,7 +619,7 @@ function paginaConfirmacaoSimples({ candidato, vaga }) {
     <section class="vm-hero vm-hero--centro">
       <p class="vm-kicker">Candidatura recebida</p>
       <h1 class="vm-title">Tudo certo, ${escapeHtml(candidato.nome || nome)}!</h1>
-      <p class="vm-lead">Recebemos sua candidatura para a vaga ${escapeHtml(tituloVaga)}. Para dar continuidade, é obrigatório entrar em contato com nosso recrutador no WhatsApp — toque no botão abaixo para falar com ele agora.</p>
+      <p class="vm-lead">Recebemos sua candidatura para a vaga ${escapeHtml(tituloVaga)}. <b>Para que ela seja avaliada, é obrigatório falar com nosso recrutador no WhatsApp</b> — toque no botão abaixo para falar com ele agora.</p>
       <div class="vm-acoes">
         ${botao}
       </div>
