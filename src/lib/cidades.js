@@ -71,4 +71,49 @@ const CIDADES_VALIDAS = Object.freeze([
 // os dois e limpeza legitima, mas e de outro assunto: aquilo e vocabulario de PESSOA, isto
 // e de VAGA, e junta-los aqui so porque as strings se parecem seria o erro de sempre.
 
-module.exports = { CIDADES_VALIDAS };
+// Chave de comparacao: sem caixa, sem acento, sem espaco nas bordas.
+//
+// A remocao de acento e a mesma tecnica de normalizarModalidade em lib/importar_vaga
+// ("híbrido" -> "hibrido"), e aqui pesa mais: sete das nove pracas tem acento, e a origem
+// mais provavel dos valores e um LLM redigindo a partir de briefing — onde "Sao Paulo" e
+// "Balneario Camboriu" sao grafias correntes. Recusar por causa de um til seria transformar
+// um problema de digitacao em ausencia de dado.
+//
+// NFD separa a letra do diacritico e a faixa U+0300-U+036F apaga so o diacritico.
+function chave(valor) {
+  return String(valor || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+}
+
+// Indice chave -> valor canonico. Construido UMA vez, no load: a lista e congelada e nao
+// muda em runtime, e reconstruir o mapa a cada chamada seria trabalho por nada num caminho
+// que o formulario do painel percorre a cada salvamento de vaga.
+const PORCHAVE = new Map(CIDADES_VALIDAS.map((c) => [chave(c), c]));
+
+// Normaliza para o valor CANONICO da lista, ou null.
+//
+// ── ENUM FECHADO, IGUAL A MODALIDADE ──
+// Espelha normalizarModalidade: variacao de caixa/acento NAO e "invalido" (mapeia-se ao
+// canonico), mas qualquer coisa fora da lista e recusada. A diferenca de retorno e
+// deliberada — modalidade devolve '' porque o parse do import trata '' como ausente; aqui
+// devolvemos null, que e o que vai para a coluna `jobs.cidade`. Quem precisa de '' converte
+// no ponto de uso (o import faz isso).
+//
+// ── O QUE ESTA FUNCAO NAO FAZ, E POR QUE ──
+// Nao ha fuzzy-match, nem "contem", nem inferencia a partir de `endereco`. A tentacao e
+// obvia — daria para varrer "Anita Garibaldi - Joinville-SC" e achar "Joinville" — e e
+// exatamente o que nao pode existir aqui: a mesma varredura, aplicada a "Campinas, Sao
+// Paulo-SP", acharia "Sao Paulo" e marcaria como Sao Paulo uma vaga de Campinas, com 156
+// candidatos atras. Um acerto silencioso e um erro silencioso saem do mesmo codigo, e o
+// erro so aparece quando alguem em Campinas recebe convite do grupo de Sao Paulo.
+//
+// Endereco livre continua livre; quem decide a praca e uma escolha explicita, no seletor ou
+// no guard do import. Nao adivinhamos.
+function normalizarCidade(valor) {
+  return PORCHAVE.get(chave(valor)) || null;
+}
+
+module.exports = { CIDADES_VALIDAS, normalizarCidade };
