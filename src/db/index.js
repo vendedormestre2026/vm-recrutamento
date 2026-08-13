@@ -154,4 +154,10 @@ module.exports = {
   listarEmailsInscritosNaVaga: driver.listarEmailsInscritosNaVaga,
   listarEmailsDescadastrados: driver.listarEmailsDescadastrados,
   origemCanonica: driver.origemCanonica,
+
+  // Disparo por WhatsApp — motor de publico (lib/publicoDisparoWhatsapp) e livro-razao
+  listarCandidatosPorCidadeVaga: driver.listarCandidatosPorCidadeVaga,
+  listarLegadoPorCidade: driver.listarLegadoPorCidade,
+  listarTelefonesDisparados: driver.listarTelefonesDisparados,
+  registrarDisparoWhatsapp: driver.registrarDisparoWhatsapp,
 };

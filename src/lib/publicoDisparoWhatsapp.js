@@ -1,0 +1,136 @@
+'use strict';
+
+// Motor de PUBLICO do disparo por WhatsApp: dada uma praca, quem ainda nao foi convidado.
+//
+// Irmao de lib/promocaoVagas (o motor de publico do e-mail), e a comparacao entre os dois e
+// a melhor forma de entender este arquivo — porque quase tudo muda:
+//
+//                    promocaoVagas (e-mail)          este (WhatsApp)
+//   unidade          e-mail normalizado              TELEFONE normalizado
+//   recorte          vaga-alvo + filtros de tela     UMA praca, e so
+//   exclusoes        4 (inscrito, opt-out, ...)      1 (ja tem linha em disparos_whatsapp)
+//   quem tem cidade  a PESSOA (talentos.cidade)      a pessoa OU a VAGA dela
+//
+// A ultima linha e a peculiaridade que exige as duas consultas separadas abaixo.
+//
+// ── AS DUAS ORIGENS TEM A CIDADE EM LUGARES DIFERENTES ──
+//
+//   CANDIDATOS  `applications` nao tem cidade (a coluna existe, e orfa, esta 0% preenchida
+//               em producao). A praca vem da VAGA: applications -> jobs.cidade. Ou seja, a
+//               cidade de um candidato e onde fica a vaga a que ele se candidatou, nao onde
+//               ele mora. E uma INFERENCIA, e esta registrada como tal — para um grupo
+//               regional de processo seletivo ela e o recorte certo, mas nao e o mesmo dado.
+//               Vaga remota tem jobs.cidade NULL e por isso nunca casa com praca nenhuma:
+//               os 316 candidatos de vaga remota ficam FORA de todo disparo regional, por
+//               definicao, nao por falta de dado.
+//
+//   LEGADO      `talentos.cidade`, preenchida por backfill de dicionario. E a praca da
+//               PESSOA. Comparacao exata.
+//
+// Por isso nao existe um SELECT unico com UNION: as duas metades respondem "qual praca?"
+// por caminhos que nao se parecem, e junta-las em SQL esconderia isso atras de um COALESCE.
+
+const dbPadrao = require('../db');
+const { normalizarCidade } = require('./cidades');
+const { normalizarTelefoneWhatsapp } = require('./whatsapp');
+
+// Sentinela de `talentos.cidade`: marca presenca em QUALQUER praca (531 pessoas no legado).
+//
+// ── E ELE NAO ENTRA EM DISPARO NENHUM, e essa e uma decisao contra-intuitiva ──
+// No motor de e-mail, quem tem este valor casa com qualquer cidade selecionada — la o
+// coringa AMPLIA o publico de proposito. Aqui e o oposto: um grupo de WhatsApp e de UMA
+// praca, e "presente em qualquer praca" nao diz em qual delas a pessoa esta. Coloca-la em
+// todos os nove grupos seria a leitura literal do coringa e o pior resultado possivel; em
+// um grupo escolhido a esmo, seria adivinhacao. Fica de fora ate haver dado melhor.
+const CIDADE_TODAS = 'Todas as cidades';
+
+// Primeira palavra do nome, para o vocativo da mensagem. Vazio quando nao ha nome — o
+// template do n8n resolve a saudacao sem ele; inventar "Candidato" seria pior.
+function primeiroNome(nome) {
+  return String(nome || '').trim().split(/\s+/)[0] || '';
+}
+
+// Lista quem ainda NAO recebeu o convite do grupo daquela praca.
+//
+// Devolve [{ telefone, nome_primeiro, cargo }], telefone JA normalizado (so digitos, com
+// DDI) — que e a forma que a rota devolve e a que o n8n disca.
+//
+// LANCA se a cidade for invalida. Deliberado: devolver [] silenciosamente para "Joinvile"
+// ou "Blumenau" faria um disparo vazio parecer um disparo concluido, e ninguem investiga um
+// zero que parece legitimo. O erro tem que ser barulhento no unico momento em que da para
+// consertar — antes de rodar.
+function listarPendentesPorCidade(cidade, deps = {}) {
+  const db = deps.db || dbPadrao;
+
+  const praca = normalizarCidade(cidade);
+  if (!praca) {
+    throw new Error(
+      `Cidade invalida para disparo: ${JSON.stringify(cidade)}. ` +
+        'Use uma das pracas de lib/cidades (CIDADES_VALIDAS).',
+    );
+  }
+
+  // Chave do merge: telefone normalizado -> registro. Map preserva ordem de insercao, e
+  // candidatos entram primeiro — ver a nota de precedencia abaixo.
+  const porTelefone = new Map();
+
+  // ── 1. CANDIDATOS ──
+  // A praca vem de jobs.cidade. `j.cidade = ?` ja exclui vaga remota sem precisar de
+  // condicao extra: NULL nunca e igual a nada em SQL.
+  //
+  // `cargo` = jobs.perfil ('SDR' | 'CLOSER'), usado COMO ESTA. Nao ha traducao para nome
+  // comercial: o valor vai direto para o texto da mensagem, e inventar um mapeamento aqui
+  // criaria uma segunda fonte de verdade sobre como a vaga se chama.
+  for (const linha of db.listarCandidatosPorCidadeVaga(praca)) {
+    const telefone = normalizarTelefoneWhatsapp(linha.telefone);
+    if (!telefone) continue; // numero inutilizavel nao vira convite
+    // `has` protege a precedencia DENTRO da propria origem tambem: uma pessoa com duas
+    // candidaturas na mesma praca aparece duas vezes na consulta, e a primeira vence.
+    if (porTelefone.has(telefone)) continue;
+    porTelefone.set(telefone, {
+      telefone,
+      nome_primeiro: primeiroNome(linha.nome),
+      cargo: String(linha.perfil || '').trim(),
+    });
+  }
+
+  // ── 2. LEGADO ──
+  // PRECEDENCIA: candidatos vencem. Quem tem candidatura E cadastro legado com o mesmo
+  // numero recebe a mensagem com o cargo da VAGA a que se candidatou — que e o contexto
+  // vivo — e nao com o cargo de um cadastro antigo. Implementado pelo `has` abaixo, e nao
+  // por ordem de SQL, porque a regra e do dominio e precisa estar visivel aqui.
+  //
+  // O sentinela e barrado na consulta (ver sqlite.js) E aqui, de novo: e a unica regra
+  // deste arquivo cujo erro produz mensagem para quem nao deveria receber, e uma checagem
+  // duplicada custa nada perto disso.
+  for (const linha of db.listarLegadoPorCidade(praca)) {
+    if (String(linha.cidade || '').trim() === CIDADE_TODAS) continue;
+    const telefone = normalizarTelefoneWhatsapp(linha.telefone);
+    if (!telefone) continue;
+    if (porTelefone.has(telefone)) continue;
+    porTelefone.set(telefone, {
+      telefone,
+      nome_primeiro: primeiroNome(linha.nome),
+      // `talentos.cargo` como esta: sao 6 valores da base antiga ('Consultor Comercial',
+      // 'Vendedor', 'SDR', 'Liderança Comercial', 'Closer', 'BDR'). NAO e o enum SDR|CLOSER
+      // de perfil_interesse — so 2 dos 6 mapeariam nele, e forcar o mapeamento faria 4
+      // grupos receberem um cargo que ninguem escreveu.
+      cargo: String(linha.cargo || '').trim(),
+    });
+  }
+
+  // ── 3. QUEM JA RECEBEU SAI ──
+  // Depois do merge, e nao dentro de cada consulta: o filtro e por TELEFONE, e o telefone
+  // so existe depois de normalizado. Um WHERE NOT IN no SQL compararia a coluna crua
+  // ("+55 (47) 99958-2500") contra a normalizada e nao acharia nada — falharia ABERTO,
+  // reenviando para todo mundo.
+  //
+  // Sem filtro de cidade nem de status: quem tem linha, tem linha. 'erro' tambem segura o
+  // telefone (reprocessar e decisao humana) e um convite de outra praca ja entregue nao
+  // deve virar um segundo convite.
+  const jaEnviados = db.listarTelefonesDisparados();
+
+  return [...porTelefone.values()].filter((p) => !jaEnviados.has(p.telefone));
+}
+
+module.exports = { listarPendentesPorCidade, primeiroNome, CIDADE_TODAS };

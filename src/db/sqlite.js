@@ -2586,6 +2586,113 @@ function listarTalentosParaCampanha({ dataDe, dataAte } = {}) {
     .all(...params);
 }
 
+// ──────────────────────────────────────────────────────────────
+// Disparo por WhatsApp — leituras do motor de publico
+// ──────────────────────────────────────────────────────────────
+
+// Candidatos de uma praca. A cidade vem da VAGA (jobs.cidade), porque applications.cidade
+// e coluna orfa e esta 0% preenchida — ver lib/publicoDisparoWhatsapp.
+//
+// `j.cidade = ?` ja exclui vaga REMOTA sem condicao extra: em SQL, NULL nao e igual a nada.
+// Vale registrar porque parece omissao e nao e.
+//
+// ORDER BY a.id: a ordem decide quem vence o dedup quando a mesma pessoa tem duas
+// candidaturas na praca. A primeira (mais antiga) ganha — escolha arbitraria mas ESTAVEL,
+// que e o que importa: sem ORDER BY, duas execucoes seguidas poderiam mandar cargos
+// diferentes para a mesma pessoa.
+//
+// Telefone vem CRU. Quem normaliza e o motor, com lib/whatsapp — normalizar em SQL exigiria
+// reimplementar a mesma regra numa segunda linguagem.
+function listarCandidatosPorCidadeVaga(cidade) {
+  return getDb()
+    .prepare(
+      `SELECT a.id, a.nome, a.telefone, j.perfil
+         FROM applications a
+         JOIN jobs j ON j.id = a.job_id
+        WHERE j.cidade = ?
+          AND a.telefone IS NOT NULL AND TRIM(a.telefone) <> ''
+        ORDER BY a.id`,
+    )
+    .all(cidade);
+}
+
+// Talentos da base legada de uma praca. Comparacao EXATA de cidade.
+//
+// O sentinela 'Todas as cidades' e barrado aqui explicitamente, alem de ser barrado de novo
+// no motor. Redundante de proposito: e a unica regra deste subsistema cujo erro produz
+// mensagem para quem nao deveria receber, e a checagem custa nada perto disso. Como o
+// parametro `cidade` nunca e o sentinela (o chamador valida contra CIDADES_VALIDAS, que nao
+// o contem), esta condicao e cinto de seguranca — nao a trava principal.
+function listarLegadoPorCidade(cidade) {
+  return getDb()
+    .prepare(
+      `SELECT id, nome, telefone, cargo, cidade
+         FROM talentos
+        WHERE categoria = 'legado'
+          AND cidade = ?
+          AND cidade <> 'Todas as cidades'
+          AND telefone IS NOT NULL AND TRIM(telefone) <> ''
+        ORDER BY id`,
+    )
+    .all(cidade);
+}
+
+// Todos os telefones que ja tem linha em disparos_whatsapp, como Set para lookup O(1).
+//
+// SEM filtro de status e SEM filtro de cidade, de proposito: quem tem linha, tem linha.
+// 'erro' tambem segura o telefone (reprocessar e decisao humana, nao automatica), e um
+// convite ja entregue para outra praca nao deve virar um segundo convite.
+//
+// A coluna ja esta normalizada na escrita, entao a comparacao contra o telefone normalizado
+// do motor e direta. Set inteiro em memoria: sao ~1.000 linhas hoje e o alternativo seria um
+// SELECT por pessoa dentro do laco.
+function listarTelefonesDisparados() {
+  return new Set(
+    getDb()
+      .prepare('SELECT telefone FROM disparos_whatsapp')
+      .all()
+      .map((l) => l.telefone),
+  );
+}
+
+// Registra o resultado de UMA tentativa de disparo. Upsert por telefone.
+//
+// ON CONFLICT ... DO UPDATE, e nao INSERT OR REPLACE: o REPLACE APAGA a linha e insere
+// outra, o que trocaria o `id` e zeraria `criado_em` para o default — perdendo justamente o
+// registro de quando aquela pessoa entrou no livro-razao pela primeira vez. O upsert
+// preserva id e criado_em e atualiza so o que a tentativa nova diz.
+//
+// `erro_msg` e sobrescrito SEMPRE (inclusive para NULL quando a nova tentativa deu certo):
+// a coluna descreve a tentativa ATUAL, e deixar a mensagem de um erro anterior colada numa
+// linha 'enviado' faria o painel mostrar um erro que nao existe mais.
+function registrarDisparoWhatsapp({ telefone, nome, status, erroMsg, origem, cidade, enviadoEm }) {
+  const info = getDb()
+    .prepare(
+      `INSERT INTO disparos_whatsapp (telefone, nome, status, erro_msg, origem, cidade, enviado_em)
+       VALUES (@telefone, @nome, @status, @erro_msg, @origem, @cidade, @enviado_em)
+       ON CONFLICT(telefone) DO UPDATE SET
+         nome       = COALESCE(excluded.nome, disparos_whatsapp.nome),
+         status     = excluded.status,
+         erro_msg   = excluded.erro_msg,
+         origem     = COALESCE(excluded.origem, disparos_whatsapp.origem),
+         cidade     = COALESCE(excluded.cidade, disparos_whatsapp.cidade),
+         enviado_em = COALESCE(excluded.enviado_em, disparos_whatsapp.enviado_em)`,
+    )
+    .run({
+      telefone,
+      // COALESCE nos campos de CONTEXTO (nome, origem, cidade, enviado_em): uma chamada que
+      // nao os informa nao deve APAGAR o que ja se sabia. Um n8n que so manda
+      // {telefone, status} nao pode custar o nome que o disparo anterior gravou.
+      nome: nome || null,
+      status,
+      erro_msg: erroMsg || null,
+      origem: origem || null,
+      cidade: cidade || null,
+      enviado_em: enviadoEm || null,
+    });
+  return info.changes;
+}
+
 // Cidades distintas que existem no banco, para montar as opcoes do filtro de campanha.
 //
 // UNIAO de TRES fontes: `talentos.cidade` (preenchida por backfill nos importados),
@@ -2677,6 +2784,10 @@ module.exports = {
   contarEntrevistasConcluidasComContexto,
   listarOrigensDistintas,
   listarCidadesDistintas,
+  listarCandidatosPorCidadeVaga,
+  listarLegadoPorCidade,
+  listarTelefonesDisparados,
+  registrarDisparoWhatsapp,
   obterReportPorInterview,
   registrarAcessoVaga,
   registrarEventoFunil,
