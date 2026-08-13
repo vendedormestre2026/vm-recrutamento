@@ -59,6 +59,33 @@ const CHAVE_ATIVO = 'promocao_ativa';
 // enfileiradas juntas dividem os mesmos 125, em vez de somarem 250.
 const ENVIOS_POR_CICLO = 125;
 
+// ── Pausa entre envios DENTRO do ciclo ──
+//
+// ENVIOS_POR_CICLO controla VOLUME por ciclo; isto controla TAXA dentro dele. Sao coisas
+// diferentes, e a ausencia da segunda custou 2.945 destinatarios travados.
+//
+// O laco e sequencial, mas serializacao nao e pacing: a proxima chamada sai assim que a
+// anterior responde. Medido em producao (campanha 4, um ciclo): ~112 ms por chamada, ou
+// 7 a 8 envios por segundo sustentados. O Emailit permite 2/s — daí os 2.793 HTTP 429 da
+// campanha 3, onde exatamente 36% dos envios passaram (1.564 de 4.357), que e a fracao que
+// cabia no teto dele.
+//
+// 500 ms = 2 envios/s. Numero conservador de proposito: e o unico teto por segundo que
+// temos DOCUMENTADO de algum provedor (Emailit), e serve de piso seguro ate haver dado real
+// do ZeptoMail — cuja doc publica limite DIARIO por Agent, mas nenhum limite por segundo.
+//
+// CUSTO ZERO em vazao: 125 envios a 500 ms levam ~62 s, contra um ciclo de 15 min. O
+// throughput global continua sendo ENVIOS_POR_CICLO / intervalo (500/h) em qualquer valor
+// aqui — o pacing so remove a RAJADA, nao reduz o total.
+const ENVIO_INTERVALO_MS = 500;
+
+// Pausa real. Injetavel por deps.dormir para a suite nao dormir de verdade — 125 envios a
+// 500 ms travariam o teste por um minuto por cenario.
+function dormirPadrao(ms) {
+  if (!(ms > 0)) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Tamanho maximo da mensagem de erro guardada por linha. Log de provedor SMTP e verboso
 // (traz o dialogo inteiro); a coluna `erro` existe para o Jean entender o que houve, nao
 // para arquivar transcricao. O mesmo recorte de MAX_DETALHE_ERRO do adaptador.
@@ -433,10 +460,19 @@ async function varrerDisparoPromocao(deps = {}) {
     }
   }
 
-  for (const linha of pendentes) {
+  // `intervaloMs` e `dormir` injetaveis: o teste exercita o pacing REAL (que a pausa
+  // acontece, e entre quais iteracoes) sem gastar 62 s por cenario.
+  const intervaloMs = deps.intervaloMs === undefined ? ENVIO_INTERVALO_MS : deps.intervaloMs;
+  const dormir = deps.dormir || dormirPadrao;
+
+  for (const [i, linha] of pendentes.entries()) {
     const r = await enviarUm(linha, deps);
     if (r === 'enviado') resumo.enviados += 1;
     else resumo.falhas += 1;
+
+    // Pausa ENTRE envios, nao DEPOIS do ultimo: dormir apos o derradeiro so atrasaria o
+    // fim do ciclo sem proteger nada — nao ha proxima chamada para espacar.
+    if (i < pendentes.length - 1) await dormir(intervaloMs);
   }
 
   // DEPOIS do laco, e sempre — inclusive quando a leva veio vazia. E o que fecha as
@@ -491,4 +527,5 @@ module.exports = {
   ativo,
   CHAVE_ATIVO,
   ENVIOS_POR_CICLO,
+  ENVIO_INTERVALO_MS,
 };

@@ -73,7 +73,9 @@ const emailCampanhaDuble = {
   },
 };
 
-const deps = { db, emailCampanha: emailCampanhaDuble };
+// `dormir` no-op: o pacing real (500 ms por envio) travaria a suite por minutos. Os testes
+// que exercitam o PACING em si injetam o proprio espiao — ver promocaoPacing.test.js.
+const deps = { db, emailCampanha: emailCampanhaDuble, dormir: async () => {} };
 
 // ── Helpers de cenario ──
 const run = (sql, ...p) => Number(db.getDb().prepare(sql).run(...p).lastInsertRowid);

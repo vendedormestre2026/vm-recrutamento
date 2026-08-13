@@ -100,7 +100,8 @@ const emailCampanhaComCaptura = {
     apiCampanha.enviar(destino, assunto, html, { httpClient: httpCaptura }),
 };
 
-const deps = { db, emailCampanha: emailCampanhaComCaptura };
+// `dormir` no-op: sem ele o pacing de 500 ms por envio travaria a suite.
+const deps = { db, emailCampanha: emailCampanhaComCaptura, dormir: async () => {} };
 
 // Todos os enderecos que receberam alguma mensagem, em ordem de envio. No payload da API
 // `to` e uma string (um envio por destinatario), e nao a lista de objetos do nodemailer.
