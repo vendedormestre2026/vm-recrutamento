@@ -55,6 +55,10 @@ const TETO_ALTO = 100;
 const CODIGOS_CONFIGURACAO = ['SERR_157', 'SERR_156', 'SM_111', 'SM_101', 'AE_101'];
 
 // Codigos de limite/cota do provedor: o envio nao passou AGORA, mas passa depois.
+//
+// ATENCAO AO LER O LOG: estes chegam como HTTP 403, o MESMO status dos codigos de
+// configuracao acima. O status nao distingue nada aqui — quem distingue e o `code` do corpo,
+// e e por isso que a funcao le as duas listas antes de olhar para o status.
 const CODIGOS_TETO_ALTO = ['SMI_115', 'SM_133', 'SM_128'];
 
 // Erros nossos, levantados antes de qualquer chamada de rede, que denunciam ambiente pela
@@ -111,42 +115,67 @@ function statusHttp(mensagem) {
 //   motivo = frase curta, para o log e para a coluna `erro`. Nao substitui a mensagem
 //            original: acompanha.
 //
-// A ORDEM DAS CHECAGENS E A REGRA. Configuracao vem primeiro porque e a unica que muda o
-// que acontece com os OUTROS 124 destinatarios do ciclo; terminal vem por ultimo entre as
-// especificas porque um 429 numa resposta que por acaso contenha a palavra "bounce" e um
+// ── A ORDEM DAS CHECAGENS E A REGRA, E O CRITERIO E: CODIGO ANTES DE STATUS ──
+//
+// O status HTTP do ZeptoMail NAO separa as categorias. O mesmo 403 carrega tanto
+// "seu token e invalido" (SERR_157) quanto "voce estourou a cota diaria" (SM_133) —
+// situacoes com respostas OPOSTAS: a primeira precisa parar tudo, a segunda precisa esperar
+// e insistir. Quem distingue e o `code` DENTRO do corpo da resposta, e so ele.
+//
+// Isto ja errou uma vez, nesta funcao: a checagem de 401/403 estava ANTES da lista de
+// codigos de cota, e por isso um 403 com corpo SM_133 caia em 'configuracao'. Ou seja: o
+// cenario EXATO que custou os 152 destinatarios da campanha 4 continuaria mal classificado
+// pela peca escrita para conserta-lo — abortando o ciclo em vez de aguardar a virada da
+// cota. As duas listas de codigo passaram para a frente de qualquer heuristica de status.
+//
+// Dentro disso: configuracao antes de tudo, porque e a unica categoria que muda o que
+// acontece com os OUTROS 124 destinatarios do ciclo; terminal por ultimo entre as
+// especificas, porque um 429 numa resposta que por acaso contenha a palavra "bounce" e um
 // 429, e ler ao contrario perderia a pessoa.
 function classificarErroEnvio(erro) {
   const bruta = String((erro && erro.message) || erro || '');
   const msg = bruta.toLowerCase();
   const status = statusHttp(msg);
 
-  // 1. AMBIENTE QUEBRADO — aborta o ciclo.
+  // 1. CODIGO DO PROVEDOR — a fonte mais confiavel, e por isso a primeira. As duas listas
+  // sao disjuntas e ambas vencem qualquer leitura de status HTTP.
+
+  // 1a. Ambiente quebrado — aborta o ciclo.
   for (const codigo of CODIGOS_CONFIGURACAO) {
     if (temCodigo(bruta, codigo)) {
       return { categoria: 'configuracao', teto: null, motivo: `codigo ${codigo} do provedor` };
     }
   }
-  for (const trecho of TRECHOS_CONFIGURACAO) {
-    if (msg.includes(trecho)) {
-      return { categoria: 'configuracao', teto: null, motivo: `configuracao ausente ou invalida (${trecho})` };
-    }
-  }
-  // 401/403 entram aqui, e nao em retentavel: os dois dizem "esta credencial nao pode fazer
-  // isto" — resposta que nao muda entre destinatarios. O 403 dos 152 e o exemplo vivo: como
-  // configuracao, o ciclo teria abortado sem marcar ninguem e voltado sozinho depois; como
-  // falha por destinatario, custou 152 pessoas.
-  if (status === 401 || status === 403) {
-    return { categoria: 'configuracao', teto: null, motivo: `HTTP ${status} do provedor (credencial ou permissao)` };
-  }
 
-  // 2. LIMITE DE VAZAO/COTA — retentavel com teto alto.
+  // 1b. Limite de vazao/cota — retentavel com teto alto. Chega como 403 na maioria dos
+  // casos reais; e justamente por isso que precisa ser lido ANTES do 403.
   for (const codigo of CODIGOS_TETO_ALTO) {
     if (temCodigo(bruta, codigo)) {
       return { categoria: 'retentavel_alto', teto: TETO_ALTO, motivo: `codigo ${codigo} do provedor (limite)` };
     }
   }
 
-  // 3. TRANSITORIO GENERICO — teto baixo.
+  // 2. ERROS NOSSOS DE AMBIENTE, por texto. Nao carregam codigo de provedor — sao lancados
+  // antes de qualquer chamada de rede.
+  for (const trecho of TRECHOS_CONFIGURACAO) {
+    if (msg.includes(trecho)) {
+      return { categoria: 'configuracao', teto: null, motivo: `configuracao ausente ou invalida (${trecho})` };
+    }
+  }
+
+  // 3. 401/403 SEM CODIGO RECONHECIDO — fallback, e so fallback. Sem um `code` que diga
+  // outra coisa, "nao autorizado" e credencial ou permissao: dominio nao verificado, token
+  // revogado, agente errado. Nada disso muda conforme o destinatario, entao a resposta certa
+  // continua sendo abortar o ciclo em vez de queimar 125 pessoas com a mesma mensagem.
+  //
+  // Se um codigo de cota novo aparecer aqui (o ZeptoMail nao publica a lista fechada), o
+  // sintoma sera ciclo abortado em vez de retentativa — visivel no log, sem perder ninguem.
+  // A direcao do erro e essa de proposito: errar para o lado de nao marcar.
+  if (status === 401 || status === 403) {
+    return { categoria: 'configuracao', teto: null, motivo: `HTTP ${status} sem codigo conhecido (credencial ou permissao)` };
+  }
+
+  // 4. TRANSITORIO GENERICO — teto baixo.
   if (status === 429) {
     return { categoria: 'retentavel', teto: TETO_BAIXO, motivo: 'HTTP 429 (excesso de requisicoes)' };
   }
@@ -154,14 +183,14 @@ function classificarErroEnvio(erro) {
     return { categoria: 'retentavel', teto: TETO_BAIXO, motivo: `HTTP ${status} (erro do provedor)` };
   }
 
-  // 4. RECUSA DO ENDERECO — terminal.
+  // 5. RECUSA DO ENDERECO — terminal.
   for (const trecho of TRECHOS_TERMINAIS) {
     if (msg.includes(trecho)) {
       return { categoria: 'terminal', teto: null, motivo: `recusa definitiva (${trecho})` };
     }
   }
 
-  // 5. DESCONHECIDO — retentavel. Ver a nota do cabecalho sobre a assimetria de custo.
+  // 6. DESCONHECIDO — retentavel. Ver a nota do cabecalho sobre a assimetria de custo.
   return { categoria: 'retentavel', teto: TETO_BAIXO, motivo: 'erro nao classificado' };
 }
 

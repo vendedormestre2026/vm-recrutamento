@@ -165,12 +165,65 @@ test('classificacao: os codigos de configuracao do ZeptoMail abortam o ciclo', (
   }
 });
 
-test('classificacao: 401 e 403 sao configuracao, nao falha do destinatario', () => {
-  // Os 152 perdidos foram HTTP 403 (limite de conta trial). Como falha por destinatario,
-  // custaram 152 pessoas; como configuracao, teriam abortado o ciclo sem marcar ninguem.
+test('classificacao: 401 e 403 SEM codigo conhecido caem em configuracao', () => {
+  // Fallback, e so fallback: sem um `code` que diga outra coisa, "nao autorizado" e
+  // credencial ou permissao — dominio nao verificado, token revogado, agente errado. Nada
+  // disso muda conforme o destinatario, entao abortar o ciclo e melhor que queimar 125
+  // pessoas com a mesma mensagem.
   for (const status of [401, 403]) {
     const c = classificarErroEnvio(new Error(`Falha ao enviar: HTTP ${status} — negado`));
     assert.equal(c.categoria, 'configuracao');
+  }
+});
+
+// ── O TESTE QUE ESTA REGRA MERECE, PORQUE ELA JA FOI QUEBRADA UMA VEZ ──
+//
+// O ZeptoMail devolve HTTP 403 para coisas de naturezas OPOSTAS: token invalido (SERR_157)
+// e cota diaria estourada (SM_133). O status nao distingue; so o `code` do corpo distingue.
+//
+// Na primeira versao desta funcao a checagem de 401/403 vinha ANTES da lista de codigos de
+// cota, e um 403 com corpo SM_133 caia em 'configuracao'. Ou seja: o cenario EXATO que
+// custou os 152 destinatarios da campanha 4 continuaria mal classificado pela peca escrita
+// para conserta-lo. O bug passou pelos testes porque o caso de cota era exercitado com
+// HTTP 400 — o unico status que os logs reais nao usam.
+//
+// Estes dois testes existem para que a distincao nunca mais dependa de alguem perguntar.
+test('MESMO status 403: o codigo do corpo decide, e nao o status', () => {
+  // Cota -> retentavel alto: espera e insiste, porque a janela vira sozinha.
+  for (const codigo of ['SM_133', 'SMI_115', 'SM_128']) {
+    const c = classificarErroEnvio(
+      new Error(`Falha ao enviar e-mail de campanha via API do ZeptoMail: HTTP 403 — ` +
+        `{"error":{"code":"${codigo}","message":"daily sending limit exceeded"}}`),
+    );
+    assert.equal(c.categoria, 'retentavel_alto', `403 com ${codigo} tem que ser retentavel_alto`);
+    assert.equal(c.teto, TETO_ALTO, `403 com ${codigo} tem que aguardar a virada da cota`);
+  }
+
+  // Credencial -> configuracao: para tudo, porque insistir nao muda nada.
+  for (const codigo of ['SERR_157', 'SERR_156', 'SM_111', 'SM_101', 'AE_101']) {
+    const c = classificarErroEnvio(
+      new Error(`Falha ao enviar e-mail de campanha via API do ZeptoMail: HTTP 403 — ` +
+        `{"error":{"code":"${codigo}","message":"invalid token"}}`),
+    );
+    assert.equal(c.categoria, 'configuracao', `403 com ${codigo} tem que ser configuracao`);
+  }
+});
+
+test('o codigo do corpo vence o status em QUALQUER status', () => {
+  // A regra nao e "403 e especial": e "codigo do provedor vence heuristica de status",
+  // sempre. Um 401 com corpo de cota tambem tem que esperar, e um 429 com corpo de token
+  // invalido tambem tem que parar tudo.
+  for (const status of [400, 401, 403, 429, 500]) {
+    assert.equal(
+      classificarErroEnvio(new Error(`HTTP ${status} — {"code":"SM_133"}`)).categoria,
+      'retentavel_alto',
+      `HTTP ${status} com SM_133`,
+    );
+    assert.equal(
+      classificarErroEnvio(new Error(`HTTP ${status} — {"code":"SERR_157"}`)).categoria,
+      'configuracao',
+      `HTTP ${status} com SERR_157`,
+    );
   }
 });
 
@@ -192,8 +245,10 @@ test('classificacao: erro NOSSO de ambiente tambem aborta o ciclo', () => {
 test('classificacao: limite de cota do provedor tem teto ALTO', () => {
   // Teto alto porque o problema resolve sozinho com o tempo — um limite DIARIO precisa que
   // a janela de retentativa atravesse a virada do dia (100 ciclos de 15 min = ~25 h).
+  // Com HTTP 403, que e como eles chegam de verdade — e nao com um status inventado que
+  // nunca colide com nada. Foi exatamente essa comodidade que escondeu o bug de ordem.
   for (const codigo of ['SMI_115', 'SM_133', 'SM_128']) {
-    const c = classificarErroEnvio(new Error(`HTTP 400 — {"code":"${codigo}"}`));
+    const c = classificarErroEnvio(new Error(`HTTP 403 — {"code":"${codigo}"}`));
     assert.equal(c.categoria, 'retentavel_alto', `${codigo} precisa ser retentavel_alto`);
     assert.equal(c.teto, TETO_ALTO);
   }
@@ -326,7 +381,8 @@ test('limite de cota: aguenta muito mais ciclos que o erro generico', async () =
   zerarCampanhas();
   const id = criarRascunho(vagaAlvo);
   disparo.enfileirarCampanha(id, deps);
-  erroPara = () => new Error('HTTP 400 — {"code":"SM_133","message":"daily limit"}');
+  // 403 com corpo de cota: a reproducao fiel dos 152 perdidos da campanha 4.
+  erroPara = () => new Error('HTTP 403 — {"code":"SM_133","message":"daily limit"}');
 
   // TETO_BAIXO + 2 ciclos: um erro generico ja teria desistido; este nao pode nem cogitar.
   for (let i = 0; i < TETO_BAIXO + 2; i += 1) {
@@ -466,7 +522,9 @@ test('pacing: um ciclo abortado nao gasta pausa', async () => {
   zerarCampanhas();
   const id = criarRascunho(vagaAlvo);
   disparo.enfileirarCampanha(id, deps);
-  erroPara = () => new Error('HTTP 403 — trial limit');
+  // 401 sem codigo: credencial. (Um "limite" traria codigo de cota e NAO abortaria — e a
+  // distincao que o bloco A guarda.)
+  erroPara = () => new Error('HTTP 401 — nao autorizado');
 
   await semRuido(() => disparo.varrerDisparoPromocao(deps));
   assert.deepEqual(pausas, [], 'o break sai antes da pausa: nao ha proximo envio para espacar');
