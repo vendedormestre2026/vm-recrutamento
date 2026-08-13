@@ -320,6 +320,122 @@ test('classificacao: aceita string, Error ou nulo sem explodir', () => {
   }
 });
 
+// ════════════════ A2. Classificacao — SendGrid ════════════════
+//
+// O SendGrid nao tem campo `code`: o corpo e { errors: [{ message, field }] }, texto livre.
+// A regra continua a mesma (conteudo do corpo vence heuristica de status), mas o que se le
+// muda — e a ambiguidade muda de status.
+
+// ── O TESTE IRMAO DO 403 DO ZEPTOMAIL ──
+//
+// La, o MESMO 403 significava "token invalido" (SERR_157) ou "cota estourada" (SM_133).
+// Aqui, o MESMO 401 significa "chave revogada" ou "Maximum credits exceeded". Mesma
+// armadilha, status diferente — e a ETAPA A desta migracao partiu da premissa de que a
+// ambiguidade estaria no 403 e que o 401 seria limpo. A documentacao oficial diz o contrario.
+//
+// Se este teste algum dia for "simplificado" para "401 e sempre configuracao", a campanha
+// para de andar no dia em que a cota do plano estourar — sem perder ninguem, mas sem entregar
+// a ninguem, e com o log dizendo "erro de configuracao" para um problema que nao e.
+test('SendGrid: MESMO status 401, a mensagem decide', () => {
+  // Cota -> retentavel alto: espera e insiste, porque a cota vira sozinha.
+  const cota = classificarErroEnvio(
+    new Error(
+      'Falha ao enviar e-mail de campanha via API do SendGrid: HTTP 401 — ' +
+        '{"errors":[{"message":"Maximum credits exceeded","field":null}]}',
+    ),
+  );
+  assert.equal(cota.categoria, 'retentavel_alto');
+  assert.equal(cota.teto, TETO_ALTO);
+
+  // Credencial -> configuracao: para tudo, porque insistir nao muda nada.
+  for (const mensagem of [
+    'The provided authorization grant is invalid, expired, or revoked',
+    'Authenticated user is not authorized',
+    "The requestor's IP address is not whitelisted",
+  ]) {
+    const c = classificarErroEnvio(new Error(`HTTP 401 — {"errors":[{"message":"${mensagem}"}]}`));
+    assert.equal(c.categoria, 'configuracao', mensagem);
+  }
+});
+
+test('SendGrid: 401 e 403 sem mensagem conhecida continuam caindo em configuracao', () => {
+  // O fallback nao pode ter sido perdido ao ganhar os casos especificos.
+  assert.equal(classificarErroEnvio(new Error('HTTP 401 — ')).categoria, 'configuracao');
+  assert.equal(
+    classificarErroEnvio(new Error('HTTP 403 — {"errors":[{"message":"Access Forbidden"}]}')).categoria,
+    'configuracao',
+  );
+});
+
+test('SendGrid: o 400 se parte em dois pelo campo', () => {
+  // Endereco daquela pessoa -> terminal. Retentar so reproduz o mesmo 400 cinco vezes.
+  const doDestinatario = classificarErroEnvio(
+    new Error(
+      'HTTP 400 — {"errors":[{"message":"Does not contain a valid address",' +
+        '"field":"personalizations.0.to.0.email"}]}',
+    ),
+  );
+  assert.equal(doDestinatario.categoria, 'terminal');
+
+  // Payload nosso -> configuracao. E igual para os 125 da leva; marcar um a um seria queimar
+  // a base inteira por um bug de uma linha.
+  for (const campo of ['from', 'content', 'subject', 'reply_to']) {
+    const c = classificarErroEnvio(
+      new Error(`HTTP 400 — {"errors":[{"message":"invalido","field":"${campo}"}]}`),
+    );
+    assert.equal(c.categoria, 'configuracao', `field ${campo}`);
+  }
+});
+
+test('SendGrid: no 400 ambiguo, o campo NOSSO manda', () => {
+  // Se o corpo acusa os dois, o que afeta a leva inteira vence — abortar protege todo mundo,
+  // marcar protege ninguem.
+  const c = classificarErroEnvio(
+    new Error(
+      'HTTP 400 — {"errors":[{"message":"a","field":"personalizations.0.to.0.email"},' +
+        '{"message":"b","field":"from"}]}',
+    ),
+  );
+  assert.equal(c.categoria, 'configuracao');
+});
+
+test('SendGrid: 413 e configuracao, e nao terminal', () => {
+  // O criterio deste modulo nao e "quao grave e", e sim "isto muda conforme o destinatario?".
+  // O corpo da campanha e o mesmo para todos (so a URL de descadastro muda), entao um 413
+  // atinge os 125 sem excecao.
+  const c = classificarErroEnvio(new Error('HTTP 413 — payload too large'));
+  assert.equal(c.categoria, 'configuracao');
+  assert.equal(c.teto, null);
+});
+
+test('SendGrid: bloqueio temporario e retentavel, apesar de chegar como 403', () => {
+  // Existe por uma contradicao entre duas fontes oficiais do SendGrid sobre o que e o 403.
+  // O que importa aqui e a POSICAO da checagem: se ela ficasse junto dos transitorios, o
+  // fallback de 403 a engoliria como configuracao antes de qualquer leitura de texto — a
+  // mesma armadilha do 'maximum credits exceeded' num 401.
+  const c = classificarErroEnvio(new Error('HTTP 403 — Too many bad requests. Temporary block'));
+  assert.equal(c.categoria, 'retentavel');
+  assert.equal(c.teto, TETO_BAIXO);
+});
+
+test('SendGrid: 429 e 5xx seguem retentaveis, sem regressao', () => {
+  assert.equal(classificarErroEnvio(new Error('HTTP 429 — rate limited')).categoria, 'retentavel');
+  assert.equal(classificarErroEnvio(new Error('HTTP 503 — upstream')).categoria, 'retentavel');
+});
+
+test('a chegada do SendGrid nao mexeu na classificacao do ZeptoMail', () => {
+  // Os dois provedores convivem no mesmo modulo enquanto a virada nao acontece, e um erro do
+  // ZeptoMail durante a transicao precisa continuar sendo lido como sempre foi.
+  assert.equal(
+    classificarErroEnvio(new Error('HTTP 403 — {"code":"SM_133"}')).categoria,
+    'retentavel_alto',
+  );
+  assert.equal(
+    classificarErroEnvio(new Error('HTTP 403 — {"code":"SERR_157"}')).categoria,
+    'configuracao',
+  );
+});
+
 // ════════════════ B. Os quatro caminhos, ponta a ponta ════════════════
 
 test('transitorio: a linha VOLTA para a fila em vez de virar falha', async () => {
