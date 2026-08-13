@@ -178,3 +178,61 @@ test('edicao troca e limpa a cidade, e o select reflete o valor salvo', async ()
     assert.equal(lido(), null);
   });
 });
+
+// ══════════════════ Import por briefing (LLM) ══════════════════
+//
+// O mesmo campo tem uma segunda porta de entrada: lib/importar_vaga extrai os campos da
+// vaga de um Google Doc via LLM, para PRE-PREENCHER o formulario. Sem guard aqui, o campo
+// fechado no <select> voltaria a ser livre por esta porta — o LLM devolveria qualquer
+// string e ela chegaria ao form como se fosse valida.
+//
+// O contrato e o mesmo de modalidade/regime: valor fora da lista nao chega ao form, entra
+// em `ausentes`, e o operador preenche na revisao. Nenhuma vaga e salva por este caminho.
+
+const { parseExtracaoVaga, montarMensagensExtracao } = require('../src/lib/importar_vaga');
+
+// Extracao valida minima, para os testes falarem so de `cidade`.
+const EXTRACAO = {
+  titulo: 'T', faixa_pagamento: 'x', potencial_ganhos: 'x', horario: 'x',
+  descricao: 'x', sobre_empresa: 'x',
+  atividades: ['a'], requisitos: ['a'], beneficios: ['a'], skills: ['a'],
+  perfil: 'CLOSER', modalidade: 'presencial', regime: 'CLT',
+  endereco: 'Anita Garibaldi - Joinville-SC',
+};
+const extrair = (cidade) => parseExtracaoVaga(JSON.stringify({ ...EXTRACAO, cidade }));
+
+test('import: o prompt lista as pracas validas, geradas da constante', () => {
+  const system = montarMensagensExtracao('briefing qualquer')[0].conteudo;
+  for (const c of CIDADES_VALIDAS) {
+    assert.ok(system.includes(`"${c}"`), `o prompt precisa oferecer ${c}`);
+  }
+  // Interpolada, e nao escrita a mao: uma praca nova em lib/cidades tem que aparecer aqui
+  // sozinha. Senao o sintoma seria "a IA nunca acerta essa cidade", difícil de rastrear.
+  assert.match(system, /"cidade":.*\| "",\s*\/\/ so essas/);
+  // E `endereco` continua sendo pedido como texto livre, ao lado — os dois convivem.
+  assert.match(system, /"endereco": "string"/);
+});
+
+test('import: cidade valida passa; sem acento vira o canonico', () => {
+  assert.equal(extrair('Joinville').vaga.cidade, 'Joinville');
+  assert.equal(extrair('sao paulo').vaga.cidade, 'São Paulo');
+  assert.equal(extrair('Joinville').ausentes.includes('cidade'), false);
+});
+
+test('import: valor fora da lista vai para `ausentes`, nao para o form', () => {
+  // Guard identico ao de modalidade. Sem ele, o campo fechado voltaria a ser livre.
+  for (const ruim of ['Blumenau', 'Anita Garibaldi - Joinville-SC', 'Joinville/SC', '', undefined]) {
+    const r = extrair(ruim);
+    assert.equal(r.vaga.cidade, '', `${ruim} nao pode chegar ao form`);
+    assert.ok(r.ausentes.includes('cidade'), `${ruim} tem que ser sinalizado ao operador`);
+  }
+});
+
+test('import: cidade recusada NAO afeta endereco nem os demais campos', () => {
+  // Degradacao isolada: uma cidade que o LLM nao soube dizer nao pode custar o resto da
+  // extracao. O endereco livre continua chegando inteiro.
+  const r = extrair('Blumenau');
+  assert.equal(r.vaga.endereco, 'Anita Garibaldi - Joinville-SC');
+  assert.equal(r.vaga.modalidade, 'presencial');
+  assert.equal(r.vaga.titulo, 'T');
+});

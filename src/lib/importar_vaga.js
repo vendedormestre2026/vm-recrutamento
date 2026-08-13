@@ -6,6 +6,8 @@
 // POST /vagas humano. Espelha o padrao de lib/relatorio.js (prompt + parse isolados da
 // camada HTTP; deps injetaveis p/ teste sem rede/credencial/LLM real).
 
+const { CIDADES_VALIDAS, normalizarCidade } = require('./cidades');
+
 // Campos extraidos (ordem estavel p/ o aviso de "ausentes"). secoes_extras fica DE FORA
 // de proposito: o formato "## Titulo + itens" e peculiar e a IA geraria lixo — melhoria
 // futura. O admin preenche secoes_extras manualmente na revisao, se quiser.
@@ -66,6 +68,16 @@ function montarMensagensExtracao(briefingTexto) {
     '  "faixa_pagamento": "string",',
     '  "potencial_ganhos": "string",',
     '  "endereco": "string",',
+    // Enum fechado, mesma forma de modalidade/regime logo abaixo — a lista de opcoes vai
+    // INTERPOLADA de CIDADES_VALIDAS, e nao escrita a mao aqui: uma praca nova acrescentada
+    // em lib/cidades tem que aparecer no prompt sozinha, senao o LLM nunca a proporia e o
+    // sintoma seria "a IA nunca acerta essa cidade" — difícil de ligar a esta linha.
+    `  "cidade": ${CIDADES_VALIDAS.map((c) => `"${c}"`).join(' | ')} | "",  // so essas; se nao achar, ""`,
+    // O par endereco/cidade e a unica redundancia proposital do formato: `endereco` e o
+    // texto exibido na pagina da vaga ("Anita Garibaldi - Joinville-SC"), `cidade` e a praca
+    // canonica para recorte de base. Pedir os dois separadamente e o que evita ter que
+    // adivinhar um a partir do outro depois — e adivinhar erraria "Campinas, Sao Paulo-SP".
+    '  // `endereco` e o texto completo; `cidade` e so a praca da lista acima.',
     '  "modalidade": "presencial" | "híbrido" | "remoto" | "",  // so esses; se nao achar, ""',
     '  "regime": "CLT" | "PJ" | "",           // so esses; se nao achar, ""',
     '  "horario": "string",',
@@ -133,6 +145,14 @@ function parseExtracaoVaga(textoLLM) {
   // Enums (com guard): valor fora da lista NAO chega ao form; entra em "ausentes".
   vaga.perfil = normalizarPerfil(obj.perfil);
   if (!vaga.perfil) ausentes.push('perfil');
+  // Guard identico ao de modalidade: valor fora da lista NAO chega ao form, vai para
+  // `ausentes` e o operador preenche na revisao. Aceitar o que o LLM devolvesse reabriria
+  // o campo livre por outra porta — que e exatamente o que este campo existe para fechar.
+  //
+  // `|| ''` porque normalizarCidade devolve null (o valor da coluna) e o form espera ''
+  // para "vazio", igual aos outros dois enums. A conversao mora aqui, no ponto de uso.
+  vaga.cidade = normalizarCidade(obj.cidade) || '';
+  if (!vaga.cidade) ausentes.push('cidade');
   vaga.modalidade = normalizarModalidade(obj.modalidade);
   if (!vaga.modalidade) ausentes.push('modalidade');
   vaga.regime = normalizarRegime(obj.regime);
