@@ -375,3 +375,54 @@ CREATE INDEX IF NOT EXISTS idx_talentos_email           ON talentos(email);
 -- Fila de trabalho da varredura de envio: "os pendentes DESTA campanha". A ordem das
 -- colunas segue o uso (igualdade em campanha_id, depois filtro por status).
 CREATE INDEX IF NOT EXISTS idx_campanha_envios_pendentes ON campanha_envios(campanha_id, status);
+
+-- ──────────────────────────────────────────────────────────────
+-- Disparo em massa por WhatsApp (grupos regionais)
+-- ──────────────────────────────────────────────────────────────
+
+-- LIVRO-RAZAO do que ja saiu por WhatsApp. Uma linha por TELEFONE, para sempre.
+--
+-- ── A UNIDADE E O TELEFONE, e nao a pessoa nem a candidatura ──
+-- Diferente de campanha_envios, cuja unidade e (campanha, e-mail). Aqui nao ha campanha:
+-- o disparo e "o grupo da praca X", e uma pessoa entra no grupo UMA vez. Duas
+-- candidaturas, ou candidatura + cadastro legado com o mesmo numero, sao a mesma pessoa
+-- do outro lado do aparelho — e mandar duas vezes o mesmo convite e o erro mais visivel
+-- que este subsistema pode cometer.
+--
+-- `telefone` e UNIQUE e ja chega NORMALIZADO (lib/whatsapp.normalizarTelefoneWhatsapp:
+-- so digitos, com DDI). Quem escreve normaliza; quem le compara direto. Mesma disciplina
+-- de `descadastros.email`. Sem isso, "+55 (47) 99958-2500" e "5547999582500" seriam duas
+-- pessoas.
+--
+-- ── NAO EXISTE status 'pendente', e isso e desenho ──
+-- Pendente e a AUSENCIA de linha. Modelar 'pendente' como valor exigiria materializar a
+-- base inteira aqui antes de qualquer disparo — e ai a tabela teria que ser reconciliada
+-- toda vez que alguem novo se candidatasse, mudasse de praca ou fosse importado. Como
+-- ausencia, o publico e sempre calculado do estado ATUAL das bases de origem, e esta
+-- tabela so guarda o fato consumado.
+--
+-- Consequencia aceita: nao ha como saber "quem esta na fila" olhando so esta tabela. Isso
+-- e trabalho do motor de publico (lib/publicoDisparoWhatsapp), que e quem sabe as regras.
+--
+-- ── SEM OPT-OUT NESTA ETAPA ──
+-- Decisao registrada: nao ha coluna de descadastro por WhatsApp por enquanto. Quando
+-- houver, ela NAO deve ser um status desta tabela — 'enviado'/'erro' descrevem o que
+-- aconteceu com uma tentativa, e opt-out e um estado da PESSOA, que precede a tentativa.
+CREATE TABLE IF NOT EXISTS disparos_whatsapp (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  telefone   TEXT NOT NULL UNIQUE,  -- SEMPRE ja normalizado (so digitos, com DDI)
+  nome       TEXT,
+  -- 'enviado' = entrou no grupo / mensagem aceita pelo n8n.
+  -- 'erro'    = tentou e falhou. A linha EXISTE, entao esse telefone sai da fila de
+  --             pendentes tambem — reprocessar erro e decisao humana, nao automatica.
+  -- Sem CHECK, pelo precedente do projeto para enum extensivel (ver talentos.categoria):
+  -- o SQLite nao remove constraint depois. A validacao vive na rota.
+  status     TEXT NOT NULL,
+  erro_msg   TEXT,
+  -- 'candidato' | 'legado' | 'historico_airtable'. De onde a pessoa veio quando o disparo
+  -- aconteceu. Serve a auditoria; nada no app decide nada a partir deste campo.
+  origem     TEXT,
+  cidade     TEXT,               -- praca do disparo. NULL nos importados do historico.
+  enviado_em TEXT,               -- NULL quando desconhecido (historico sem timestamp)
+  criado_em  TEXT NOT NULL DEFAULT (datetime('now'))
+);
