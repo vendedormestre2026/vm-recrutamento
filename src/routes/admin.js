@@ -41,6 +41,7 @@ const {
 } = require('../lib/relatorio');
 const { gerarRelatorioPdf, slugNome } = require('../lib/relatorioPdf');
 const { criarRouterPromocao } = require('./admin_promocao');
+const { criarRouterWhatsapp } = require('./admin_whatsapp');
 const { escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -4263,5 +4264,8 @@ router.post('/config/followup-entrevista', (req, res) => {
 // Os helpers de apresentacao vao por parametro porque este modulo exporta o router, nao
 // eles; extrai-los para um modulo compartilhado seria refactor das ~15 telas existentes.
 router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }));
+// Tela de pareamento do WhatsApp. Sem auth propria — herda o router.use(adminAuth) la em
+// cima, igual as demais telas do painel.
+router.use('/whatsapp', criarRouterWhatsapp({ paginaAdmin, escapeHtml }));
 
 module.exports = router;

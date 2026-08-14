@@ -45,7 +45,18 @@ const estado = {
   ultimoErro: null,
   tentativas: 0,
   timerReconexao: null,
+  // Quando o status mudou pela ultima vez. O painel mostra isso: "conectado" sem saber
+  // desde quando nao diz se a sessao esta viva ou parada ha dois dias.
+  atualizadoEm: new Date().toISOString(),
 };
+
+// Toda troca de status passa por aqui, para o carimbo nunca ficar para tras. Um campo de
+// tempo atualizado em alguns caminhos e nao em outros e pior que campo nenhum.
+function definirStatus(novo) {
+  if (estado.status === novo) return;
+  estado.status = novo;
+  estado.atualizadoEm = new Date().toISOString();
+}
 
 // Fechamentos iniciados por nos. Ver a nota do cabecalho.
 const fechando = new Set();
@@ -81,6 +92,7 @@ function ligado() {
 function status() {
   return {
     status: estado.status,
+    atualizadoEm: estado.atualizadoEm,
     temQr: Boolean(estado.qr),
     tentativas: estado.tentativas,
     ultimoErro: estado.ultimoErro,
@@ -108,12 +120,12 @@ function tratarUpdate(update, deps = {}) {
 
   if (update.qr) {
     estado.qr = update.qr;
-    estado.status = 'pareando';
+    definirStatus('pareando');
     console.log('[wa-conn] QR disponivel para pareamento (janela aberta).');
   }
 
   if (update.connection === 'open') {
-    estado.status = 'conectado';
+    definirStatus('conectado');
     estado.tentativas = 0; // caminho funcionando: zera
     estado.ultimoErro = null;
     limparQr();
@@ -130,14 +142,14 @@ function tratarUpdate(update, deps = {}) {
   // Fechamento nosso: nao e queda.
   if (fechando.has(INSTANCIA_PADRAO)) {
     fechando.delete(INSTANCIA_PADRAO);
-    estado.status = 'desconectado';
+    definirStatus('desconectado');
     console.log('[wa-conn] fechado por nos; sem reconexao.');
     return { acao: 'fechado_por_nos' };
   }
 
   // 401: despareado de verdade. Insistir com a credencial morta e laco infinito.
   if (!shouldReconnect(update.lastDisconnect)) {
-    estado.status = 'desconectado';
+    definirStatus('desconectado');
     const apagadas = limpar();
     console.error(
       `[wa-conn] ================ NUMERO DESPAREADO (401) ================\n` +
@@ -151,14 +163,14 @@ function tratarUpdate(update, deps = {}) {
   // 515: parte normal do pareamento. Reconecta ja, sem penalidade.
   if (isRestartRequired(update.lastDisconnect)) {
     estado.tentativas = 0;
-    estado.status = 'pareando';
+    definirStatus('pareando');
     console.log('[wa-conn] restart pedido pelo protocolo (515); reconectando imediatamente.');
     reconectar(0);
     return { acao: 'restart', atraso: 0 };
   }
 
   // Queda real.
-  estado.status = 'desconectado';
+  definirStatus('desconectado');
   estado.tentativas += 1;
   const atraso = atrasoBackoff(estado.tentativas);
   console.warn(`[wa-conn] queda (${estado.ultimoErro}); reconectando em ${atraso} ms (tentativa ${estado.tentativas}).`);
@@ -216,7 +228,7 @@ async function desconectar() {
   }
   const s = estado.socket;
   estado.socket = null;
-  estado.status = 'desconectado';
+  definirStatus('desconectado');
   try {
     if (s && typeof s.end === 'function') s.end();
   } catch (err) {
@@ -228,6 +240,7 @@ async function desconectar() {
 function _resetar() {
   estado.socket = null;
   estado.status = 'desconectado';
+  estado.atualizadoEm = new Date().toISOString();
   estado.qr = null;
   estado.ultimoErro = null;
   estado.tentativas = 0;
