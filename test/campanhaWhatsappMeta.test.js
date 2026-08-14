@@ -517,3 +517,109 @@ test('o seed cobre exatamente as 9 pracas do enum', () => {
   assert.deepEqual(cidades, [...CIDADES_VALIDAS].sort((a, b) => a.localeCompare(b, 'pt-BR')));
   assert.equal(db.obterLinkGrupo('Joinville'), null, 'links nascem vazios');
 });
+
+// ══════════════════ Admin ══════════════════
+
+async function comAdmin(fn) {
+  return comServidor(async (base) => {
+    const res = await fetch(`${base}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ usuario: 'admin-teste', senha: 'senha-teste' }),
+      redirect: 'manual',
+    });
+    const bruto = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('set-cookie')];
+    const cookie = bruto.filter(Boolean).map((c) => c.split(';')[0]).join('; ');
+    return fn(base, { Cookie: cookie });
+  });
+}
+
+test('admin: a tela exige sessao', async () => {
+  await comServidor(async (base) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, { redirect: 'manual' });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /\/admin\/login/);
+  });
+});
+
+test('admin: a tela lista pracas, templates e diz o que falta', async () => {
+  zerar();
+  montarCenario();
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    assert.match(html, /Campanha por WhatsApp/);
+    assert.match(html, /Links dos grupos por praça/);
+    assert.match(html, /confirmacao_cadastro_vaga_vm/);
+    // O diagnostico e o ponto da tela: dizer POR QUE nada sai.
+    assert.match(html, /interruptor <b>Campanha por WhatsApp<\/b> está desligado/);
+    assert.match(html, /META_CAMPANHA_MOCK/);
+  });
+});
+
+test('admin: salvar link da praca persiste; cidade forjada e recusada', async () => {
+  zerar();
+  for (const c of CIDADES_VALIDAS) exec('INSERT OR IGNORE INTO regioes_grupos_whatsapp (cidade) VALUES (?)', c);
+
+  await comAdmin(async (base, h) => {
+    const salvar = (cidade, link) =>
+      fetch(`${base}/admin/campanhas-whatsapp/regiao`, {
+        method: 'POST',
+        headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ cidade, link }),
+        redirect: 'manual',
+      });
+
+    await salvar('Joinville', 'https://chat.whatsapp.com/JOI');
+    assert.equal(db.obterLinkGrupo('Joinville'), 'https://chat.whatsapp.com/JOI');
+
+    // Praca fora do vocabulario criaria uma linha que nenhum envio jamais consulta.
+    await salvar('Blumenau', 'https://chat.whatsapp.com/X');
+    assert.equal(uma('SELECT COUNT(*) n FROM regioes_grupos_whatsapp WHERE cidade = ?', 'Blumenau').n, 0);
+  });
+});
+
+test('admin: criar campanha nasce em RASCUNHO e ativar e um segundo clique', async () => {
+  zerar();
+  const { tid } = montarCenario();
+  await comAdmin(async (base, h) => {
+    await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ nome: 'Convite agosto', template_id: String(tid), base_alvo: 'ambos' }),
+      redirect: 'manual',
+    });
+
+    const nova = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Convite agosto'");
+    assert.ok(nova);
+    // Criar nao dispara: nasce em rascunho pelo default da coluna.
+    assert.equal(nova.status, 'rascunho');
+
+    await fetch(`${base}/admin/campanhas-whatsapp/${nova.id}/status`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ status: 'ativa' }),
+      redirect: 'manual',
+    });
+    const depois = uma('SELECT * FROM campanhas_whatsapp WHERE id = ?', nova.id);
+    assert.equal(depois.status, 'ativa');
+    assert.ok(depois.iniciada_em, 'ativar carimba iniciada_em');
+  });
+});
+
+test('admin: o checkbox do kill-switch liga e persiste', async () => {
+  zerar();
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/config`, { headers: h })).text();
+    assert.match(html, /name="campanha_whatsapp_ativa"/);
+    // Default desligado: o kill-switch nao pode nascer ligado.
+    assert.doesNotMatch(html, /name="campanha_whatsapp_ativa" value="1" checked/);
+
+    await fetch(`${base}/admin/config/notificacoes`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ campanha_whatsapp_ativa: '1' }),
+      redirect: 'manual',
+    });
+    assert.equal(db.obterConfigBool(job.CHAVE_ATIVO, false), true);
+  });
+});

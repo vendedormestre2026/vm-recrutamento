@@ -43,6 +43,8 @@ const { gerarRelatorioPdf, slugNome } = require('../lib/relatorioPdf');
 const { criarRouterPromocao } = require('./admin_promocao');
 const { criarRouterWhatsapp } = require('./admin_whatsapp');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
+const campanhaWhatsapp = require('../lib/campanhaWhatsapp');
+const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
 
@@ -4109,6 +4111,8 @@ const CHAVE_PROMOCAO_ATIVA = dispararPromocao.CHAVE_ATIVO;
 // `configuracoes` — o que e exatamente o tipo de coisa que ninguem lembra de desligar as
 // pressas. Ver whatsapp/sequenciaOutbox.
 const CHAVE_WHATSAPP_SEQ = sequenciaWhatsapp.CHAVE_ATIVO;
+// Interruptor da CAMPANHA por WhatsApp (Meta Cloud API). Frente separada da sequencia.
+const CHAVE_CAMPANHA_WA = campanhaWhatsapp.CHAVE_ATIVO;
 
 // Endereco fixo do e-mail de TESTE da Promocao de Vagas. Mesma logica de propriedade das
 // chaves acima: mora em lib/emailTestePromocao, dono do subsistema. Vive no painel (e nao
@@ -4140,6 +4144,7 @@ router.get('/config', (req, res) => {
   // Disparo das campanhas de Promocao de Vagas (default desligado).
   const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
   const whatsappSeqAtiva = db.obterConfigBool(CHAVE_WHATSAPP_SEQ, false);
+  const campanhaWaAtiva = db.obterConfigBool(CHAVE_CAMPANHA_WA, false);
 
   // Endereco do e-mail de teste de campanha. Vazio por padrao, de proposito: sem ele o
   // botao de teste na tela de campanha so sabe dizer "configure aqui primeiro".
@@ -4313,6 +4318,24 @@ router.get('/config', (req, res) => {
           com <code>WHATSAPP_SEQUENCIA_MOCK=false</code>. Veja o estado da conexão em
           <a href="/admin/whatsapp">WhatsApp</a>.
         </p>
+
+        <label class="campo-check">
+          <input type="checkbox" name="campanha_whatsapp_ativa" value="1"${campanhaWaAtiva ? ' checked' : ''}>
+          <span style="color:var(--preto);text-transform:none;">
+            Enviar as <b>campanhas por WhatsApp</b> (Meta Cloud API)
+          </span>
+        </label>
+        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Interruptor do envio em massa pela API <b>oficial</b> da Meta — frente separada da
+          sequência WA1/WA2 acima. Desmarcado (padrão), campanhas podem ser criadas e
+          ativadas: os envios ficam <b>pendentes</b> e <b>nada sai</b>.
+          <br>
+          Mesmo marcado, nada sai enquanto <code>META_CAMPANHA_MOCK</code> não for
+          <code>false</code>. Cada mensagem tem <b>custo por conversa</b> e conta para a
+          <b>qualidade do número</b> — excesso de denúncia rebaixa o tier ou desabilita o
+          número na Meta. Configure as praças em
+          <a href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>.
+        </p>
         <button type="submit" class="btn">Salvar</button>
       </form>
     </section>
@@ -4399,6 +4422,7 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, marcado('limpeza_audio_ativo'));
   db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
   db.definirConfigBool(CHAVE_WHATSAPP_SEQ, marcado('whatsapp_sequencia_ativa'));
+  db.definirConfigBool(CHAVE_CAMPANHA_WA, marcado('campanha_whatsapp_ativa'));
   res.redirect('/admin/config?salvo=1');
 });
 
@@ -4441,5 +4465,6 @@ router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmt
 // Tela de pareamento do WhatsApp. Sem auth propria — herda o router.use(adminAuth) la em
 // cima, igual as demais telas do painel.
 router.use('/whatsapp', criarRouterWhatsapp({ paginaAdmin, escapeHtml }));
+router.use('/campanhas-whatsapp', criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }));
 
 module.exports = router;
