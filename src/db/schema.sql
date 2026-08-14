@@ -490,3 +490,135 @@ CREATE TABLE IF NOT EXISTS whatsapp_sequencia_envios (
 -- A consulta do job: "o que ja venceu e ainda nao saiu". A ordem das colunas segue o uso
 -- (igualdade em status, depois faixa em agendado_para).
 CREATE INDEX IF NOT EXISTS idx_wa_seq_fila ON whatsapp_sequencia_envios(status, agendado_para);
+
+-- ──────────────────────────────────────────────────────────────
+-- Campanha em massa por WhatsApp — Meta Cloud API (oficial)
+-- ──────────────────────────────────────────────────────────────
+--
+-- FRENTE SEPARADA do Baileys (whatsapp_sequencia_envios / baileys_auth), e a separacao e
+-- estrutural, nao organizacional: a Cloud API e HTTP stateless com TEMPLATE APROVADO
+-- PREVIAMENTE pela Meta; o Baileys e socket persistente com texto livre. Os dois contratos
+-- divergem exatamente no que mais importa — o que pode ser dito — entao nao ha fachada que
+-- os unifique sem mentir sobre um dos dois.
+--
+-- ⚠️ RESTRICAO DE PLATAFORMA: um numero registrado num WABA NAO pode ser usado via Baileys.
+-- Se as duas frentes usarem o mesmo numero, elas sao mutuamente exclusivas.
+
+-- Templates aprovados na Meta. Espelho LOCAL do que existe la — nao e a fonte da verdade.
+--
+-- A Meta aprova (ou rejeita, ou revoga depois) cada template, e o texto vive no painel dela.
+-- Aqui guardamos so o que o codigo precisa para MONTAR a chamada: o nome exato, o idioma, e
+-- quais variaveis posicionais preencher com quais campos nossos.
+CREATE TABLE IF NOT EXISTS templates_whatsapp (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- Nome EXATO registrado na Meta. UNIQUE porque e a chave de chamada da API: dois registros
+  -- com o mesmo nome significariam duas configuracoes para a mesma coisa la fora.
+  nome_meta     TEXT NOT NULL UNIQUE,
+  idioma        TEXT NOT NULL DEFAULT 'pt_BR',
+  -- 'marketing' cobra mais e exige opt-in verificavel; 'utility' e para acompanhamento de
+  -- algo que a pessoa iniciou. A escolha errada aqui e motivo de rejeicao ou de conta
+  -- penalizada, entao o CHECK trava os tres valores que a Meta reconhece.
+  categoria     TEXT NOT NULL CHECK (categoria IN ('marketing', 'utility', 'authentication')),
+  -- JSON: [{posicao:1, campo:'nome_primeiro'}, ...]. As variaveis da Meta sao POSICIONAIS
+  -- ({{1}}, {{2}}); este mapa e o que liga cada posicao a um dado nosso.
+  variaveis     TEXT NOT NULL,
+  ativo         INTEGER NOT NULL DEFAULT 1,
+  criado_em     TEXT NOT NULL DEFAULT (datetime('now')),
+  atualizado_em TEXT
+);
+
+-- Link do grupo de WhatsApp por praca.
+--
+-- ── POR QUE TABELA PROPRIA, e nao coluna em `jobs` ──
+-- O grupo e da PRACA, nao da vaga: duas vagas em Joinville compartilham o mesmo grupo. Uma
+-- coluna em `jobs` obrigaria a repetir (e manter sincronizado) o mesmo link em cada vaga da
+-- cidade — e o primeiro link desatualizado seria indistinguivel do certo.
+--
+-- `cidade` e UNIQUE e usa o vocabulario fechado de lib/cidades (as 9 pracas). Nao ha FK
+-- porque o enum vive no codigo, nao numa tabela — mesmo desenho de jobs.cidade.
+--
+-- `link_convite_grupo` e NULLABLE de proposito: as linhas nascem vazias e o operador
+-- preenche pela tela. Praca sem link nao pode receber campanha, e o job trata isso como
+-- erro DAQUELE envio (nao do ciclo) — ver lib/campanhaWhatsapp.
+CREATE TABLE IF NOT EXISTS regioes_grupos_whatsapp (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  cidade             TEXT NOT NULL UNIQUE,
+  link_convite_grupo TEXT,
+  ativo              INTEGER NOT NULL DEFAULT 1,
+  criado_em          TEXT NOT NULL DEFAULT (datetime('now')),
+  atualizado_em      TEXT
+);
+
+-- Uma campanha: um template disparado para um recorte da base.
+--
+-- Espelha `campanhas` (e-mail) na forma, com duas diferencas: o conteudo NAO mora aqui (mora
+-- na Meta, no template) e ha `pausada` — porque um disparo de WhatsApp que precisa parar no
+-- meio e caso previsto, nao excecao.
+CREATE TABLE IF NOT EXISTS campanhas_whatsapp (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  nome         TEXT NOT NULL,
+  template_id  INTEGER NOT NULL REFERENCES templates_whatsapp(id),
+  base_alvo    TEXT NOT NULL CHECK (base_alvo IN ('applications', 'talentos', 'ambos')),
+  status       TEXT NOT NULL DEFAULT 'rascunho'
+                 CHECK (status IN ('rascunho', 'ativa', 'pausada', 'concluida')),
+  criado_em    TEXT NOT NULL DEFAULT (datetime('now')),
+  iniciada_em  TEXT,
+  concluida_em TEXT
+);
+
+-- Fila de envios da campanha. Uma linha por (campanha, telefone).
+--
+-- ── QUATRO ESTADOS A MAIS QUE campanha_envios, e cada um tem razao ──
+--   'entregue'  ack de entrega da Meta (webhook). O e-mail nao tem equivalente confiavel.
+--   'lido'      confirmacao de leitura (webhook), quando o usuario a permite.
+--   'opt_out'   a pessoa pediu para sair ANTES de esta linha sair. Distinto de 'falha':
+--               falha e problema tecnico, opt_out e vontade da pessoa, e misturar os dois
+--               apagaria a unica metrica que diz se a campanha esta incomodando.
+--
+-- `wamid` e o id que a Meta devolve no aceite. E a UNICA forma de casar um evento de webhook
+-- com a linha que o originou — sem ele, entrega e leitura chegam sem dono.
+--
+-- `cidade` fica NA LINHA, e nao e resolvida no envio a partir da origem: o recorte foi
+-- decidido na materializacao, e recalcular depois faria uma pessoa que mudou de praca
+-- receber o link de um grupo diferente do que a campanha prometeu.
+CREATE TABLE IF NOT EXISTS campanha_whatsapp_envios (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  campanha_id INTEGER NOT NULL REFERENCES campanhas_whatsapp(id),
+  telefone    TEXT NOT NULL,          -- SEMPRE normalizado (so digitos, com DDI)
+  nome        TEXT,
+  origem_tipo TEXT NOT NULL CHECK (origem_tipo IN ('application', 'talento')),
+  origem_id   INTEGER,
+  cidade      TEXT,
+  status      TEXT NOT NULL DEFAULT 'pendente'
+                CHECK (status IN ('pendente', 'enviado', 'entregue', 'lido', 'falha', 'opt_out')),
+  wamid       TEXT,
+  enviado_em  TEXT,
+  erro        TEXT,
+  tentativas  INTEGER NOT NULL DEFAULT 0,
+  criado_em   TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Mesma protecao do UNIQUE(campanha_id, email) da campanha de e-mail: uma pessoa recebe a
+  -- mesma campanha UMA vez. Sem isso, um bug de materializacao vira mensagem duplicada no
+  -- aparelho de alguem — e no WhatsApp isso e denuncia, que custa o numero.
+  UNIQUE (campanha_id, telefone)
+);
+
+-- A fila de trabalho do job (igualdade em campanha_id, depois filtro por status).
+CREATE INDEX IF NOT EXISTS idx_campanha_wa_envios_pendentes
+  ON campanha_whatsapp_envios(campanha_id, status);
+-- Casamento de evento de webhook -> linha. Sem indice, cada ack seria varredura de tabela.
+CREATE INDEX IF NOT EXISTS idx_campanha_wa_envios_wamid
+  ON campanha_whatsapp_envios(wamid);
+
+-- Opt-out por TELEFONE. Irmao de `descadastros` (que e por e-mail) e deliberadamente
+-- separado dele: sao canais diferentes, e sair de um nao e sair do outro.
+--
+-- PK e o telefone JA NORMALIZADO — quem escreve normaliza, quem le compara direto, mesma
+-- disciplina de descadastros.email e disparos_whatsapp.telefone.
+--
+-- Sem coluna de "reinscricao": desfazer um opt-out e apagar a linha, acao deliberada e rara,
+-- e nao alternar um flag que um bug poderia inverter em massa.
+CREATE TABLE IF NOT EXISTS whatsapp_opt_out (
+  telefone  TEXT PRIMARY KEY,
+  origem    TEXT,                     -- 'resposta_webhook' | 'manual'
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
