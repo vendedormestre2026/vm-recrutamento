@@ -20,6 +20,7 @@ const dbPadrao = require('../db');
 const meta = require('../providers/whatsappMeta/metaWhatsapp');
 const { normalizarTelefoneRecebido } = require('./whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
+const { montarUrlVaga, UTM_SOURCE_WHATSAPP } = require('./ctaCampanha');
 
 // Interruptor de DISPARO, no store `configuracoes` — mesmo padrao de promocao_ativa e
 // whatsapp_sequencia_ativa. Config de BANCO, com checkbox no painel; nao e env.
@@ -115,8 +116,12 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
     // Ausencia de link e falha DAQUELE envio, e NAO aborto do ciclo: uma praca sem link
     // configurado nao pode impedir as outras oito de receberem. E deixar pendente seria pior
     // — a linha reapareceria em todo ciclo, para sempre, sem ninguem entender por que.
-    const link = db.obterLinkGrupo(linha.cidade);
-    if (!link) {
+    // O link do GRUPO so e exigido no convite. Numa divulgacao de vaga a mensagem leva o
+    // link da VAGA, e cobrar link de grupo ali faria a campanha falhar por um dado que ela
+    // nem usa.
+    const precisaLinkGrupo = linha.tipo_mensagem !== 'divulgacao_vaga';
+    const link = precisaLinkGrupo ? db.obterLinkGrupo(linha.cidade) : '';
+    if (precisaLinkGrupo && !link) {
       db.marcarEnvioWhatsappFalha(
         linha.id,
         `configuracao: praca '${linha.cidade || '(sem cidade)'}' sem link de grupo cadastrado`,
@@ -136,10 +141,24 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
     } catch {
       mapa = [];
     }
+    // `link_vaga` so existe em campanha de divulgacao, e e a MESMA URL para todos os
+    // destinatarios da campanha — por isso e montada aqui e nao guardada por linha. A UTM
+    // 'whatsapp' e o campanha_whatsapp_id sao o que permite medir o clique DESTA campanha,
+    // separado da campanha de e-mail que usa a coluna irma.
+    const linkVaga = linha.job_slug
+      ? montarUrlVaga(linha.job_slug, {
+          utmSource: UTM_SOURCE_WHATSAPP,
+          campanhaWhatsappId: linha.campanha_id,
+        })
+      : '';
+
     const variaveis = resolverVariaveis(mapa, {
       nome_primeiro: primeiroNome(linha.nome),
-      cargo_vaga: linha.cargo_vaga || '',
+      // Em divulgacao, o cargo vem da VAGA; em convite de grupo nao ha vaga e o campo fica
+      // vazio, que e o comportamento ja documentado de resolverVariaveis.
+      cargo_vaga: linha.job_titulo || linha.cargo_vaga || '',
       link_grupo_regiao: link,
+      link_vaga: linkVaga,
       cidade: linha.cidade || '',
     });
 

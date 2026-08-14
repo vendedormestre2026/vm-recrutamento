@@ -15,6 +15,32 @@ const db = require('../db');
 const campanha = require('../lib/campanhaWhatsapp');
 const meta = require('../providers/whatsappMeta/metaWhatsapp');
 const { CIDADES_VALIDAS } = require('../lib/cidades');
+const publico = require('../lib/publicoCampanhaWhatsapp');
+const { PERFIS_VALIDOS } = require('../lib/promocaoVagas');
+
+const TIPOS = [
+  ['convite_grupo', 'Convite para o grupo da praça'],
+  ['divulgacao_vaga', 'Divulgação de uma vaga'],
+];
+
+// Calcula o publico do tipo pedido. Fonte UNICA para a previa e para a materializacao — se
+// divergissem, a tela mostraria um numero e o disparo usaria outro.
+function calcularPublico({ tipo, jobId, criterios }) {
+  return tipo === 'divulgacao_vaga'
+    ? publico.listarPublicoDivulgacaoVaga(jobId, criterios)
+    : publico.listarPublicoConviteGrupo(criterios);
+}
+
+function lerCriterios(b = {}) {
+  return {
+    // `[].concat` pelo mesmo motivo de admin_promocao: o Express entrega `name` repetido como
+    // array com 2+ marcados e como STRING com 1 so — sem isso, marcar uma cidade viraria
+    // filtro por cada letra dela.
+    cidades: [].concat(b.cidade || []).map(String).filter((c) => CIDADES_VALIDAS.includes(c)),
+    perfil: PERFIS_VALIDOS.includes(b.perfil) ? b.perfil : undefined,
+    perfilIncluirSemAtributo: b.perfil_incluir_sem === '1' || b.perfil_incluir_sem === 'on',
+  };
+}
 
 const BASES_ALVO = [
   ['ambos', 'Candidatos + Base legada'],
@@ -202,9 +228,83 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
     if (!nome || !Number.isInteger(templateId) || !db.obterTemplateWhatsapp(templateId)) {
       return res.redirect('/admin/campanhas-whatsapp?erro=dados');
     }
-    // Nasce em 'rascunho' pelo default da coluna: criar nao dispara. Ativar e um segundo
-    // clique, deliberado.
-    db.criarCampanhaWhatsapp({ nome, templateId, baseAlvo });
+    const tipo = TIPOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
+    const jobId = Number(b.job_id);
+    // Divulgacao SEM vaga nao existe: a mensagem inteira e sobre ela.
+    if (tipo === 'divulgacao_vaga' && (!Number.isInteger(jobId) || jobId <= 0)) {
+      return res.redirect('/admin/campanhas-whatsapp?erro=vaga');
+    }
+
+    const criterios = lerCriterios(b);
+    let total = null;
+    try {
+      total = calcularPublico({ tipo, jobId, criterios }).total;
+    } catch {
+      total = null; // estimativa e informativa; nao pode impedir a criacao do rascunho
+    }
+
+    // Nasce em 'rascunho' pelo default da coluna: criar nao dispara. Materializar e um
+    // segundo clique, deliberado.
+    db.criarCampanhaWhatsapp({
+      nome,
+      templateId,
+      baseAlvo,
+      tipoMensagem: tipo,
+      jobId: tipo === 'divulgacao_vaga' ? jobId : null,
+      totalEstimado: total,
+      criterios,
+    });
+    res.redirect('/admin/campanhas-whatsapp?salvo=1');
+  });
+
+  // ── POST /previa ── calcula o publico SEM gravar nada ──
+  //
+  // Existe para o operador ver o tamanho do recorte antes de criar a campanha. Nao grava
+  // linha nenhuma: e a mesma disciplina da previa da campanha de e-mail.
+  router.post('/previa', (req, res) => {
+    const b = req.body || {};
+    const tipo = TIPOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
+    const jobId = Number(b.job_id);
+    try {
+      const r = calcularPublico({ tipo, jobId, criterios: lerCriterios(b) });
+      res.json({ ok: true, total: r.total, tipo });
+    } catch (err) {
+      res.status(400).json({ ok: false, erro: err.message });
+    }
+  });
+
+  // ── POST /:id/disparar ── MATERIALIZA a fila ──
+  //
+  // Materializacao em DOIS TEMPOS, espelhando o e-mail: a campanha nasce em rascunho com o
+  // total ESTIMADO, e o publico so e congelado aqui. Entre criar e disparar a base muda
+  // (gente nova, opt-out, mudanca de praca), e materializar na criacao enviaria para um
+  // recorte velho.
+  router.post('/:id/disparar', (req, res) => {
+    const id = Number(req.params.id);
+    const c = Number.isInteger(id) && id > 0 ? db.obterCampanhaWhatsapp(id) : null;
+    if (!c) return res.redirect('/admin/campanhas-whatsapp?erro=nao_encontrada');
+
+    // So rascunho dispara. Uma campanha ja ativa re-materializada acrescentaria gente nova a
+    // uma fila em andamento, sem ninguem pedir.
+    if (c.status !== 'rascunho') {
+      return res.redirect('/admin/campanhas-whatsapp?erro=status');
+    }
+
+    let r;
+    try {
+      r = calcularPublico({
+        tipo: c.tipo_mensagem,
+        jobId: c.job_id,
+        criterios: JSON.parse(c.criterios_json || '{}'),
+      });
+    } catch (err) {
+      console.error(`[campanha-wa] falha ao calcular publico da campanha ${id}: ${err.message}`);
+      return res.redirect('/admin/campanhas-whatsapp?erro=publico');
+    }
+
+    const gravados = db.materializarCampanhaWhatsapp(id, r.itens);
+    db.definirStatusCampanhaWhatsapp(id, 'ativa');
+    console.log(`[campanha-wa] campanha ${id} materializada com ${gravados} destinatario(s).`);
     res.redirect('/admin/campanhas-whatsapp?salvo=1');
   });
 

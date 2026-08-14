@@ -111,7 +111,8 @@ test('as cinco tabelas existem com as colunas esperadas', () => {
   const esperado = {
     templates_whatsapp: ['id', 'nome_meta', 'idioma', 'categoria', 'variaveis', 'ativo', 'criado_em', 'atualizado_em'],
     regioes_grupos_whatsapp: ['id', 'cidade', 'link_convite_grupo', 'ativo', 'criado_em', 'atualizado_em'],
-    campanhas_whatsapp: ['id', 'nome', 'template_id', 'base_alvo', 'status', 'criado_em', 'iniciada_em', 'concluida_em'],
+    // tipo_mensagem/job_id/total_estimado entraram na extensao de dois tipos de campanha.
+    campanhas_whatsapp: ['id', 'nome', 'template_id', 'base_alvo', 'tipo_mensagem', 'job_id', 'total_estimado', 'criterios_json', 'status', 'criado_em', 'iniciada_em', 'concluida_em'],
     campanha_whatsapp_envios: ['id', 'campanha_id', 'telefone', 'nome', 'origem_tipo', 'origem_id', 'cidade', 'status', 'wamid', 'enviado_em', 'erro', 'tentativas', 'criado_em'],
     whatsapp_opt_out: ['telefone', 'origem', 'criado_em'],
   };
@@ -622,4 +623,167 @@ test('admin: o checkbox do kill-switch liga e persiste', async () => {
     });
     assert.equal(db.obterConfigBool(job.CHAVE_ATIVO, false), true);
   });
+});
+
+// ══════════════════ Motor de segmentacao (dois tipos) ══════════════════
+
+const publico = require('../src/lib/publicoCampanhaWhatsapp');
+const { montarUrlVaga, UTM_SOURCE_CAMPANHA, UTM_SOURCE_WHATSAPP } = require('../src/lib/ctaCampanha');
+
+let seqSeg = 0;
+function vagaCom(cidade, perfil = 'CLOSER') {
+  seqSeg += 1;
+  return Number(exec(
+    'INSERT INTO jobs (slug, titulo, perfil, cidade, ativo) VALUES (?, ?, ?, ?, 1)',
+    `vaga-seg-${seqSeg}`, `Vaga ${seqSeg}`, perfil, cidade,
+  ).lastInsertRowid);
+}
+function candidatura(jobId, nome, telefone) {
+  seqSeg += 1;
+  return Number(exec(
+    'INSERT INTO applications (job_id, nome, telefone, token) VALUES (?, ?, ?, ?)',
+    jobId, nome, telefone, `tok-seg-${seqSeg}`,
+  ).lastInsertRowid);
+}
+function legado(nome, telefone, cidade, perfil = null) {
+  seqSeg += 1;
+  return Number(exec(
+    "INSERT INTO talentos (nome, email, telefone, cidade, perfil_interesse, categoria) VALUES (?, ?, ?, ?, ?, 'legado')",
+    nome, `seg${seqSeg}@x.co`, telefone, cidade, perfil,
+  ).lastInsertRowid);
+}
+function zerarSeg() {
+  zerar();
+  exec('DELETE FROM applications');
+  exec('DELETE FROM talentos');
+  exec('DELETE FROM jobs');
+}
+const tels = (r) => r.itens.map((i) => i.telefone).sort();
+
+test('segmentacao: cidade do CANDIDATO vem da vaga (jobs.cidade)', () => {
+  zerarSeg();
+  candidatura(vagaCom('Joinville'), 'Ana Silva', '+55 47 99958-2500');
+  const r = publico.listarPublicoConviteGrupo({});
+  assert.equal(r.total, 1);
+  // applications.cidade e coluna orfa: a praca so pode vir da vaga.
+  assert.equal(r.itens[0].cidade, 'Joinville');
+  assert.equal(r.itens[0].nome_primeiro, 'Ana');
+});
+
+test('segmentacao: sem cidade resolvivel fica FORA, sem checkbox', () => {
+  zerarSeg();
+  candidatura(vagaCom(null), 'Remoto', '+55 47 90000-0001');   // vaga remota
+  legado('Sem Cidade', '+55 47 90000-0002', null);
+  legado('Com Cidade', '+55 47 90000-0003', 'Joinville');
+  // Sem praca nao ha link nem recorte: e invariante, nao preferencia.
+  assert.deepEqual(tels(publico.listarPublicoConviteGrupo({})), ['5547900000003']);
+});
+
+test("segmentacao: sentinela 'Todas as cidades' NAO entra", () => {
+  zerarSeg();
+  legado('Coringa', '+55 47 90000-0004', 'Todas as cidades');
+  legado('Normal', '+55 47 90000-0005', 'Joinville');
+  // No e-mail o coringa amplia o publico; aqui ele nao diz em QUAL praca a pessoa esta.
+  assert.deepEqual(tels(publico.listarPublicoConviteGrupo({})), ['5547900000005']);
+});
+
+test('segmentacao: opt-out e dedup por TELEFONE', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  candidatura(j, 'Ana', '+55 (47) 99958-2500');
+  legado('Ana Legado', '+55 47999582500', 'Joinville'); // MESMO numero, outro cadastro
+  legado('Fora', '+55 47 90000-0006', 'Joinville');
+  db.registrarOptOutWhatsapp('5547900000006', 'resposta_webhook');
+
+  const r = publico.listarPublicoConviteGrupo({});
+  assert.deepEqual(tels(r), ['5547999582500'], 'dedup por telefone + opt-out');
+  // applications vence talentos na exibicao: contexto vivo sobre cadastro antigo.
+  assert.equal(r.itens[0].origemTipo, 'application');
+});
+
+test('segmentacao: filtro de cidade recorta', () => {
+  zerarSeg();
+  legado('J', '+55 47 90000-0007', 'Joinville');
+  legado('C', '+55 41 90000-0008', 'Curitiba');
+  assert.deepEqual(tels(publico.listarPublicoConviteGrupo({ cidades: ['Joinville'] })), ['5547900000007']);
+  // Nada marcado = filtro inativo, como nos dropdowns do e-mail.
+  assert.equal(publico.listarPublicoConviteGrupo({ cidades: [] }).total, 2);
+});
+
+test('divulgacao: exclui quem JA se candidatou aquela vaga (invariante)', () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  const outra = vagaCom('Joinville');
+  candidatura(alvo, 'Ja Esta', '+55 47 90000-0009');
+  candidatura(outra, 'Outra Vaga', '+55 47 90000-0010');
+  legado('So Legado', '+55 47 90000-0011', 'Joinville');
+
+  const r = publico.listarPublicoDivulgacaoVaga(alvo, {});
+  // Divulgar para quem ja esta na vaga e ruido que custa credibilidade — e no WhatsApp isso
+  // e mais visivel que num e-mail.
+  assert.deepEqual(tels(r), ['5547900000010', '5547900000011']);
+});
+
+test('divulgacao: filtro de perfil, e job_id invalido LANCA', () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  legado('SDR', '+55 47 90000-0012', 'Joinville', 'SDR');
+  legado('Closer', '+55 47 90000-0013', 'Joinville', 'CLOSER');
+  assert.deepEqual(tels(publico.listarPublicoDivulgacaoVaga(alvo, { perfil: 'SDR' })), ['5547900000012']);
+  // Divulgacao sem vaga nao existe: a mensagem inteira e sobre ela.
+  for (const ruim of [null, 0, -1, 'abc']) {
+    assert.throws(() => publico.listarPublicoDivulgacaoVaga(ruim, {}), /job_id valido/);
+  }
+});
+
+test('divulgacao: vaga REMOTA nao implica "qualquer cidade"', () => {
+  zerarSeg();
+  const remota = vagaCom(null);
+  legado('Joi', '+55 47 90000-0014', 'Joinville');
+  legado('Cwb', '+55 41 90000-0015', 'Curitiba');
+  // A cidade e da PESSOA; quem escolhe as pracas do publico-alvo e o operador, mesmo para
+  // vaga remota.
+  assert.deepEqual(tels(publico.listarPublicoDivulgacaoVaga(remota, { cidades: ['Joinville'] })), ['5547900000014']);
+});
+
+test('materializacao grava telefone normalizado e cidade resolvida', () => {
+  zerarSeg();
+  const { cid } = montarCenario();
+  candidatura(vagaCom('Joinville'), 'Ana Silva', '+55 (47) 99958-2500');
+  const r = publico.listarPublicoConviteGrupo({});
+
+  assert.equal(db.materializarCampanhaWhatsapp(cid, r.itens), 1);
+  const linha = fila(cid)[0];
+  assert.equal(linha.telefone, '5547999582500');
+  assert.equal(linha.cidade, 'Joinville');
+  assert.equal(linha.origem_tipo, 'application');
+  // Idempotente pelo UNIQUE: rematerializar nao duplica.
+  assert.equal(db.materializarCampanhaWhatsapp(cid, r.itens), 0);
+});
+
+// ══════════════════ montarUrlVaga parametrizado ══════════════════
+
+test('montarUrlVaga: o comportamento do E-MAIL nao mudou', () => {
+  // Nao-regressao: o default de utmSource e a constante de sempre.
+  const u = new URL(montarUrlVaga('vaga-x', { campanhaId: 7 }));
+  assert.equal(u.searchParams.get('utm_source'), UTM_SOURCE_CAMPANHA);
+  assert.equal(u.searchParams.get('utm_source'), 'email');
+  assert.equal(u.searchParams.get('campanha_id'), '7');
+  assert.equal(u.searchParams.get('campanha_whatsapp_id'), null);
+});
+
+test('montarUrlVaga: whatsapp usa a coluna IRMA, nao a do e-mail', () => {
+  const u = new URL(montarUrlVaga('vaga-x', { utmSource: UTM_SOURCE_WHATSAPP, campanhaWhatsappId: 7 }));
+  assert.equal(u.searchParams.get('utm_source'), 'whatsapp');
+  // Passar o id de uma campanha de WhatsApp como campanha_id atribuiria o clique a campanha
+  // de E-MAIL de mesmo id, sem erro nenhum.
+  assert.equal(u.searchParams.get('campanha_whatsapp_id'), '7');
+  assert.equal(u.searchParams.get('campanha_id'), null);
+});
+
+test('montarUrlVaga: id invalido nao vira parametro', () => {
+  for (const ruim of [0, -1, 'abc', null, undefined]) {
+    const u = new URL(montarUrlVaga('vaga-x', { campanhaWhatsappId: ruim }));
+    assert.equal(u.searchParams.get('campanha_whatsapp_id'), null, String(ruim));
+  }
 });
