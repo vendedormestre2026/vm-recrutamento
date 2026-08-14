@@ -170,4 +170,26 @@ module.exports = {
   contarSequenciaWhatsapp: driver.contarSequenciaWhatsapp,
   listarSequenciaWhatsappDaApplication: driver.listarSequenciaWhatsappDaApplication,
   confirmarVideoWa2: driver.confirmarVideoWa2,
+
+  // Campanha por WhatsApp (Meta Cloud API)
+  listarTemplatesWhatsapp: driver.listarTemplatesWhatsapp,
+  obterTemplateWhatsapp: driver.obterTemplateWhatsapp,
+  listarRegioesGrupos: driver.listarRegioesGrupos,
+  obterLinkGrupo: driver.obterLinkGrupo,
+  definirLinkGrupo: driver.definirLinkGrupo,
+  criarCampanhaWhatsapp: driver.criarCampanhaWhatsapp,
+  listarCampanhasWhatsapp: driver.listarCampanhasWhatsapp,
+  obterCampanhaWhatsapp: driver.obterCampanhaWhatsapp,
+  definirStatusCampanhaWhatsapp: driver.definirStatusCampanhaWhatsapp,
+  contarEnviosCampanhaWhatsapp: driver.contarEnviosCampanhaWhatsapp,
+  materializarEnvioCampanhaWhatsapp: driver.materializarEnvioCampanhaWhatsapp,
+  listarPendentesCampanhaWhatsapp: driver.listarPendentesCampanhaWhatsapp,
+  marcarEnvioWhatsappEnviado: driver.marcarEnvioWhatsappEnviado,
+  marcarEnvioWhatsappFalha: driver.marcarEnvioWhatsappFalha,
+  registrarTentativaEnvioWhatsapp: driver.registrarTentativaEnvioWhatsapp,
+  marcarEnvioWhatsappOptOut: driver.marcarEnvioWhatsappOptOut,
+  atualizarStatusPorWamid: driver.atualizarStatusPorWamid,
+  registrarOptOutWhatsapp: driver.registrarOptOutWhatsapp,
+  estaOptOutWhatsapp: driver.estaOptOutWhatsapp,
+
 };

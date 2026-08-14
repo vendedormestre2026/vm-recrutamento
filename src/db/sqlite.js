@@ -2819,6 +2819,204 @@ function contarSequenciaWhatsapp(applicationId = null) {
     .all(...params);
 }
 
+// ──────────────────────────────────────────────────────────────
+// Campanha por WhatsApp (Meta Cloud API)
+// ──────────────────────────────────────────────────────────────
+
+function listarTemplatesWhatsapp() {
+  return getDb().prepare('SELECT * FROM templates_whatsapp ORDER BY nome_meta').all();
+}
+
+function obterTemplateWhatsapp(id) {
+  return getDb().prepare('SELECT * FROM templates_whatsapp WHERE id = ?').get(id);
+}
+
+function listarRegioesGrupos() {
+  return getDb().prepare('SELECT * FROM regioes_grupos_whatsapp ORDER BY cidade').all();
+}
+
+// Link do grupo de UMA praca, so se ativa. Devolve null quando a praca nao existe, esta
+// inativa ou ainda nao tem link — os tres casos significam a mesma coisa para o job: nao ha
+// para onde convidar, e o envio daquela pessoa nao pode sair.
+function obterLinkGrupo(cidade) {
+  const linha = getDb()
+    .prepare('SELECT link_convite_grupo FROM regioes_grupos_whatsapp WHERE cidade = ? AND ativo = 1')
+    .get(cidade);
+  const link = linha && String(linha.link_convite_grupo || '').trim();
+  return link || null;
+}
+
+function definirLinkGrupo(cidade, link) {
+  return getDb()
+    .prepare(
+      `UPDATE regioes_grupos_whatsapp
+          SET link_convite_grupo = ?, atualizado_em = datetime('now')
+        WHERE cidade = ?`,
+    )
+    .run(String(link || '').trim() || null, cidade).changes;
+}
+
+function criarCampanhaWhatsapp({ nome, templateId, baseAlvo }) {
+  return Number(
+    getDb()
+      .prepare('INSERT INTO campanhas_whatsapp (nome, template_id, base_alvo) VALUES (?, ?, ?)')
+      .run(nome, templateId, baseAlvo).lastInsertRowid,
+  );
+}
+
+function listarCampanhasWhatsapp() {
+  return getDb()
+    .prepare(
+      `SELECT c.*, t.nome_meta AS template_nome
+         FROM campanhas_whatsapp c
+         LEFT JOIN templates_whatsapp t ON t.id = c.template_id
+        ORDER BY c.id DESC`,
+    )
+    .all();
+}
+
+function obterCampanhaWhatsapp(id) {
+  return getDb()
+    .prepare(
+      `SELECT c.*, t.nome_meta AS template_nome, t.idioma AS template_idioma,
+              t.variaveis AS template_variaveis
+         FROM campanhas_whatsapp c
+         LEFT JOIN templates_whatsapp t ON t.id = c.template_id
+        WHERE c.id = ?`,
+    )
+    .get(id);
+}
+
+function definirStatusCampanhaWhatsapp(id, status) {
+  const coluna =
+    status === 'ativa' ? ", iniciada_em = COALESCE(iniciada_em, datetime('now'))"
+      : status === 'concluida' ? ", concluida_em = datetime('now')" : '';
+  return getDb()
+    .prepare(`UPDATE campanhas_whatsapp SET status = ?${coluna} WHERE id = ?`)
+    .run(status, id).changes;
+}
+
+// Contagem por status, para o painel. Uma consulta agregada para TODAS as campanhas — a tela
+// lista varias, e uma consulta por linha seria N+1 no mesmo lugar onde ele ja e divida.
+function contarEnviosCampanhaWhatsapp(campanhaId = null) {
+  const where = campanhaId ? 'WHERE campanha_id = ?' : '';
+  const params = campanhaId ? [campanhaId] : [];
+  return getDb()
+    .prepare(`SELECT campanha_id, status, COUNT(*) n FROM campanha_whatsapp_envios ${where} GROUP BY campanha_id, status`)
+    .all(...params);
+}
+
+// Materializa o publico. Telefone JA normalizado por quem chama.
+// ON CONFLICT DO NOTHING: o UNIQUE(campanha_id, telefone) e a garantia de que uma pessoa
+// recebe a campanha uma vez, e o DO NOTHING evita que a duplicata vire excecao no meio do
+// laco de materializacao.
+function materializarEnvioCampanhaWhatsapp({ campanhaId, telefone, nome, origemTipo, origemId, cidade }) {
+  return getDb()
+    .prepare(
+      `INSERT INTO campanha_whatsapp_envios
+         (campanha_id, telefone, nome, origem_tipo, origem_id, cidade)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(campanha_id, telefone) DO NOTHING`,
+    )
+    .run(campanhaId, telefone, nome || null, origemTipo, origemId || null, cidade || null).changes;
+}
+
+// A fila do ciclo: pendentes de campanhas ATIVAS. O JOIN com campanhas_whatsapp e filtro de
+// seguranca, nao conveniencia — mesma razao do JOIN de listarEnviosPendentesCampanha: linha
+// pendente de campanha pausada NAO pode sair.
+function listarPendentesCampanhaWhatsapp({ limite = 50 } = {}) {
+  const teto = Number.isInteger(limite) && limite > 0 ? limite : 50;
+  return getDb()
+    .prepare(
+      `SELECT e.id, e.campanha_id, e.telefone, e.nome, e.cidade, e.tentativas,
+              c.template_id,
+              t.nome_meta AS template_nome, t.idioma AS template_idioma,
+              t.variaveis AS template_variaveis
+         FROM campanha_whatsapp_envios e
+         JOIN campanhas_whatsapp c ON c.id = e.campanha_id
+         LEFT JOIN templates_whatsapp t ON t.id = c.template_id
+        WHERE e.status = 'pendente'
+          AND c.status = 'ativa'
+        ORDER BY e.id
+        LIMIT ?`,
+    )
+    .all(teto);
+}
+
+// As tres transicoes, todas condicionais ao 'pendente' — mesmo contrato de campanha_envios.
+function marcarEnvioWhatsappEnviado(id, wamid) {
+  return getDb()
+    .prepare(
+      `UPDATE campanha_whatsapp_envios
+          SET status = 'enviado', wamid = ?, enviado_em = datetime('now'), erro = NULL,
+              tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(wamid || null, id).changes;
+}
+
+function marcarEnvioWhatsappFalha(id, erro) {
+  return getDb()
+    .prepare(
+      `UPDATE campanha_whatsapp_envios SET status = 'falha', erro = ?, tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(String(erro || '').slice(0, 300), id).changes;
+}
+
+function registrarTentativaEnvioWhatsapp(id, erro) {
+  return getDb()
+    .prepare(
+      `UPDATE campanha_whatsapp_envios SET erro = ?, tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(String(erro || '').slice(0, 300), id).changes;
+}
+
+// Opt-out: a pessoa pediu para sair ANTES de esta linha sair. Distinto de 'falha' de
+// proposito — ver a nota no schema.
+function marcarEnvioWhatsappOptOut(id) {
+  return getDb()
+    .prepare(
+      `UPDATE campanha_whatsapp_envios SET status = 'opt_out', erro = 'opt-out registrado'
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(id).changes;
+}
+
+// Atualizacao vinda do WEBHOOK, casada pelo wamid.
+//
+// Sem condicao de status: 'entregue' e 'lido' chegam DEPOIS de 'enviado', e a ordem dos
+// eventos da Meta nao e garantida. A guarda e nao regredir — um 'entregue' que chega atrasado
+// nao pode rebaixar um 'lido' que ja chegou.
+const ORDEM_STATUS_WA = { enviado: 1, entregue: 2, lido: 3 };
+function atualizarStatusPorWamid(wamid, novoStatus, erro = null) {
+  const db = getDb();
+  const linha = db.prepare('SELECT id, status FROM campanha_whatsapp_envios WHERE wamid = ?').get(wamid);
+  if (!linha) return 0;
+  if (novoStatus === 'falha') {
+    return db
+      .prepare("UPDATE campanha_whatsapp_envios SET status = 'falha', erro = ? WHERE id = ?")
+      .run(String(erro || '').slice(0, 300), linha.id).changes;
+  }
+  const atual = ORDEM_STATUS_WA[linha.status] || 0;
+  const novo = ORDEM_STATUS_WA[novoStatus] || 0;
+  if (novo <= atual) return 0; // nao regride
+  return db.prepare('UPDATE campanha_whatsapp_envios SET status = ? WHERE id = ?').run(novoStatus, linha.id).changes;
+}
+
+// Opt-out por telefone. PK = telefone normalizado; OR IGNORE porque registrar duas vezes e
+// inofensivo e nao deve virar excecao no meio do processamento de um webhook.
+function registrarOptOutWhatsapp(telefone, origem) {
+  return getDb()
+    .prepare('INSERT OR IGNORE INTO whatsapp_opt_out (telefone, origem) VALUES (?, ?)')
+    .run(telefone, origem || null).changes;
+}
+
+function estaOptOutWhatsapp(telefone) {
+  return Boolean(getDb().prepare('SELECT 1 FROM whatsapp_opt_out WHERE telefone = ?').get(telefone));
+}
+
 // Cidades distintas que existem no banco, para montar as opcoes do filtro de campanha.
 //
 // UNIAO de TRES fontes: `talentos.cidade` (preenchida por backfill nos importados),
@@ -2910,6 +3108,25 @@ module.exports = {
   contarEntrevistasConcluidasComContexto,
   listarOrigensDistintas,
   listarCidadesDistintas,
+  listarTemplatesWhatsapp,
+  obterTemplateWhatsapp,
+  listarRegioesGrupos,
+  obterLinkGrupo,
+  definirLinkGrupo,
+  criarCampanhaWhatsapp,
+  listarCampanhasWhatsapp,
+  obterCampanhaWhatsapp,
+  definirStatusCampanhaWhatsapp,
+  contarEnviosCampanhaWhatsapp,
+  materializarEnvioCampanhaWhatsapp,
+  listarPendentesCampanhaWhatsapp,
+  marcarEnvioWhatsappEnviado,
+  marcarEnvioWhatsappFalha,
+  registrarTentativaEnvioWhatsapp,
+  marcarEnvioWhatsappOptOut,
+  atualizarStatusPorWamid,
+  registrarOptOutWhatsapp,
+  estaOptOutWhatsapp,
   agendarEnvioWhatsapp,
   listarPendentesSequenciaWhatsapp,
   marcarSequenciaWhatsappEnviada,

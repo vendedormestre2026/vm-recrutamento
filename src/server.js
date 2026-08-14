@@ -25,6 +25,8 @@ const lembreteInicio = require('./lib/lembreteInicio');
 const limpezaAudio = require('./lib/limpezaAudio');
 const dispararPromocao = require('./lib/dispararPromocao');
 const sequenciaWhatsapp = require('./whatsapp/sequenciaOutbox');
+const campanhaWhatsapp = require('./lib/campanhaWhatsapp');
+const { router: webhookMeta } = require('./routes/webhook_meta');
 
 // Follow-up de entrevistas nao concluidas: de quanto em quanto tempo a varredura roda.
 // Nao e o atraso do e-mail (esse e configuravel no painel, em horas) — e so a resolucao
@@ -59,6 +61,11 @@ const INTERVALO_PROMOCAO_MS = 15 * 60 * 1000;
 // negocio — um candidato esperar 15 min pela primeira mensagem porque o ciclo acabou de
 // passar seria transformar o T+0 em T+15 na pratica.
 const INTERVALO_WHATSAPP_SEQ_MS = 5 * 60 * 1000;
+
+// Campanha por WhatsApp (Meta): 10 min. Mais espacado que a sequencia (5 min) porque aqui
+// nao ha nada "imediato" — campanha e envio em massa, e o custo de espalhar no tempo e zero
+// contra o risco de rajada, que a Meta mede como qualidade.
+const INTERVALO_CAMPANHA_WA_MS = 10 * 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -95,6 +102,9 @@ function criarApp() {
   // Disparo por WhatsApp. Consumidor e o n8n, nao o navegador: auth por chave de servico
   // (x-disparo-api-key), 401 JSON em vez de redirect. Ver routes/api_whatsapp.
   app.use('/api', apiWhatsapp);
+  // Webhook PUBLICO da Meta. Tem parser proprio (com corpo cru para a assinatura HMAC), e
+  // por isso nao depende do express.json() global — que segue intocado para todo o resto.
+  app.use('/webhook', webhookMeta);
   app.use('/admin', admin); // painel do recrutador (protegido por adminAuth interno)
   app.use('/bancodecurriculos', bancoCurriculos); // Banco de Curriculos (paginas publicas)
   app.use('/', paginas);
@@ -139,6 +149,7 @@ function iniciar() {
   agendarLimpezaAudio();
   agendarDisparoPromocao();
   agendarSequenciaWhatsapp();
+  agendarCampanhaWhatsapp();
 }
 
 // Agendador do follow-up de entrevistas nao concluidas.
@@ -274,6 +285,22 @@ function agendarSequenciaWhatsapp() {
   console.log(
     `[wa-seq] varredura agendada a cada ${INTERVALO_WHATSAPP_SEQ_MS / 60000} min ` +
       `(1a passada no boot; ate ${sequenciaWhatsapp.POR_CICLO} envios por ciclo).`,
+  );
+}
+
+// Campanha por WhatsApp (Meta Cloud API). Kill-switch campanha_whatsapp_ativa (painel),
+// OFF por padrao, e META_CAMPANHA_MOCK=true por padrao no adaptador — com os dois no default
+// o ciclo roda, loga e nao envia nada.
+function agendarCampanhaWhatsapp() {
+  void campanhaWhatsapp.varrerSeOcioso();
+
+  setInterval(() => {
+    void campanhaWhatsapp.varrerSeOcioso();
+  }, INTERVALO_CAMPANHA_WA_MS);
+
+  console.log(
+    `[campanha-wa] varredura agendada a cada ${INTERVALO_CAMPANHA_WA_MS / 60000} min ` +
+      `(1a passada no boot; ate ${campanhaWhatsapp.ENVIOS_POR_CICLO} envios por ciclo).`,
   );
 }
 
