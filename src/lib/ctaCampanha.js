@@ -47,6 +47,11 @@ const marca = require('./marcaEmail');
 // aparecer no filtro de Origem sozinho, assim que a primeira candidatura chegar.
 const UTM_SOURCE_CAMPANHA = 'email';
 
+// Origem dos links da campanha por WhatsApp. Valor novo no painel: nao ha enum fechado de
+// utm_source (a coluna e TEXT livre e listarOrigensDistintas deriva dos dados), entao ele
+// aparece sozinho no filtro assim que a primeira candidatura chegar por aqui.
+const UTM_SOURCE_WHATSAPP = 'whatsapp';
+
 // Texto do botao e do rodape, em constantes: sao o conteudo FIXO da moldura, e ter os tres
 // juntos aqui em cima deixa obvio o que um e-mail de campanha diz alem do texto do LLM.
 //
@@ -79,12 +84,26 @@ const TEXTO_LINK_DESCADASTRO = 'Não quero mais receber divulgação de vagas';
 // A funcao ganhou `campanhaId` e ja tinha `baseUrl`, os dois opcionais. Como posicionais,
 // `montarUrlVaga(slug, 7)` e `montarUrlVaga(slug, 'https://...')` seriam indistinguiveis
 // para quem le, e trocar a ordem passaria em qualquer teste de fumaca.
-function montarUrlVaga(slug, { campanhaId, baseUrl = config.baseUrl } = {}) {
+// ── `utmSource` e `campanhaWhatsappId` foram acrescentados para a campanha por WhatsApp ──
+//
+// `utmSource` tem DEFAULT igual a constante de sempre: nenhum call site de e-mail muda de
+// comportamento, e a unica forma de o link sair com outra origem e alguem pedir
+// explicitamente. Era a alternativa a duplicar esta funcao — e duas versoes da mesma regra de
+// montagem de URL divergiriam no primeiro ajuste.
+//
+// `campanhaWhatsappId` e parametro SEPARADO de `campanhaId`, e nao um reuso: as duas
+// campanhas moram em tabelas diferentes com ids independentes. Passar o id de uma campanha de
+// WhatsApp como `campanhaId` gravaria em vaga_acessos.campanha_id um numero que casa com a
+// campanha de E-MAIL de mesmo id — atribuindo o clique a campanha errada, sem erro nenhum.
+function montarUrlVaga(
+  slug,
+  { campanhaId, campanhaWhatsappId, utmSource = UTM_SOURCE_CAMPANHA, baseUrl = config.baseUrl } = {},
+) {
   const s = String(slug || '').trim();
   if (!s) return '';
 
   const url = new URL(`/vaga/${encodeURIComponent(s)}`, String(baseUrl || '').replace(/\/+$/, '') + '/');
-  url.searchParams.set('utm_source', UTM_SOURCE_CAMPANHA);
+  url.searchParams.set('utm_source', String(utmSource || UTM_SOURCE_CAMPANHA));
 
   // `campanha_id` e o que permite contar cliques POR CAMPANHA, e nao "acessos com
   // utm_source=email no periodo". A diferenca aparece no dia em que duas campanhas
@@ -95,6 +114,9 @@ function montarUrlVaga(slug, { campanhaId, baseUrl = config.baseUrl } = {}) {
   // seria ruido no link e lixo no banco.
   const id = Number(campanhaId);
   if (Number.isInteger(id) && id > 0) url.searchParams.set('campanha_id', String(id));
+
+  const idWa = Number(campanhaWhatsappId);
+  if (Number.isInteger(idWa) && idWa > 0) url.searchParams.set('campanha_whatsapp_id', String(idWa));
 
   return url.toString();
 }
@@ -371,6 +393,7 @@ module.exports = {
   blocoRodape,
   blocoCabecalho,
   UTM_SOURCE_CAMPANHA,
+  UTM_SOURCE_WHATSAPP,
   TEXTO_BOTAO_CTA,
   TITULO_CABECALHO,
   TEXTO_LINK_DESCADASTRO,
