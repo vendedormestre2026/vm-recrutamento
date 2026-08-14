@@ -218,6 +218,34 @@ async function conectar(deps = {}) {
   return socket;
 }
 
+// Envia UMA mensagem de texto.
+//
+// ── ESTA FUNCAO NAO EXISTIA ATE AQUI ──
+// O Incremento 3 construiu so o ciclo de vida do socket. O enunciado do Incremento 6 pedia
+// para "confirmar a interface que ele vai consumir": ela nao existia, e esta e ela.
+//
+// LANCA quando nao ha socket conectado, em vez de devolver false. O chamador (a fila) precisa
+// distinguir "nao consegui" de "enviei": um retorno falsy silencioso viraria linha marcada
+// como enviada sem mensagem nenhuma ter saido — o pior desfecho possivel aqui.
+//
+// `jid` no formato do WhatsApp: <digitos>@s.whatsapp.net. O telefone chega JA normalizado
+// (so digitos, com DDI) — normalizar aqui de novo seria uma segunda fonte de verdade.
+//
+// ⚠️ NUNCA exercitada contra o WhatsApp real. Os testes injetam socket falso.
+async function enviarTexto(telefoneNormalizado, texto, deps = {}) {
+  const socket = deps.socket || estado.socket;
+  if (!socket) {
+    throw new Error('WhatsApp sem socket ativo: mensagem nao enviada.');
+  }
+  if (estado.status !== 'conectado' && !deps.socket) {
+    throw new Error(`WhatsApp em '${estado.status}': mensagem nao enviada.`);
+  }
+  const digitos = String(telefoneNormalizado || '').replace(/\D/g, '');
+  if (!digitos) throw new Error('Telefone vazio: mensagem nao enviada.');
+
+  return socket.sendMessage(`${digitos}@s.whatsapp.net`, { text: String(texto) });
+}
+
 // Fechamento deliberado. Marca no Set ANTES de fechar, para o listener nao reconectar.
 async function desconectar() {
   fechando.add(INSTANCIA_PADRAO);
@@ -252,6 +280,7 @@ function _resetar() {
 module.exports = {
   conectar,
   desconectar,
+  enviarTexto,
   status,
   qrAtual,
   limparQr,

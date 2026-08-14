@@ -2693,6 +2693,97 @@ function registrarDisparoWhatsapp({ telefone, nome, status, erroMsg, origem, cid
   return info.changes;
 }
 
+// ──────────────────────────────────────────────────────────────
+// Sequencia de WhatsApp (WA1/WA2) — fila
+// ──────────────────────────────────────────────────────────────
+
+// Agenda UMA etapa. Idempotente pelo UNIQUE(application_id, etapa): chamar duas vezes para a
+// mesma candidatura nao duplica, e o DO NOTHING evita que o segundo agendamento vire
+// excecao no meio da criacao de uma candidatura.
+//
+// Devolve true se criou, false se ja existia — o chamador usa isso so para o log.
+function agendarEnvioWhatsapp({ applicationId, etapa, telefone, agendadoPara, templateNome }) {
+  const info = getDb()
+    .prepare(
+      `INSERT INTO whatsapp_sequencia_envios
+         (application_id, etapa, telefone_e164, template_nome, status, agendado_para)
+       VALUES (?, ?, ?, ?, 'pendente', ?)
+       ON CONFLICT(application_id, etapa) DO NOTHING`,
+    )
+    .run(applicationId, etapa, telefone, templateNome || null, agendadoPara);
+  return info.changes > 0;
+}
+
+// A fila do ciclo: o que ja venceu e ainda nao saiu.
+//
+// ORDER BY agendado_para: quem esperou mais sai primeiro. Sem ordem, o teto por ciclo
+// recortaria arbitrariamente e um WA2 atrasado poderia ficar para tras indefinidamente
+// enquanto WA1 novos passam na frente.
+//
+// O JOIN traz o que o texto precisa (nome, vaga, empresa) — sao poucos por ciclo, mas uma
+// consulta por linha seria N+1 por nada, e o motor ja tem tudo aqui.
+function listarPendentesSequenciaWhatsapp({ limite = 50, agora = null } = {}) {
+  const teto = Number.isInteger(limite) && limite > 0 ? limite : 50;
+  return getDb()
+    .prepare(
+      `SELECT s.id, s.application_id, s.etapa, s.telefone_e164, s.tentativas, s.agendado_para,
+              a.nome AS app_nome, a.telefone AS app_telefone,
+              j.titulo AS job_titulo, j.empresa AS job_empresa, j.perfil AS job_perfil
+         FROM whatsapp_sequencia_envios s
+         JOIN applications a ON a.id = s.application_id
+         LEFT JOIN jobs j ON j.id = a.job_id
+        WHERE s.status = 'pendente'
+          AND s.agendado_para <= COALESCE(?, datetime('now'))
+        ORDER BY s.agendado_para ASC
+        LIMIT ?`,
+    )
+    .all(agora, teto);
+}
+
+// Marca como enviada. Condicional ao 'pendente', mesmo padrao de marcarEnvioCampanhaEnviado:
+// se dois ciclos se cruzarem, o segundo grava 0 linhas.
+function marcarSequenciaWhatsappEnviada(id, quando = null) {
+  return getDb()
+    .prepare(
+      `UPDATE whatsapp_sequencia_envios
+          SET status = 'enviado', enviado_em = COALESCE(?, datetime('now')), erro = NULL,
+              tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(quando, id).changes;
+}
+
+// Conta a tentativa e DEIXA em 'pendente' — a linha volta no proximo ciclo.
+function registrarTentativaSequenciaWhatsapp(id, erro) {
+  return getDb()
+    .prepare(
+      `UPDATE whatsapp_sequencia_envios SET erro = ?, tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(String(erro || '').slice(0, 300), id).changes;
+}
+
+// Encerra em falha. Usado quando o teto de tentativas estoura E quando o telefone e
+// invalido — este ultimo sem passar por retry, porque tentar de novo nao conserta o numero.
+function marcarSequenciaWhatsappFalha(id, erro) {
+  return getDb()
+    .prepare(
+      `UPDATE whatsapp_sequencia_envios
+          SET status = 'falha', erro = ?, tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(String(erro || '').slice(0, 300), id).changes;
+}
+
+// Resumo por etapa/status, para o painel do Incremento 7 e para o log do ciclo.
+function contarSequenciaWhatsapp(applicationId = null) {
+  const where = applicationId ? 'WHERE application_id = ?' : '';
+  const params = applicationId ? [applicationId] : [];
+  return getDb()
+    .prepare(`SELECT etapa, status, COUNT(*) n FROM whatsapp_sequencia_envios ${where} GROUP BY etapa, status`)
+    .all(...params);
+}
+
 // Cidades distintas que existem no banco, para montar as opcoes do filtro de campanha.
 //
 // UNIAO de TRES fontes: `talentos.cidade` (preenchida por backfill nos importados),
@@ -2784,6 +2875,12 @@ module.exports = {
   contarEntrevistasConcluidasComContexto,
   listarOrigensDistintas,
   listarCidadesDistintas,
+  agendarEnvioWhatsapp,
+  listarPendentesSequenciaWhatsapp,
+  marcarSequenciaWhatsappEnviada,
+  registrarTentativaSequenciaWhatsapp,
+  marcarSequenciaWhatsappFalha,
+  contarSequenciaWhatsapp,
   listarCandidatosPorCidadeVaga,
   listarLegadoPorCidade,
   listarTelefonesDisparados,

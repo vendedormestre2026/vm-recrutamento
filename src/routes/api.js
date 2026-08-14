@@ -13,6 +13,7 @@ const multer = require('multer');
 const { config } = require('../config');
 const db = require('../db');
 const session = require('../lib/session');
+const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
 const { extrairTextoPdf } = require('../lib/curriculo');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
@@ -227,6 +228,22 @@ router.post('/aplicacao', (req, res) => {
         utm_content: utm ? utm.content : null,
         utm_term: utm ? utm.term : null,
         status: 'aplicado',
+      });
+
+      // ── Sequencia de WhatsApp (WA1 agora, WA2 em +4h) — fire-and-forget ──
+      //
+      // LOGO APOS a criacao, e nao dentro de uma transacao com ela: criarAplicacao e um
+      // INSERT unico (better-sqlite3 auto-commit), entao nao ha transacao envolvente para
+      // entrar. Conferido no diagnostico.
+      //
+      // agendarSequencia NUNCA lanca — o try/catch mora dentro dela. Mesmo principio do
+      // middleware de funil: perder um agendamento e barato, travar um candidato no meio do
+      // cadastro nao e. Se o interruptor estiver desligado, ela simplesmente nao cria linha.
+      sequenciaWhatsapp.agendarSequencia({
+        id: applicationId,
+        nome,
+        telefone,
+        criado_em: new Date().toISOString(),
       });
 
       // DEV ONLY: loga o token para testar a tela de Identificacao depois.

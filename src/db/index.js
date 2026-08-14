@@ -160,4 +160,12 @@ module.exports = {
   listarLegadoPorCidade: driver.listarLegadoPorCidade,
   listarTelefonesDisparados: driver.listarTelefonesDisparados,
   registrarDisparoWhatsapp: driver.registrarDisparoWhatsapp,
+
+  // Sequencia WA1/WA2 (whatsapp/sequenciaOutbox)
+  agendarEnvioWhatsapp: driver.agendarEnvioWhatsapp,
+  listarPendentesSequenciaWhatsapp: driver.listarPendentesSequenciaWhatsapp,
+  marcarSequenciaWhatsappEnviada: driver.marcarSequenciaWhatsappEnviada,
+  registrarTentativaSequenciaWhatsapp: driver.registrarTentativaSequenciaWhatsapp,
+  marcarSequenciaWhatsappFalha: driver.marcarSequenciaWhatsappFalha,
+  contarSequenciaWhatsapp: driver.contarSequenciaWhatsapp,
 };

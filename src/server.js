@@ -24,6 +24,7 @@ const emailRecusa = require('./lib/emailRecusa');
 const lembreteInicio = require('./lib/lembreteInicio');
 const limpezaAudio = require('./lib/limpezaAudio');
 const dispararPromocao = require('./lib/dispararPromocao');
+const sequenciaWhatsapp = require('./whatsapp/sequenciaOutbox');
 
 // Follow-up de entrevistas nao concluidas: de quanto em quanto tempo a varredura roda.
 // Nao e o atraso do e-mail (esse e configuravel no painel, em horas) — e so a resolucao
@@ -53,6 +54,11 @@ const INTERVALO_LIMPEZA_AUDIO_MS = 15 * 60 * 1000;
 // 500/h, o limite contratado no provedor de campanha. Mexer em qualquer um dos dois muda
 // a vazao real contra o Emailit; os dois numeros so fazem sentido juntos.
 const INTERVALO_PROMOCAO_MS = 15 * 60 * 1000;
+
+// Sequencia de WhatsApp: 5 min, e nao 15 como as demais. WA1 e "imediato" por regra de
+// negocio — um candidato esperar 15 min pela primeira mensagem porque o ciclo acabou de
+// passar seria transformar o T+0 em T+15 na pratica.
+const INTERVALO_WHATSAPP_SEQ_MS = 5 * 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -132,6 +138,7 @@ function iniciar() {
   agendarLembreteInicio();
   agendarLimpezaAudio();
   agendarDisparoPromocao();
+  agendarSequenciaWhatsapp();
 }
 
 // Agendador do follow-up de entrevistas nao concluidas.
@@ -249,6 +256,24 @@ function agendarDisparoPromocao() {
   console.log(
     `[promocao] varredura agendada a cada ${INTERVALO_PROMOCAO_MS / 60000} min ` +
       `(1a passada no boot; ate ${dispararPromocao.ENVIOS_POR_CICLO} envios por ciclo).`,
+  );
+}
+
+// Sequencia WA1/WA2. DOIS interruptores, e os dois sao checados a cada ciclo:
+// whatsapp_sequencia_ativa (painel) e WHATSAPP_BAILEYS_ATIVO (env). Com qualquer um
+// desligado — que e o default — o ciclo so loga e nao toca no banco.
+function agendarSequenciaWhatsapp() {
+  // Primeira passada no boot, igual as outras cinco: depois de um deploy, um WA1 vencido
+  // nao espera mais 5 min.
+  void sequenciaWhatsapp.varrerSeOcioso();
+
+  setInterval(() => {
+    void sequenciaWhatsapp.varrerSeOcioso();
+  }, INTERVALO_WHATSAPP_SEQ_MS);
+
+  console.log(
+    `[wa-seq] varredura agendada a cada ${INTERVALO_WHATSAPP_SEQ_MS / 60000} min ` +
+      `(1a passada no boot; ate ${sequenciaWhatsapp.POR_CICLO} envios por ciclo).`,
   );
 }
 
