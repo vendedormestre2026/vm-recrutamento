@@ -77,7 +77,7 @@ function primeiroNome(nome) {
 function telefoneUtilizavel(telefone, contexto) {
   if (normalizarTelefoneRecebido(telefone) === telefone) return true;
   console.warn(
-    `[disparo-wpp] telefone EXCLUIDO da fila por nao sobreviver a ida e volta: ` +
+    `[telefone] EXCLUIDO do publico por nao sobreviver a ida e volta: ` +
       `${telefone} (${contexto}). Origem provavel: DDI duplicado no cadastro. ` +
       'Corrija o telefone na base para que a pessoa volte a ser elegivel.',
   );
@@ -169,4 +169,13 @@ function listarPendentesPorCidade(cidade, deps = {}) {
   return [...porTelefone.values()].filter((p) => !jaEnviados.has(p.telefone));
 }
 
-module.exports = { listarPendentesPorCidade, primeiroNome, CIDADE_TODAS };
+module.exports = {
+  listarPendentesPorCidade,
+  primeiroNome,
+  CIDADE_TODAS,
+  // Exportada para lib/publicoCampanhaWhatsapp. Era privada enquanto este era o unico motor
+  // de publico por telefone; com dois, a guarda precisa ser a MESMA — a auditoria mostrou os
+  // dois motores discordando sobre 6 registros reais de producao, e recopiar a regra seria
+  // garantir que voltassem a divergir no primeiro ajuste.
+  telefoneUtilizavel,
+};

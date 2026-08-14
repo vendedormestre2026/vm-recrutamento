@@ -22,11 +22,25 @@
 const dbPadrao = require('../db');
 const { normalizarTelefoneWhatsapp } = require('./whatsapp');
 const { aplicarFiltroAtributo, aplicarFiltroMulti, CIDADE_TODAS, PERFIS_VALIDOS } = require('./promocaoVagas');
+// A MESMA guarda do motor do disparo pontual, importada e nao recopiada.
+//
+// ── POR QUE ELA PRECISA ESTAR AQUI TAMBEM ──
+// `normalizarTelefoneWhatsapp` aceita um valor de formulario e devolve digitos com DDI — mas
+// ela nao RECUSA um telefone que ja veio corrompido da origem. "+55 +551998115119" (dado real
+// de producao, applications id 336) normaliza para 55551998115119: 14 digitos, dentro do teto
+// de sanidade, e portanto aceito. Esse numero nao existe.
+//
+// A auditoria encontrou os dois motores discordando sobre 6 registros assim: o do disparo
+// pontual os exclui, este os incluia. Duas campanhas calculando publicos incompativeis para a
+// mesma pessoa — e no caso do novo, materializando um numero que a Meta ou recusa (gastando
+// tier) ou entrega a OUTRA pessoa.
+const { telefoneUtilizavel } = require('./publicoDisparoWhatsapp');
 
 // ── AS EXCLUSOES AUTOMATICAS, QUE NAO SAO OPCAO DE TELA ──
 // Mesmo principio de promocaoVagas: sao invariantes, e transformar qualquer uma em checkbox
 // seria oferecer ao operador um jeito de errar caro — e aqui o erro custa o numero.
-//   1. sem telefone utilizavel;
+//   1. sem telefone utilizavel — inclui o que NORMALIZA mas nao sobrevive a ida e volta
+//      (DDI duplicado na origem), pela guarda compartilhada com o motor do disparo pontual;
 //   2. sem cidade resolvivel  -> nao ha praca, logo nao ha link de grupo nem recorte;
 //   3. sentinela 'Todas as cidades' -> ver a nota abaixo;
 //   4. em whatsapp_opt_out;
@@ -64,6 +78,9 @@ function coletarPessoas(deps = {}) {
   for (const linha of db.listarCandidatosParaCampanhaWhatsapp()) {
     const telefone = normalizarTelefoneWhatsapp(linha.telefone);
     if (!telefone) continue;
+    // ANTES de agrupar: um telefone corrompido nao pode nem entrar no Map, senao ele passa a
+    // ser a chave de dedup de uma pessoa que deveria estar fora.
+    if (!telefoneUtilizavel(telefone, `application ${linha.id}`)) continue;
     if (!porTelefone.has(telefone)) {
       porTelefone.set(telefone, {
         telefone,
@@ -93,6 +110,7 @@ function coletarPessoas(deps = {}) {
   for (const linha of db.listarTalentosParaCampanhaWhatsapp()) {
     const telefone = normalizarTelefoneWhatsapp(linha.telefone);
     if (!telefone) continue;
+    if (!telefoneUtilizavel(telefone, `talento ${linha.id}`)) continue;
     if (!porTelefone.has(telefone)) {
       porTelefone.set(telefone, {
         telefone,

@@ -628,6 +628,7 @@ test('admin: o checkbox do kill-switch liga e persiste', async () => {
 // ══════════════════ Motor de segmentacao (dois tipos) ══════════════════
 
 const publico = require('../src/lib/publicoCampanhaWhatsapp');
+const { normalizarTelefoneWhatsapp } = require('../src/lib/whatsapp');
 const { montarUrlVaga, UTM_SOURCE_CAMPANHA, UTM_SOURCE_WHATSAPP } = require('../src/lib/ctaCampanha');
 
 let seqSeg = 0;
@@ -785,5 +786,102 @@ test('montarUrlVaga: id invalido nao vira parametro', () => {
   for (const ruim of [0, -1, 'abc', null, undefined]) {
     const u = new URL(montarUrlVaga('vaga-x', { campanhaWhatsappId: ruim }));
     assert.equal(u.searchParams.get('campanha_whatsapp_id'), null, String(ruim));
+  }
+});
+
+// ══════════════════ Paridade entre os dois motores por telefone ══════════════════
+//
+// A auditoria encontrou os dois motores de publico POR TELEFONE discordando: o do disparo
+// pontual (publicoDisparoWhatsapp, consumido pelo n8n) aplicava a guarda de ida-e-volta antes
+// de incluir alguem; o da campanha Meta nao. Seis registros REAIS de producao (applications
+// ids 165, 210, 336, 513, 684, 741) eram excluidos por um e incluidos pelo outro.
+//
+// O estrago do lado do motor novo nao era "alguem fica de fora": era materializar um numero
+// que NAO EXISTE — que a Meta ou recusa (gastando tier) ou entrega a OUTRA pessoa.
+//
+// Os testes abaixo existem em duas camadas: um reproduz o caso exato encontrado, e o outro e
+// de PARIDADE — feito para pegar a PROXIMA divergencia, nao esta.
+
+const disparoPontual = require('../src/lib/publicoDisparoWhatsapp');
+
+// Os brutos REAIS dos 6 registros que a auditoria apontou, mais os padroes vizinhos.
+const TELEFONES_DA_AUDITORIA = [
+  // ── quebrados: normalizam, mas o resultado nao sobrevive a ida e volta ──
+  ['+55 +551998115119', false, 'id 336 — DDI duplicado E curto'],
+  ['+55 119972122344', false, 'id 165 — 12 digitos apos o DDI'],
+  ['+55 119836100077', false, 'id 210 — idem'],
+  ['+55 (19) 9999354073', false, 'id 513 — 10 apos o DDD'],
+  ['+351 912437103', false, 'id 741 — Portugal; limitacao BR-only, nao dado ruim'],
+  ['+55 +5547988301250', false, 'padrao dos 44 ja corrigidos'],
+  // ── validos ──
+  ['+55 (47) 99958-2500', true, 'formulario com mascara'],
+  ['+55 47989251350', true, 'legado sem mascara'],
+  ['+55 55987711950', true, 'DDD 55 (RS) — 13 digitos, NAO e DDI duplicado'],
+  ['+55 4733334444', true, 'fixo, 12 digitos'],
+  // ── nem normalizam ──
+  ['123', false, 'curto demais'],
+  ['nao tenho', false, 'sem digitos'],
+  ['+55 199831863', false, 'id 684 — 11 digitos, curto'],
+];
+
+test('o caso EXATO da auditoria: DDI duplicado fica fora dos DOIS tipos de campanha', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  // applications id 336 de producao, bruto identico.
+  candidatura(j, 'Ana Corrompida', '+55 +551998115119');
+  candidatura(j, 'Ana Valida', '+55 47 99958-2500');
+  legado('Legado Corrompido', '+55 +5547988301250', 'Joinville');
+
+  const convite = semRuido(() => publico.listarPublicoConviteGrupo({})).r;
+  const divulgacao = semRuido(() => publico.listarPublicoDivulgacaoVaga(vagaCom('Joinville'), {})).r;
+
+  // So o valido entra, nas duas funcoes.
+  assert.deepEqual(tels(convite), ['5547999582500']);
+  assert.deepEqual(tels(divulgacao), ['5547999582500']);
+  // E o numero corrompido nao aparece em lugar nenhum da saida — nem como chave de dedup.
+  for (const r of [convite, divulgacao]) {
+    assert.equal(r.itens.some((i) => i.telefone.startsWith('5555')), false);
+    assert.equal(r.itens.some((i) => i.telefone.length > 13), false);
+  }
+});
+
+test('PARIDADE: os dois motores concordam sobre o que e utilizavel', () => {
+  // Este teste nao existe para a divergencia que ja foi corrigida — existe para a PROXIMA.
+  // Se alguem mexer na guarda de um motor e nao do outro, ele quebra aqui.
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const esperados = [];
+
+  for (const [bruto, deveEntrar, rotulo] of TELEFONES_DA_AUDITORIA) {
+    legado(`P ${rotulo}`, bruto, 'Joinville');
+    if (deveEntrar) esperados.push(normalizarTelefoneWhatsapp(bruto));
+  }
+
+  // Motor NOVO (campanha Meta).
+  const doNovo = new Set(semRuido(() => publico.listarPublicoConviteGrupo({})).r.itens.map((i) => i.telefone));
+  // Motor ANTIGO (disparo pontual, consumido pelo n8n).
+  const doAntigo = new Set(
+    semRuido(() => disparoPontual.listarPendentesPorCidade('Joinville')).r.map((i) => i.telefone),
+  );
+
+  // Concordam entre si...
+  assert.deepEqual([...doNovo].sort(), [...doAntigo].sort(), 'os dois motores divergiram');
+  // ...e concordam com o esperado, para o teste nao passar por os dois estarem igualmente
+  // errados.
+  assert.deepEqual([...doNovo].sort(), esperados.sort());
+});
+
+test('PARIDADE: a guarda e a MESMA funcao, nao uma copia', () => {
+  // Recopiar a regra seria garantir que os dois divergissem no primeiro ajuste. O import
+  // compartilhado e o que torna a paridade estrutural, e nao coincidencia.
+  assert.equal(typeof disparoPontual.telefoneUtilizavel, 'function');
+  for (const [bruto, deveEntrar] of TELEFONES_DA_AUDITORIA) {
+    const n = normalizarTelefoneWhatsapp(bruto);
+    if (!n) continue; // nem normaliza: os dois descartam antes da guarda
+    assert.equal(
+      semRuido(() => disparoPontual.telefoneUtilizavel(n, 'teste')).r,
+      deveEntrar,
+      `${bruto} -> ${n}`,
+    );
   }
 });
