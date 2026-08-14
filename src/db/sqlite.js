@@ -2775,6 +2775,41 @@ function marcarSequenciaWhatsappFalha(id, erro) {
     .run(String(erro || '').slice(0, 300), id).changes;
 }
 
+// As duas etapas de UMA candidatura, para a ficha do candidato.
+//
+// UMA consulta que devolve as duas linhas, e nao duas consultas por etapa: a ficha ja faz
+// varias leituras e nao ha razao para somar mais uma. Devolve [] quando nao ha sequencia —
+// candidatura anterior a esta feature e o caso NORMAL, nao erro.
+function listarSequenciaWhatsappDaApplication(applicationId) {
+  return getDb()
+    .prepare(
+      `SELECT etapa, status, telefone_e164, agendado_para, enviado_em, erro, tentativas
+         FROM whatsapp_sequencia_envios
+        WHERE application_id = ?
+        ORDER BY etapa`,
+    )
+    .all(applicationId);
+}
+
+// Grava a confirmacao MANUAL do video do WA2.
+//
+// UPDATE simples em `applications` — sao tres colunas, nao uma tabela a parte, entao
+// reconfirmar ATUALIZA em vez de duplicar. Nao ha estado a proteger: a ultima palavra do
+// recrutador e a que vale, inclusive para corrigir uma marcacao errada.
+//
+// `dentroPrazo` e TEXT ('sim'|'nao'|'na') pela razao registrada na migracao: sao tres
+// estados, e um booleano precisaria de um segundo campo para dizer "nao se aplica".
+function confirmarVideoWa2(applicationId, { recebidoEm, dentroPrazo, confirmadoPor }) {
+  return getDb()
+    .prepare(
+      `UPDATE applications
+          SET wa2_video_recebido_em = ?, wa2_video_dentro_prazo = ?, wa2_video_confirmado_por = ?
+        WHERE id = ?`,
+    )
+    .run(recebidoEm, dentroPrazo, String(confirmadoPor || '').trim().slice(0, 120) || null, applicationId)
+    .changes;
+}
+
 // Resumo por etapa/status, para o painel do Incremento 7 e para o log do ciclo.
 function contarSequenciaWhatsapp(applicationId = null) {
   const where = applicationId ? 'WHERE application_id = ?' : '';
@@ -2881,6 +2916,8 @@ module.exports = {
   registrarTentativaSequenciaWhatsapp,
   marcarSequenciaWhatsappFalha,
   contarSequenciaWhatsapp,
+  listarSequenciaWhatsappDaApplication,
+  confirmarVideoWa2,
   listarCandidatosPorCidadeVaga,
   listarLegadoPorCidade,
   listarTelefonesDisparados,

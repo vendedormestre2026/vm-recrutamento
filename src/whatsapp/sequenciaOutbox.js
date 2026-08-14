@@ -309,6 +309,7 @@ module.exports = {
   varrerSeOcioso,
   ativo,
   modoMock,
+  prazoWa2Horas,
   mascarar,
   CHAVE_ATIVO,
   WA2_ATRASO_HORAS,

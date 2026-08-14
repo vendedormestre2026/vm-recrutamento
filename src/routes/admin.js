@@ -42,6 +42,8 @@ const {
 const { gerarRelatorioPdf, slugNome } = require('../lib/relatorioPdf');
 const { criarRouterPromocao } = require('./admin_promocao');
 const { criarRouterWhatsapp } = require('./admin_whatsapp');
+const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
+const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
 
 const router = express.Router();
@@ -1354,6 +1356,41 @@ router.get('/candidato/:id', (req, res) => {
          <button type="submit" class="btn btn--ghost">Arquivar lead</button>
        </form>`;
 
+  // ── Sequencia de WhatsApp (WA1/WA2) + confirmacao do video ──
+  // UMA consulta para as duas etapas. Candidatura anterior a esta feature devolve [] e a
+  // tela mostra "não se aplica" — ausencia e o caso NORMAL aqui, nao erro.
+  const linhasWa = db.listarSequenciaWhatsappDaApplication(cand.id);
+  const wa1 = fichaWa.estadoEtapa(linhasWa, 'wa1');
+  const wa2 = fichaWa.estadoEtapa(linhasWa, 'wa2');
+  const limiteVideo = fichaWa.limiteDoVideo(linhasWa, sequenciaWhatsapp.prazoWa2Horas());
+  const situacaoVideo = fichaWa.situacaoVideo(cand, linhasWa);
+
+  const linhaEtapa = (rotulo, e) =>
+    `<div><dt>${rotulo}</dt><dd>${escapeHtml(e.rotulo)}` +
+    `${e.enviadoEm ? ` <small style="color:var(--cinza)">em ${escapeHtml(formatarDataHora(e.enviadoEm))}</small>` : ''}` +
+    `${e.erro ? `<br><small style="color:var(--cinza)">${escapeHtml(e.erro)}</small>` : ''}</dd></div>`;
+
+  // O botao so aparece depois de o WA2 ter SAIDO: confirmar recebimento de algo que o
+  // sistema nao registra ter enviado gravaria um dado que nao se sustenta.
+  const botaoVideoWa = fichaWa.podeConfirmarVideo(linhasWa)
+    ? `<a class="btn" href="/admin/candidato/${cand.id}/video-wa2">` +
+      `${situacaoVideo.confirmado ? 'Revisar confirmação do vídeo' : 'Marcar vídeo recebido'}</a>`
+    : `<button type="button" class="btn btn--off" disabled title="O WA2 ainda não foi enviado para este candidato.">Marcar vídeo recebido</button>`;
+
+  const blocoSequenciaWa = `
+    <section class="rel-sec">
+      <h2>Sequência de WhatsApp</h2>
+      <dl class="rel-id">
+        ${linhaEtapa('WA1 (imediato)', wa1)}
+        ${linhaEtapa('WA2 (+' + sequenciaWhatsapp.WA2_ATRASO_HORAS + 'h, pede vídeo)', wa2)}
+        <div><dt>Vídeo de apresentação</dt><dd>${escapeHtml(situacaoVideo.rotulo)}
+          ${situacaoVideo.confirmado && situacaoVideo.por ? `<br><small style="color:var(--cinza)">por ${escapeHtml(situacaoVideo.por)} em ${escapeHtml(formatarDataHora(situacaoVideo.em))}</small>` : ''}
+        </dd></div>
+        ${limiteVideo ? `<div><dt>Prazo do vídeo</dt><dd>${escapeHtml(formatarDataHora(limiteVideo.toISOString()))}</dd></div>` : ''}
+      </dl>
+      <div class="acoes-linha" style="margin-top:.8rem">${botaoVideoWa}</div>
+    </section>`;
+
   const conteudo = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
       <h1 style="margin:0;">${escapeHtml(nomeCompleto(cand))}</h1>
@@ -1412,6 +1449,8 @@ router.get('/candidato/:id', (req, res) => {
       ${camposExtrasHtml(cand.campos_extras)}
     </section>
 
+    ${blocoSequenciaWa}
+
     <section class="rel-sec">
       <h2>Ações</h2>
       <div class="acoes-linha" style="flex-wrap:wrap;gap:.6rem;">
@@ -1426,6 +1465,115 @@ router.get('/candidato/:id', (req, res) => {
     </section>`;
 
   res.send(paginaAdmin({ titulo: `Candidato — ${nomeCompleto(cand)}`, conteudo }));
+});
+
+// ── GET /admin/candidato/:id/video-wa2 ── tela de confirmacao do video ──
+//
+// Tela intermediaria, e nao um POST direto do botao. A razao e o item 1 da regra: o
+// recrutador ve o HORARIO-LIMITE calculado ANTES de confirmar. Um clique que grava
+// "dentro/fora do prazo" sem mostrar contra o que esta comparando e um clique cego, e o
+// resultado dele decide o destino de um candidato.
+router.get('/candidato/:id/video-wa2', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, { titulo: 'Candidato não encontrado', descricao: 'Não há candidatura com este identificador.' });
+  }
+
+  const linhas = db.listarSequenciaWhatsappDaApplication(id);
+  if (!fichaWa.podeConfirmarVideo(linhas)) {
+    return avisoAdmin(res, 400, {
+      titulo: 'WA2 ainda não foi enviado',
+      descricao:
+        'Não há registro de que a mensagem pedindo o vídeo tenha saído para este candidato. ' +
+        'Confirmar o recebimento agora gravaria um prazo que nunca começou a correr.',
+    });
+  }
+
+  const limite = fichaWa.limiteDoVideo(linhas, sequenciaWhatsapp.prazoWa2Horas());
+  const sugestao = fichaWa.sugestaoDentroPrazo(limite);
+  const atual = fichaWa.situacaoVideo(cand, linhas);
+  const wa2 = fichaWa.estadoEtapa(linhas, 'wa2');
+
+  const conteudo = `
+    <h1>Vídeo de apresentação</h1>
+    <p class="admin-sub">${escapeHtml(nomeCompleto(cand))}</p>
+
+    <div class="bloco-card" style="margin-top:1rem">
+      <dl class="rel-id">
+        <div><dt>WA2 enviado em</dt><dd>${escapeHtml(formatarDataHora(wa2.enviadoEm))}</dd></div>
+        <div><dt>Prazo (${sequenciaWhatsapp.prazoWa2Horas()}h)</dt><dd><b>${escapeHtml(formatarDataHora(limite.toISOString()))}</b></dd></div>
+        <div><dt>Agora</dt><dd>${escapeHtml(formatarDataHora(new Date().toISOString()))}</dd></div>
+      </dl>
+    </div>
+
+    ${atual.confirmado ? `<div class="aviso-alerta">Já confirmado: <b>${escapeHtml(atual.rotulo)}</b>${atual.por ? ` por ${escapeHtml(atual.por)}` : ''}. Salvar de novo <b>substitui</b> o registro anterior.</div>` : ''}
+
+    <form method="post" action="/admin/candidato/${cand.id}/video-wa2" class="vm-form">
+      <label class="campo">
+        <span>Chegou dentro do prazo?</span>
+        <select name="dentro_prazo">
+          <option value="sim"${sugestao === 'sim' ? ' selected' : ''}>Sim, dentro do prazo</option>
+          <option value="nao"${sugestao === 'nao' ? ' selected' : ''}>Não, fora do prazo</option>
+          <option value="na">Não se aplica</option>
+        </select>
+      </label>
+      <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+        A sugestão acima compara <b>agora</b> com o prazo. Corrija se souber que o vídeo
+        chegou antes de você estar olhando o painel — a confirmação é sempre depois do fato.
+      </p>
+
+      <label class="campo">
+        <span>Confirmado por</span>
+        <input type="text" name="confirmado_por" maxlength="120" placeholder="seu nome" value="${escapeHtml(atual.por || '')}">
+      </label>
+      <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+        Texto livre: o painel tem login único e não sabe quem está operando.
+      </p>
+
+      <div class="acoes-linha">
+        <button type="submit" class="btn">Confirmar vídeo recebido</button>
+        <a class="btn btn--ghost" href="/admin/candidato/${cand.id}">Cancelar</a>
+      </div>
+    </form>`;
+
+  res.send(paginaAdmin({ titulo: 'Vídeo de apresentação', conteudo }));
+});
+
+// ── POST /admin/candidato/:id/video-wa2 ──
+//
+// UPDATE simples: sao tres colunas em `applications`, nao uma tabela a parte. Reconfirmar
+// ATUALIZA em vez de duplicar — a ultima palavra do recrutador e a que vale, inclusive para
+// corrigir uma marcacao errada.
+router.post('/candidato/:id/video-wa2', (req, res) => {
+  const id = Number(req.params.id);
+  const cand = Number.isInteger(id) && id > 0 ? db.obterAplicacao(id) : null;
+  if (!cand) {
+    return avisoAdmin(res, 404, { titulo: 'Candidato não encontrado', descricao: 'Não há candidatura com este identificador.' });
+  }
+
+  const linhas = db.listarSequenciaWhatsappDaApplication(id);
+  if (!fichaWa.podeConfirmarVideo(linhas)) {
+    return avisoAdmin(res, 400, {
+      titulo: 'WA2 ainda não foi enviado',
+      descricao: 'Não há registro de envio do pedido de vídeo para este candidato.',
+    });
+  }
+
+  const b = req.body || {};
+  const bruto = String(b.dentro_prazo || '').trim().toLowerCase();
+  // Valor fora do enum cai em 'na' em vez de recusar: o fato (video recebido) e mais
+  // importante que o rotulo, e perder o registro por causa de um select adulterado seria
+  // proteger a etiqueta as custas do dado.
+  const dentroPrazo = fichaWa.DENTRO_PRAZO_VALIDOS.includes(bruto) ? bruto : 'na';
+
+  db.confirmarVideoWa2(id, {
+    recebidoEm: new Date().toISOString(),
+    dentroPrazo,
+    confirmadoPor: b.confirmado_por,
+  });
+
+  res.redirect(`/admin/candidato/${id}?salvo=video`);
 });
 
 // ── GET /admin/candidato/:id/whatsapp ── registra o 1o contato e abre o wa.me ──
@@ -3957,6 +4105,10 @@ const CHAVE_LIMPEZA_AUDIO_ATIVO = limpezaAudio.CHAVE_ATIVO;
 // nao esta num processo conosco, em volume, e nao ha como despublicar e-mail enviado.
 // Default FALSE, como todos os outros: nasce desligado.
 const CHAVE_PROMOCAO_ATIVA = dispararPromocao.CHAVE_ATIVO;
+// Interruptor de DISPARO da sequencia WA1/WA2. Ate aqui so era ligavel escrevendo direto em
+// `configuracoes` — o que e exatamente o tipo de coisa que ninguem lembra de desligar as
+// pressas. Ver whatsapp/sequenciaOutbox.
+const CHAVE_WHATSAPP_SEQ = sequenciaWhatsapp.CHAVE_ATIVO;
 
 // Endereco fixo do e-mail de TESTE da Promocao de Vagas. Mesma logica de propriedade das
 // chaves acima: mora em lib/emailTestePromocao, dono do subsistema. Vive no painel (e nao
@@ -3987,6 +4139,7 @@ router.get('/config', (req, res) => {
 
   // Disparo das campanhas de Promocao de Vagas (default desligado).
   const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
+  const whatsappSeqAtiva = db.obterConfigBool(CHAVE_WHATSAPP_SEQ, false);
 
   // Endereco do e-mail de teste de campanha. Vazio por padrao, de proposito: sem ele o
   // botao de teste na tela de campanha so sabe dizer "configure aqui primeiro".
@@ -4140,6 +4293,26 @@ router.get('/config', (req, res) => {
           para quem está num processo em andamento. <b>Só ligue depois de confirmar
           remetente, domínio verificado e descadastro funcionando.</b>
         </p>
+
+        <label class="campo-check">
+          <input type="checkbox" name="whatsapp_sequencia_ativa" value="1"${whatsappSeqAtiva ? ' checked' : ''}>
+          <span style="color:var(--preto);text-transform:none;">
+            Enviar a <b>sequência de WhatsApp</b> (WA1 e WA2) a cada nova candidatura
+          </span>
+        </label>
+        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+          Interruptor do <b>disparo</b>. Marcado, cada nova candidatura agenda duas
+          mensagens: <b>WA1</b> na hora (informativo, não pede nada) e <b>WA2</b> em
+          ${sequenciaWhatsapp.WA2_ATRASO_HORAS}h (pede o vídeo de apresentação).
+          Desmarcado (padrão), <b>nada é agendado</b> — não é "agenda e ignora", é não criar
+          a linha, para que ligar depois não dispare mensagens para quem se candidatou
+          semanas antes.
+          <br>
+          Este é <b>um dos dois</b> interruptores: a instância só conecta com
+          <code>WHATSAPP_BAILEYS_ATIVO=true</code> no ambiente, e o envio só sai de verdade
+          com <code>WHATSAPP_SEQUENCIA_MOCK=false</code>. Veja o estado da conexão em
+          <a href="/admin/whatsapp">WhatsApp</a>.
+        </p>
         <button type="submit" class="btn">Salvar</button>
       </form>
     </section>
@@ -4225,6 +4398,7 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_EMAIL_RECUSA_ATIVO, marcado('email_recusa_ativo'));
   db.definirConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, marcado('limpeza_audio_ativo'));
   db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
+  db.definirConfigBool(CHAVE_WHATSAPP_SEQ, marcado('whatsapp_sequencia_ativa'));
   res.redirect('/admin/config?salvo=1');
 });
 
