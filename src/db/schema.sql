@@ -426,3 +426,67 @@ CREATE TABLE IF NOT EXISTS disparos_whatsapp (
   enviado_em TEXT,               -- NULL quando desconhecido (historico sem timestamp)
   criado_em  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ──────────────────────────────────────────────────────────────
+-- Sequencia de WhatsApp (WA1/WA2) por instancia Baileys propria
+-- ──────────────────────────────────────────────────────────────
+
+-- Estado de autenticacao da sessao Baileys. E o "arquivo de credenciais" que o
+-- useMultiFileAuthState guardaria em disco, aqui em SQLite — porque o disco do container
+-- e efemero e o volume persistente ja e o banco.
+--
+-- ── O VALOR VAI CIFRADO ──
+-- `value` guarda o JSON serializado com BufferJSON.replacer, selado com AES-256-GCM
+-- (lib/whatsappSecrets, chave em WHATSAPP_SECRETS_KEY). Sao credenciais que permitem
+-- ENVIAR MENSAGEM COMO O JEAN: um dump do banco nao pode entregar isso em texto claro.
+--
+-- PK COMPOSTA (instance_id, key): o Baileys guarda dezenas de chaves por sessao
+-- ('creds', 'app-state-sync-key-...', 'pre-key-...', 'session-...'). `instance_id` existe
+-- para o dia em que houver mais de um numero; hoje e sempre 'jean'.
+CREATE TABLE IF NOT EXISTS baileys_auth (
+  instance_id TEXT NOT NULL DEFAULT 'jean',
+  key         TEXT NOT NULL,
+  value       TEXT NOT NULL,   -- JSON (BufferJSON) CIFRADO
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (instance_id, key)
+);
+
+-- Fila da sequencia WA1/WA2. Uma linha por (candidatura, etapa).
+--
+-- ── POR QUE UMA FILA, e nao envio no ato da candidatura ──
+-- WA2 sai 4h depois — precisa de fila por definicao. WA1 sai "imediato", mas passa pela
+-- MESMA fila de proposito: se o envio fosse inline no POST /api/aplicacao, uma queda do
+-- WhatsApp faria a candidatura falhar (ou exigiria try/catch que engole erro em silencio).
+-- Na fila, a candidatura conclui sempre e a mensagem e problema do job.
+--
+-- Diferente de campanha_envios em dois pontos que importam:
+--   - a unidade aqui e (application, etapa), nao (campanha, email);
+--   - `agendado_para` existe: campanha_envios drena tudo o que esta pendente, esta fila
+--     respeita relogio.
+--
+-- `status`: 'pendente' -> 'enviado' -> 'entregue' (ack do WhatsApp) | 'falha'.
+-- 'entregue' e uma transicao a mais que a campanha de e-mail nao tem — o Baileys devolve
+-- ack de entrega, e e a unica forma de saber que a mensagem chegou ao aparelho.
+-- Sem CHECK, pelo precedente do projeto para enum extensivel (ver talentos.categoria).
+CREATE TABLE IF NOT EXISTS whatsapp_sequencia_envios (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  application_id INTEGER NOT NULL,
+  etapa          TEXT NOT NULL,          -- 'wa1' | 'wa2'
+  telefone_e164  TEXT NOT NULL,          -- normalizado (so digitos, com DDI)
+  template_nome  TEXT,
+  status         TEXT NOT NULL DEFAULT 'pendente',
+  agendado_para  TEXT NOT NULL,          -- ISO; o job so olha o que ja venceu
+  enviado_em     TEXT,
+  entregue_em    TEXT,
+  erro           TEXT,
+  tentativas     INTEGER NOT NULL DEFAULT 0,
+  criado_em      TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Idempotencia: uma candidatura tem UM WA1 e UM WA2, nunca dois. E a mesma protecao do
+  -- UNIQUE(campanha_id, email) da campanha — sem ela, um bug de agendamento vira mensagem
+  -- duplicada no aparelho de alguem.
+  UNIQUE (application_id, etapa)
+);
+
+-- A consulta do job: "o que ja venceu e ainda nao saiu". A ordem das colunas segue o uso
+-- (igualdade em status, depois faixa em agendado_para).
+CREATE INDEX IF NOT EXISTS idx_wa_seq_fila ON whatsapp_sequencia_envios(status, agendado_para);

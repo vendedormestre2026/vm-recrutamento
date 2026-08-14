@@ -278,6 +278,24 @@ function migrar() {
   // distinguir "falhou uma vez por rajada" de "falhou cinco vezes, desista".
   adicionarColunaSeFaltar('campanha_envios', 'tentativas', 'INTEGER NOT NULL DEFAULT 0');
 
+  // ── Sequencia de WhatsApp (WA1/WA2): confirmacao MANUAL do video do WA2 ──
+  //
+  // Nao ha webhook nem correlacao automatica por telefone: o recrutador assiste ao video e
+  // marca no painel. As tres colunas guardam a decisao dele, e nao um estado inferido.
+  //
+  //   wa2_video_recebido_em     quando o recrutador CONFIRMOU (nao quando o video chegou —
+  //                             isso ninguem sabe). NULL = ainda nao confirmado.
+  //   wa2_video_dentro_prazo    'sim' | 'nao' | 'na'. Texto e nao INTEGER porque sao TRES
+  //                             estados: um booleano precisaria de um segundo campo para
+  //                             expressar "nao se aplica", e dois campos para um conceito
+  //                             so e como se perde a consistencia.
+  //   wa2_video_confirmado_por  quem marcou. O painel tem login unico hoje, mas registrar
+  //                             quem decidiu e barato agora e impossivel de reconstruir
+  //                             depois.
+  adicionarColunaSeFaltar('applications', 'wa2_video_recebido_em', 'TEXT');
+  adicionarColunaSeFaltar('applications', 'wa2_video_dentro_prazo', 'TEXT');
+  adicionarColunaSeFaltar('applications', 'wa2_video_confirmado_por', 'TEXT');
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();
