@@ -130,8 +130,17 @@ test('saveCreds grava CIFRADO — a coluna nao entrega a credencial', async () =
   const linha = db.getDb().prepare("SELECT value FROM baileys_auth WHERE key = 'creds'").get();
   assert.ok(linha, 'creds precisa estar no banco');
   assert.match(linha.value, /^v1\./);
-  // O registrationId e um numero conhecido dentro das creds; ele nao pode aparecer cru.
-  assert.doesNotMatch(linha.value, new RegExp(String(state.creds.registrationId)));
+
+  // ── A ASSERCAO PRECISA DE UM ALVO DE ALTA ENTROPIA ──
+  // A primeira versao deste teste procurava por `registrationId`, e era FLAKY por
+  // construcao: ele e um numero curto (saiu "67" numa rodada) e dois digitos aparecem por
+  // acaso num blob base64url de ~1.500 caracteres. O teste falhou sem que nada estivesse
+  // errado no produto.
+  //
+  // `advSecretKey` e uma string base64 de ~44 caracteres — a chance de colisao acidental e
+  // nula, e ela e exatamente o tipo de material que nao pode vazar.
+  assert.ok(state.creds.advSecretKey.length > 20, 'sanidade: o alvo precisa ser longo');
+  assert.doesNotMatch(linha.value, new RegExp(state.creds.advSecretKey.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')));
 });
 
 test('RELOAD: creds sobrevivem a descartar o objeto em memoria', async () => {
