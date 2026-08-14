@@ -4214,7 +4214,7 @@ router.get('/config', (req, res) => {
     </section>
 
     <section class="rel-sec">
-      <h2>Notificações por e-mail</h2>
+      <h2>Notificações por e-mail e WhatsApp</h2>
       <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
         Avisos enviados para <b>${escapeHtml(config.recrutador.email || 'RECRUITER_EMAIL não configurado')}</b>.
       </p>
