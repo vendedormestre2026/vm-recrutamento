@@ -265,4 +265,12 @@ module.exports = {
   mensagemNovaCandidatura,
   RECRUTADOR_PADRAO,
   TEMPLATE_PADRAO,
+  // ── Helpers de borda, expostos para lib/whatsappSequencia ──
+  // Eram internos enquanto este arquivo era o unico a montar mensagem. A sequencia WA1/WA2
+  // precisa das MESMAS regras (primeiro nome, omissao de empresa vazia, limpeza de espacos
+  // residuais), e importa-las e o unico jeito de as duas nao divergirem no dia em que uma
+  // for ajustada. Recopiar seria a garantia da divergencia.
+  primeiroNomeDe,
+  textoEmpresa,
+  limparEspacos,
 };
