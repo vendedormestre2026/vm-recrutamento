@@ -309,13 +309,23 @@ test('telefone invalido na fila vai DIRETO para falha, sem retry', async () => {
 test('so processa o que JA VENCEU', async () => {
   zerar();
   ligarTudo();
-  const app = criarApplication('+55 (47) 99958-2500', '2026-08-14 10:00:00');
-  await comLogs(() => outbox.agendarSequencia({ ...app, criado_em: '2026-08-14 10:00:00' }));
 
-  // Agora = 11:00 -> WA1 (10:00) venceu, WA2 (14:00) nao.
+  // ── RELOGIO RELATIVO, e nao datas fixas ──
+  // A primeira versao deste teste cravava '2026-08-14 10:00:00' como criado_em e
+  // '2026-08-14 11:00:00' como "agora". Funcionou ate o dia virar para 14/08/2026: o WA1 e
+  // agendado com o relogio REAL (agendarSequencia usa `new Date()`), entao passou a nascer
+  // depois das 11:00 do fake e deixou de vencer. Teste que quebra por causa da data do
+  // calendario e teste que mente sobre o produto.
+  //
+  // Agora tudo e relativo ao instante da execucao: criado_em = agora real, logo WA1 vence
+  // imediatamente e WA2 (criado_em + 4h) esta no futuro por construcao, em qualquer dia.
+  const agoraReal = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const app = criarApplication('+55 (47) 99958-2500', agoraReal);
+  await comLogs(() => outbox.agendarSequencia({ ...app, criado_em: agoraReal }));
+
   const envio = envioDuble();
   const { r } = await comLogs(() =>
-    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, agora: '2026-08-14 11:00:00' })),
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn })),
   );
 
   assert.equal(r.enviados, 1);
