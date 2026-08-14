@@ -296,6 +296,34 @@ function migrar() {
   adicionarColunaSeFaltar('applications', 'wa2_video_dentro_prazo', 'TEXT');
   adicionarColunaSeFaltar('applications', 'wa2_video_confirmado_por', 'TEXT');
 
+  // ── Campanha por WhatsApp: segundo TIPO de mensagem ──
+  //
+  // A campanha nasceu servindo a um caso so (convite de grupo). O segundo tipo — divulgacao
+  // de vaga — muda o que a mensagem precisa carregar: o convite leva o link do GRUPO da
+  // praca; a divulgacao leva o link da VAGA. Sao publicos e variaveis diferentes, e por isso
+  // o tipo e coluna e nao convencao.
+  //
+  // DEFAULT 'convite_grupo': as campanhas que ja existem foram criadas quando so havia esse
+  // tipo, e e literalmente o que elas sao. Sem CHECK na coluna adicionada — o SQLite nao
+  // aceita CHECK em ADD COLUMN; a validacao vive na rota e no schema.sql (banco novo).
+  adicionarColunaSeFaltar('campanhas_whatsapp', 'tipo_mensagem', "TEXT NOT NULL DEFAULT 'convite_grupo'");
+  // Obrigatorio quando tipo_mensagem='divulgacao_vaga', nullable no outro caso — por isso
+  // nullable na coluna e exigido na rota. Um NOT NULL aqui impediria o convite de grupo,
+  // que nao tem vaga.
+  adicionarColunaSeFaltar('campanhas_whatsapp', 'job_id', 'INTEGER REFERENCES jobs(id)');
+  // Total calculado na CRIACAO. Espelha campanhas.total_destinatarios: serve para a tela
+  // mostrar a divergencia quando o publico muda entre criar o rascunho e disparar.
+  adicionarColunaSeFaltar('campanhas_whatsapp', 'total_estimado', 'INTEGER');
+  // JSON dos filtros escolhidos na criacao. Espelha campanhas.criterios: o publico e
+  // RECALCULADO no disparo a partir deles, e nao congelado na criacao — entre os dois
+  // momentos entra gente nova, sai quem pediu opt-out, e o recorte de verdade e o de AGORA.
+  adicionarColunaSeFaltar('campanhas_whatsapp', 'criterios_json', 'TEXT');
+
+  // Atribuicao de clique da campanha de WhatsApp. IRMA de vaga_acessos.campanha_id, e nao
+  // substituta: sao tabelas de campanha DIFERENTES com ids independentes, e reusar a mesma
+  // coluna faria o clique de uma campanha de WhatsApp #7 casar com a campanha de e-mail #7.
+  adicionarColunaSeFaltar('vaga_acessos', 'campanha_whatsapp_id', 'INTEGER REFERENCES campanhas_whatsapp(id)');
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

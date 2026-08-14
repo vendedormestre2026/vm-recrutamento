@@ -1594,22 +1594,30 @@ function obterReportPorInterview(interviewId) {
 // em cima dele. Sem a checagem, um id inexistente estouraria a FK, a excecao subiria para o
 // try/catch de fire-and-forget do handler, e o acesso — que aconteceu de verdade —
 // simplesmente nao existiria no funil.
-function registrarAcessoVaga(jobId, utm = null, campanhaId = null) {
+function registrarAcessoVaga(jobId, utm = null, campanhaId = null, campanhaWhatsappId = null) {
   const u = utm || {};
 
-  const id = Number(campanhaId);
-  let campanhaValida = null;
-  if (Number.isInteger(id) && id > 0) {
-    const existe = getDb().prepare('SELECT 1 FROM campanhas WHERE id = ?').get(id);
-    if (existe) campanhaValida = id;
-  }
+  // Valida o id contra a tabela ANTES de gravar: um link velho ou um id digitado a mao vira
+  // NULL, e nao impede o registro do acesso. Metrica nao pode derrubar visita.
+  const validar = (valor, tabela) => {
+    const n = Number(valor);
+    if (!Number.isInteger(n) || n <= 0) return null;
+    return getDb().prepare(`SELECT 1 FROM ${tabela} WHERE id = ?`).get(n) ? n : null;
+  };
+  const campanhaValida = validar(campanhaId, 'campanhas');
+  // Coluna IRMA, validada contra a OUTRA tabela: campanhas de e-mail e de WhatsApp tem ids
+  // independentes, e validar as duas contra `campanhas` faria o id 7 do WhatsApp passar por
+  // existir uma campanha de e-mail 7.
+  const campanhaWaValida = validar(campanhaWhatsappId, 'campanhas_whatsapp');
 
   getDb()
     .prepare(
       `INSERT INTO vaga_acessos
-         (job_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term, campanha_id)
+         (job_id, utm_source, utm_medium, utm_campaign, utm_content, utm_term,
+          campanha_id, campanha_whatsapp_id)
        VALUES
-         (@job_id, @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term, @campanha_id)`,
+         (@job_id, @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term,
+          @campanha_id, @campanha_whatsapp_id)`,
     )
     .run({
       job_id: jobId,
@@ -1619,6 +1627,7 @@ function registrarAcessoVaga(jobId, utm = null, campanhaId = null) {
       utm_content: u.content || null,
       utm_term: u.term || null,
       campanha_id: campanhaValida,
+      campanha_whatsapp_id: campanhaWaValida,
     });
 }
 
@@ -2823,6 +2832,76 @@ function contarSequenciaWhatsapp(applicationId = null) {
 // Campanha por WhatsApp (Meta Cloud API)
 // ──────────────────────────────────────────────────────────────
 
+// Candidatos para a campanha por WhatsApp. A cidade vem da VAGA (jobs.cidade), porque
+// applications.cidade e coluna orfa e esta 0% preenchida — ver lib/publicoCampanhaWhatsapp.
+//
+// SEM filtro de cidade no SQL: quem recorta e o motor, em JS, depois de agrupar por telefone.
+// Filtrar aqui perderia as demais vagas da mesma pessoa, e e justamente esse conjunto que a
+// exclusao de "ja se candidatou a esta vaga" precisa.
+//
+// deleted_at nao entra na condicao, de proposito: candidatura arquivada NAO desfaz o fato de
+// a pessoa ja estar naquela vaga. Mesma leitura de listarEmailsInscritosNaVaga.
+function listarCandidatosParaCampanhaWhatsapp() {
+  return getDb()
+    .prepare(
+      `SELECT a.id, a.nome, a.telefone, a.job_id,
+              j.perfil AS perfil, j.cidade AS cidade_vaga
+         FROM applications a
+         LEFT JOIN jobs j ON j.id = a.job_id
+        WHERE a.telefone IS NOT NULL AND TRIM(a.telefone) <> ''
+        ORDER BY a.id`,
+    )
+    .all();
+}
+
+// Base legada. `categoria='legado'` e o recorte, igual ao motor do disparo pontual: cadastro
+// proprio tem outra finalidade LGPD e nao foi importado com esta expectativa.
+function listarTalentosParaCampanhaWhatsapp() {
+  return getDb()
+    .prepare(
+      `SELECT id, nome, telefone, cidade, perfil_interesse
+         FROM talentos
+        WHERE categoria = 'legado'
+          AND status <> 'descartado'
+          AND telefone IS NOT NULL AND TRIM(telefone) <> ''
+        ORDER BY id`,
+    )
+    .all();
+}
+
+// Set para lookup O(1) no laco do motor. Sao ~poucas linhas hoje; um SELECT por pessoa seria
+// N+1 no lugar mais quente.
+function listarTelefonesOptOutWhatsapp() {
+  return new Set(getDb().prepare('SELECT telefone FROM whatsapp_opt_out').all().map((l) => l.telefone));
+}
+
+// Materializa o publico inteiro numa TRANSACAO. Ou entra tudo, ou nada: uma campanha
+// materializada pela metade enviaria para um recorte que ninguem escolheu, e o UNIQUE
+// impediria completar depois.
+function materializarCampanhaWhatsapp(campanhaId, itens = []) {
+  const db = getDb();
+  const stmt = db.prepare(
+    `INSERT INTO campanha_whatsapp_envios
+       (campanha_id, telefone, nome, origem_tipo, origem_id, cidade)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(campanha_id, telefone) DO NOTHING`,
+  );
+  const gravar = db.transaction(() => {
+    let n = 0;
+    for (const i of itens) {
+      n += stmt.run(campanhaId, i.telefone, i.nome || null, i.origemTipo || 'talento', i.origemId || null, i.cidade || null).changes;
+    }
+    return n;
+  });
+  return gravar();
+}
+
+// Guarda o total estimado no momento da criacao, como total_destinatarios da campanha de
+// e-mail: serve para a tela mostrar a divergencia se o publico mudar entre criar e disparar.
+function definirTotalEstimadoCampanhaWhatsapp(id, total) {
+  return getDb().prepare('UPDATE campanhas_whatsapp SET total_estimado = ? WHERE id = ?').run(total, id).changes;
+}
+
 function listarTemplatesWhatsapp() {
   return getDb().prepare('SELECT * FROM templates_whatsapp ORDER BY nome_meta').all();
 }
@@ -2856,11 +2935,16 @@ function definirLinkGrupo(cidade, link) {
     .run(String(link || '').trim() || null, cidade).changes;
 }
 
-function criarCampanhaWhatsapp({ nome, templateId, baseAlvo }) {
+function criarCampanhaWhatsapp({ nome, templateId, baseAlvo, tipoMensagem, jobId, totalEstimado, criterios }) {
   return Number(
     getDb()
-      .prepare('INSERT INTO campanhas_whatsapp (nome, template_id, base_alvo) VALUES (?, ?, ?)')
-      .run(nome, templateId, baseAlvo).lastInsertRowid,
+      .prepare(
+        `INSERT INTO campanhas_whatsapp
+           (nome, template_id, base_alvo, tipo_mensagem, job_id, total_estimado, criterios_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(nome, templateId, baseAlvo, tipoMensagem || 'convite_grupo', jobId || null, totalEstimado ?? null, JSON.stringify(criterios || {}))
+      .lastInsertRowid,
   );
 }
 
@@ -2929,12 +3013,14 @@ function listarPendentesCampanhaWhatsapp({ limite = 50 } = {}) {
   return getDb()
     .prepare(
       `SELECT e.id, e.campanha_id, e.telefone, e.nome, e.cidade, e.tentativas,
-              c.template_id,
+              c.template_id, c.tipo_mensagem,
               t.nome_meta AS template_nome, t.idioma AS template_idioma,
-              t.variaveis AS template_variaveis
+              t.variaveis AS template_variaveis,
+              j.slug AS job_slug, j.titulo AS job_titulo
          FROM campanha_whatsapp_envios e
          JOIN campanhas_whatsapp c ON c.id = e.campanha_id
          LEFT JOIN templates_whatsapp t ON t.id = c.template_id
+         LEFT JOIN jobs j ON j.id = c.job_id
         WHERE e.status = 'pendente'
           AND c.status = 'ativa'
         ORDER BY e.id
@@ -3108,6 +3194,11 @@ module.exports = {
   contarEntrevistasConcluidasComContexto,
   listarOrigensDistintas,
   listarCidadesDistintas,
+  listarCandidatosParaCampanhaWhatsapp,
+  listarTalentosParaCampanhaWhatsapp,
+  listarTelefonesOptOutWhatsapp,
+  materializarCampanhaWhatsapp,
+  definirTotalEstimadoCampanhaWhatsapp,
   listarTemplatesWhatsapp,
   obterTemplateWhatsapp,
   listarRegioesGrupos,

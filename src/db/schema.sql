@@ -135,6 +135,10 @@ CREATE TABLE IF NOT EXISTS vaga_acessos (
   --   leitura correta para contar cliques.
   -- NULL = acesso que nao veio de campanha (organico, ou anterior ao recurso).
   campanha_id  INTEGER REFERENCES campanhas(id),
+  -- IRMA de campanha_id, nao substituta: campanhas de e-mail e de WhatsApp sao tabelas
+  -- diferentes com ids independentes, e reusar a mesma coluna faria o clique da campanha de
+  -- WhatsApp #7 casar com a campanha de e-mail #7.
+  campanha_whatsapp_id INTEGER REFERENCES campanhas_whatsapp(id),
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_vaga_acessos_job ON vaga_acessos(job_id);
@@ -559,6 +563,18 @@ CREATE TABLE IF NOT EXISTS campanhas_whatsapp (
   nome         TEXT NOT NULL,
   template_id  INTEGER NOT NULL REFERENCES templates_whatsapp(id),
   base_alvo    TEXT NOT NULL CHECK (base_alvo IN ('applications', 'talentos', 'ambos')),
+  -- O QUE a campanha diz. 'convite_grupo' leva o link do GRUPO da praca; 'divulgacao_vaga'
+  -- leva o link da VAGA. Publicos e variaveis diferentes — dai ser coluna, e nao convencao.
+  tipo_mensagem TEXT NOT NULL DEFAULT 'convite_grupo'
+                 CHECK (tipo_mensagem IN ('convite_grupo', 'divulgacao_vaga')),
+  -- Obrigatorio SO quando tipo_mensagem='divulgacao_vaga'. Nullable na coluna porque o
+  -- convite de grupo nao tem vaga; quem exige e a rota.
+  job_id       INTEGER REFERENCES jobs(id),
+  -- Total calculado na criacao, para a tela mostrar divergencia depois. Espelha
+  -- campanhas.total_destinatarios.
+  total_estimado INTEGER,
+  -- JSON dos filtros da criacao; o publico e RECALCULADO no disparo a partir deles.
+  criterios_json TEXT,
   status       TEXT NOT NULL DEFAULT 'rascunho'
                  CHECK (status IN ('rascunho', 'ativa', 'pausada', 'concluida')),
   criado_em    TEXT NOT NULL DEFAULT (datetime('now')),

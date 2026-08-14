@@ -172,6 +172,11 @@ module.exports = {
   confirmarVideoWa2: driver.confirmarVideoWa2,
 
   // Campanha por WhatsApp (Meta Cloud API)
+  listarCandidatosParaCampanhaWhatsapp: driver.listarCandidatosParaCampanhaWhatsapp,
+  listarTalentosParaCampanhaWhatsapp: driver.listarTalentosParaCampanhaWhatsapp,
+  listarTelefonesOptOutWhatsapp: driver.listarTelefonesOptOutWhatsapp,
+  materializarCampanhaWhatsapp: driver.materializarCampanhaWhatsapp,
+  definirTotalEstimadoCampanhaWhatsapp: driver.definirTotalEstimadoCampanhaWhatsapp,
   listarTemplatesWhatsapp: driver.listarTemplatesWhatsapp,
   obterTemplateWhatsapp: driver.obterTemplateWhatsapp,
   listarRegioesGrupos: driver.listarRegioesGrupos,

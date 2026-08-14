@@ -179,7 +179,14 @@ router.get('/vaga/:slug', (req, res) => {
   // grava NULL se nao existir. Um link velho ou um id digitado a mao nao pode impedir o
   // registro do acesso.
   try {
-    db.registrarAcessoVaga(vaga.id, utmEfetiva, req.query && req.query.campanha_id);
+    // `campanha_whatsapp_id` e parametro IRMAO de `campanha_id`, nao substituto: as duas
+    // campanhas vivem em tabelas diferentes, com ids independentes.
+    db.registrarAcessoVaga(
+      vaga.id,
+      utmEfetiva,
+      req.query && req.query.campanha_id,
+      req.query && req.query.campanha_whatsapp_id,
+    );
   } catch (e) {
     console.error('[vaga] falha ao registrar acesso (métrica, ignorado):', e.message);
   }
