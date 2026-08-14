@@ -71,6 +71,20 @@ function criarApp() {
   const app = express();
 
   app.disable('x-powered-by');
+
+  // ── WEBHOOK DA META, ANTES DO express.json() GLOBAL ──
+  //
+  // A ordem aqui NAO e estetica. A assinatura X-Hub-Signature-256 e HMAC sobre os BYTES do
+  // corpo, e o router traz um parser proprio que guarda esse buffer no `verify`. Se o
+  // express.json() global rodasse primeiro, ele consumiria o stream e o `verify` do parser da
+  // rota NUNCA seria chamado — `req.corpoCru` ficaria undefined e TODA requisicao legitima da
+  // Meta seria recusada com 401.
+  //
+  // Descoberto por teste: com o mount depois do parser global, "POST com assinatura valida"
+  // devolvia 401. Montado aqui, o /webhook e a unica rota que ve o corpo cru, e todo o resto
+  // do app continua com o express.json() de sempre — que segue logo abaixo, intocado.
+  app.use('/webhook', webhookMeta);
+
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
   // Cookies assinados (token de sessao do candidato). Segredo vem do .env.
@@ -102,9 +116,6 @@ function criarApp() {
   // Disparo por WhatsApp. Consumidor e o n8n, nao o navegador: auth por chave de servico
   // (x-disparo-api-key), 401 JSON em vez de redirect. Ver routes/api_whatsapp.
   app.use('/api', apiWhatsapp);
-  // Webhook PUBLICO da Meta. Tem parser proprio (com corpo cru para a assinatura HMAC), e
-  // por isso nao depende do express.json() global — que segue intocado para todo o resto.
-  app.use('/webhook', webhookMeta);
   app.use('/admin', admin); // painel do recrutador (protegido por adminAuth interno)
   app.use('/bancodecurriculos', bancoCurriculos); // Banco de Curriculos (paginas publicas)
   app.use('/', paginas);
