@@ -36,6 +36,31 @@ const TEMPLATE = {
   ],
 };
 
+// ── SEGUNDO TEMPLATE: PLACEHOLDER, INATIVO ──
+//
+// ⚠️ ESTE REGISTRO NAO SERVE PARA ENVIAR. Ele existe para a tela de criacao de campanha ter
+// o que oferecer no tipo 'divulgacao_vaga' antes de o template real ficar pronto, e para o
+// mapa de variaveis ja estar versionado.
+//
+// DUAS COISAS PRECISAM SER FEITAS A MAO quando a Meta aprovar o template de verdade:
+//   1. trocar `nome_meta` pelo nome EXATO aprovado (o sufixo _PENDENTE existe para nao
+//      passar despercebido — uma chamada com este nome falha na Meta, e falhar e melhor que
+//      enviar com template errado);
+//   2. `ativo = 1`.
+//
+// Enquanto ativo=0, a tela nao o oferece e nenhuma campanha pode ser criada com ele.
+const TEMPLATE_DIVULGACAO = {
+  nome_meta: 'divulgacao_vaga_vm_PENDENTE',
+  idioma: 'pt_BR',
+  categoria: 'marketing',
+  ativo: 0,
+  variaveis: [
+    { posicao: 1, campo: 'nome_primeiro' },
+    { posicao: 2, campo: 'cargo_vaga' },
+    { posicao: 3, campo: 'link_vaga' },
+  ],
+};
+
 function main() {
   console.log('Seed da campanha por WhatsApp (Meta Cloud API)');
   console.log('');
@@ -51,6 +76,23 @@ function main() {
 
   console.log(
     `  template '${TEMPLATE.nome_meta}': ${infoTemplate.changes ? 'criado' : 'ja existia (nada mudou)'}`,
+  );
+
+  const infoDivulgacao = conn
+    .prepare(
+      `INSERT OR IGNORE INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      TEMPLATE_DIVULGACAO.nome_meta,
+      TEMPLATE_DIVULGACAO.idioma,
+      TEMPLATE_DIVULGACAO.categoria,
+      JSON.stringify(TEMPLATE_DIVULGACAO.variaveis),
+      TEMPLATE_DIVULGACAO.ativo,
+    );
+  console.log(
+    `  template '${TEMPLATE_DIVULGACAO.nome_meta}': ` +
+      `${infoDivulgacao.changes ? 'criado' : 'ja existia (nada mudou)'} — PLACEHOLDER, ativo=0`,
   );
 
   // Uma linha por praca do enum. A lista vem de lib/cidades para nao existir uma segunda
@@ -75,7 +117,11 @@ function main() {
   }
 
   console.log('');
-  console.log('PROXIMO PASSO MANUAL: preencher os links em /admin/campanhas-whatsapp.');
+  console.log('PROXIMOS PASSOS MANUAIS:');
+  console.log('  1. preencher os links de grupo em /admin/campanhas-whatsapp;');
+  console.log(`  2. quando a Meta aprovar o template de divulgacao, trocar o nome_meta`);
+  console.log(`     '${TEMPLATE_DIVULGACAO.nome_meta}' pelo nome real e marcar ativo=1.`);
+  console.log('');
   console.log('Praca sem link nao recebe campanha — o job marca aquele envio como falha de');
   console.log('configuracao e segue para o proximo, sem abortar o ciclo.');
 }

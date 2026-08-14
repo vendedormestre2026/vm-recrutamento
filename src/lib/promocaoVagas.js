@@ -400,4 +400,12 @@ module.exports = {
   BASE_PROPRIO,
   BASES_VALIDAS,
   CIDADE_TODAS,
+  // ── Expostos para lib/publicoCampanhaWhatsapp ──
+  // Eram internos enquanto este era o unico motor de publico. O motor de WhatsApp precisa
+  // das MESMAS regras de matching (o "sem atributo" fica de fora por padrao; nada marcado =
+  // filtro inativo), e importa-las e o unico jeito de as duas nao divergirem no dia em que
+  // uma for ajustada. Recopiar seria a garantia da divergencia — mesma decisao ja tomada com
+  // os helpers de lib/whatsapp.
+  aplicarFiltroAtributo,
+  aplicarFiltroMulti,
 };
