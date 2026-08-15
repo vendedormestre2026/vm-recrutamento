@@ -1,5 +1,22 @@
 'use strict';
 
+// ⚠️⚠️ DORMENTE — NAO E O CAMINHO DE ENVIO. NENHUM MODULO IMPORTA ESTE ARQUIVO. ⚠️⚠️
+//
+// O envio da campanha passou a ser delegado ao Central Whats, que ja tem App aprovado na Meta
+// e guarda o token da Meta do lado dele. Quem envia hoje e providers/centralWhats/centralWhats.js.
+//
+// POR QUE CONTINUA NO REPOSITORIO: falar direto com a Graph API e um caminho ao qual pode ser
+// preciso voltar (se o Central Whats sair do ar, mudar de contrato ou ficar caro), e este
+// arquivo carrega coisas que custaram para descobrir — a lista de codigos de erro da Meta por
+// categoria, o formato do componente de botao, o wamid deterministico de mock. Reconstruir
+// isso do zero custa mais que manter um arquivo parado.
+//
+// ⚠️ SE FOR REATIVAR: ele NAO conhece templates_whatsapp.botao_parametro_fixo pelo mesmo
+// caminho de hoje — confira montarPayload contra o que o Central Whats faz hoje antes de
+// religar, e lembre que o webhook (routes/webhook_meta.js) tambem esta dormente.
+//
+// ── daqui para baixo, a documentacao original ──
+//
 // Adaptador da Meta Cloud API (WhatsApp Business Platform) para envio de TEMPLATE.
 //
 // ── POR QUE NAO REAPROVEITA NADA DO BAILEYS ──

@@ -1,5 +1,22 @@
 'use strict';
 
+// ⚠️ DORMENTE — a rota existe e responde, mas NINGUEM a chama.
+//
+// Ela dependia de um App proprio da Meta, com App Review, que foi abandonado: o envio agora e
+// delegado ao Central Whats (providers/centralWhats/centralWhats.js), e os eventos da Meta
+// chegam no webhook DELE, nao neste.
+//
+// O QUE ISSO CUSTA, e foi decidido conscientemente: nao ha mais status de entrega automatico
+// nem opt-out automatico. Se um candidato responder "PARAR", isso aparece no Live Chat do
+// Central Whats e alguem registra o opt-out A MAO. A leitura de whatsapp_opt_out continua
+// valendo em todo envio — o que sumiu foi a escrita automatica nela.
+//
+// Continua MONTADA em server.js de proposito: desmontar nao ganha nada (sem trafego, ela nao
+// custa), e a rota volta a funcionar sozinha no dia em que existir um App proprio de novo.
+// Sem META_APP_SECRET no ambiente ela recusa tudo, que e o comportamento seguro.
+//
+// ── daqui para baixo, a documentacao original ──
+//
 // Webhook da Meta Cloud API. Rota PUBLICA (a Meta chama de fora), montada em /webhook.
 //
 // ── DUAS RESPONSABILIDADES ──
