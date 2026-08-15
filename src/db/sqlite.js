@@ -3016,6 +3016,7 @@ function listarPendentesCampanhaWhatsapp({ limite = 50 } = {}) {
               c.template_id, c.tipo_mensagem,
               t.nome_meta AS template_nome, t.idioma AS template_idioma,
               t.variaveis AS template_variaveis,
+              t.botao_parametro_fixo AS template_botao_parametro_fixo,
               j.slug AS job_slug, j.titulo AS job_titulo
          FROM campanha_whatsapp_envios e
          JOIN campanhas_whatsapp c ON c.id = e.campanha_id

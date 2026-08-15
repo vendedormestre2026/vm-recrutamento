@@ -526,6 +526,17 @@ CREATE TABLE IF NOT EXISTS templates_whatsapp (
   -- JSON: [{posicao:1, campo:'nome_primeiro'}, ...]. As variaveis da Meta sao POSICIONAIS
   -- ({{1}}, {{2}}); este mapa e o que liga cada posicao a um dado nosso.
   variaveis     TEXT NOT NULL,
+  -- Parametro fixo do botao de URL dinamica, quando o template aprovado tem um.
+  --
+  -- NULL = o template nao tem botao, e o envio NAO deve mandar componente de botao nenhum.
+  -- Preenchida = todo envio daquele template inclui o componente `button` com este valor.
+  --
+  -- Existe porque a Graph API EXIGE o parametro do botao em todo envio de template que tenha
+  -- botao de URL dinamica, mesmo quando o botao nao serve para nada (erro 131008,
+  -- "Button at index 0 of type Url requires a parameter"). E coluna, e nao `if nome_meta ===`
+  -- no adaptador, porque isto e propriedade DO TEMPLATE aprovado la fora — o proximo template
+  -- com a mesma situacao se resolve com um UPDATE, e nao com um deploy.
+  botao_parametro_fixo TEXT,
   ativo         INTEGER NOT NULL DEFAULT 1,
   criado_em     TEXT NOT NULL DEFAULT (datetime('now')),
   atualizado_em TEXT

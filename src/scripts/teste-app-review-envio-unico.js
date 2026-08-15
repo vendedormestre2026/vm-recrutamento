@@ -34,7 +34,19 @@ const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 
 // Espelha o template semeado por seed-campanha-whatsapp.js (registro id=1 em producao).
 // Os nomes tem que bater EXATAMENTE com o aprovado no painel da Meta.
-const TEMPLATE = { nome_meta: 'confirmacao_cadastro_vaga_vm', idioma: 'pt_BR' };
+//
+// ⚠️ ESPELHO A MAO, E NAO LEITURA DO BANCO. O valor de `botao_parametro_fixo` esta repetido
+// aqui, e nao lido de templates_whatsapp, porque este script nao abre o banco de proposito
+// (ver o cabecalho). A LOGICA do botao nao esta duplicada — quem monta o componente e
+// metaWhatsapp.montarPayload, o mesmo caminho da campanha; o que se repete e so o valor.
+// Se o valor mudar no banco, mude aqui tambem.
+const TEMPLATE = {
+  nome_meta: 'confirmacao_cadastro_vaga_vm',
+  idioma: 'pt_BR',
+  // Botao estrutural exigido pela Graph API (erro 131008 sem ele). Nao tem funcao: a URL base
+  // cadastrada na Meta esta errada e nao pode mais ser editada. O link real vai na variavel 3.
+  botao_parametro_fixo: 'indisponivel',
+};
 
 // Variaveis POSICIONAIS, na ordem {{1}} {{2}} {{3}} do template semeado:
 //   1 nome_primeiro   2 cargo_vaga   3 link_grupo_regiao

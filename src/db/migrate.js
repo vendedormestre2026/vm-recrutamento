@@ -319,6 +319,18 @@ function migrar() {
   // momentos entra gente nova, sai quem pediu opt-out, e o recorte de verdade e o de AGORA.
   adicionarColunaSeFaltar('campanhas_whatsapp', 'criterios_json', 'TEXT');
 
+  // ── Parametro fixo do botao de URL dinamica do template ──
+  //
+  // A Graph API rejeita (131008, "Button at index 0 of type Url requires a parameter") TODO
+  // envio de template que tenha botao de URL dinamica e nao receba o parametro dele. Vale
+  // para o template inteiro, nao para um destinatario — sem esta coluna preenchida, a campanha
+  // falharia em 100% dos envios.
+  //
+  // NULLABLE de proposito: NULL significa "este template nao tem botao", e o adaptador nao
+  // manda componente de botao nenhum. Um DEFAULT aqui daria botao a templates que nao tem, e
+  // a Meta rejeita componente de botao inexistente com a mesma dureza com que cobra o que falta.
+  adicionarColunaSeFaltar('templates_whatsapp', 'botao_parametro_fixo', 'TEXT');
+
   // Atribuicao de clique da campanha de WhatsApp. IRMA de vaga_acessos.campanha_id, e nao
   // substituta: sao tabelas de campanha DIFERENTES com ids independentes, e reusar a mesma
   // coluna faria o clique de uma campanha de WhatsApp #7 casar com a campanha de e-mail #7.

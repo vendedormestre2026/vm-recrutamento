@@ -165,7 +165,14 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
     try {
       const { wamid } = await enviar({
         telefone,
-        template: { nome_meta: linha.template_nome, idioma: linha.template_idioma },
+        template: {
+          nome_meta: linha.template_nome,
+          idioma: linha.template_idioma,
+          // Propriedade do template aprovado na Meta, nao deste destinatario: quando
+          // preenchida, o adaptador acrescenta o componente de botao que a Graph API exige.
+          // Vem do banco junto com a linha da fila para nao custar uma consulta por envio.
+          botao_parametro_fixo: linha.template_botao_parametro_fixo,
+        },
         variaveis,
         httpClient: deps.httpClient,
       });

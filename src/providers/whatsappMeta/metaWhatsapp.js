@@ -70,6 +70,41 @@ function wamidMock(telefone, nomeTemplate) {
 // `components` com um bloco `body` de parametros POSICIONAIS, na ordem — a Meta nao tem
 // variavel nomeada, e a posicao no array E o {{n}} do template.
 function montarPayload({ telefone, template, variaveis }) {
+  const components = [
+    {
+      type: 'body',
+      parameters: (variaveis || []).map((v) => ({ type: 'text', text: String(v == null ? '' : v) })),
+    },
+  ];
+
+  // ── BOTAO ESTRUTURAL ──
+  // Botão estrutural do template, exigido pela Graph API mesmo sem uso funcional — o botão
+  // aponta para uma URL base incorreta cadastrada na Meta (business.facebook.com em vez de
+  // chat.whatsapp.com) e não pode mais ser editado. O link real do grupo vai no corpo da
+  // mensagem (variável 3), não no botão. Valor fixo 'indisponivel' satisfaz a exigência de
+  // formato da API sem ter função.
+  //
+  // O valor vem de templates_whatsapp.botao_parametro_fixo, e nao de um `if nome_meta ===
+  // 'confirmacao_cadastro_vaga_vm'`: ter botao (e qual parametro ele exige) e propriedade do
+  // template APROVADO la fora, entao o proximo template na mesma situacao se resolve com um
+  // UPDATE e nao com um deploy.
+  //
+  // VAZIO/NULL = template SEM botao -> nenhum componente. Mandar botao para um template que
+  // nao tem e rejeitado pela Meta com a mesma dureza com que ela cobra o que falta, entao o
+  // default tem que ser "nao manda".
+  //
+  // `index` e string de proposito: a Cloud API documenta o campo como string, e o botao e
+  // sempre o de indice 0 porque um template so tem um botao de URL dinamica.
+  const parametroBotao = String((template && template.botao_parametro_fixo) || '').trim();
+  if (parametroBotao) {
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: parametroBotao }],
+    });
+  }
+
   return {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -78,12 +113,7 @@ function montarPayload({ telefone, template, variaveis }) {
     template: {
       name: template.nome_meta,
       language: { code: template.idioma || 'pt_BR' },
-      components: [
-        {
-          type: 'body',
-          parameters: (variaveis || []).map((v) => ({ type: 'text', text: String(v == null ? '' : v) })),
-        },
-      ],
+      components,
     },
   };
 }

@@ -76,14 +76,19 @@ function zerar() {
   db.definirConfigBool(job.CHAVE_ATIVO, false);
 }
 
-function montarCenario({ link = 'https://chat.whatsapp.com/ABC123', cidade = 'Joinville' } = {}) {
+function montarCenario({
+  link = 'https://chat.whatsapp.com/ABC123',
+  cidade = 'Joinville',
+  botaoParametroFixo = null,
+} = {}) {
   const tid = Number(
     exec(
-      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES (?, ?, ?, ?)',
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo) VALUES (?, ?, ?, ?, ?)',
       TEMPLATE.nome_meta,
       TEMPLATE.idioma,
       'utility',
       JSON.stringify(TEMPLATE.variaveis),
+      botaoParametroFixo,
     ).lastInsertRowid,
   );
   exec('INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo) VALUES (?, ?)', cidade, link);
@@ -109,7 +114,8 @@ const deps = (extra = {}) => ({ intervaloMs: 0, dormir: async () => {}, ...extra
 
 test('as cinco tabelas existem com as colunas esperadas', () => {
   const esperado = {
-    templates_whatsapp: ['id', 'nome_meta', 'idioma', 'categoria', 'variaveis', 'ativo', 'criado_em', 'atualizado_em'],
+    // botao_parametro_fixo entrou com o botao estrutural exigido pela Graph API.
+    templates_whatsapp: ['id', 'nome_meta', 'idioma', 'categoria', 'variaveis', 'botao_parametro_fixo', 'ativo', 'criado_em', 'atualizado_em'],
     regioes_grupos_whatsapp: ['id', 'cidade', 'link_convite_grupo', 'ativo', 'criado_em', 'atualizado_em'],
     // tipo_mensagem/job_id/total_estimado entraram na extensao de dois tipos de campanha.
     campanhas_whatsapp: ['id', 'nome', 'template_id', 'base_alvo', 'tipo_mensagem', 'job_id', 'total_estimado', 'criterios_json', 'status', 'criado_em', 'iniciada_em', 'concluida_em'],
@@ -204,6 +210,83 @@ test('o payload segue o formato da Cloud API, com variaveis POSICIONAIS', () => 
     { type: 'text', text: 'Vendedor' },
     { type: 'text', text: 'https://chat.whatsapp.com/X' },
   ]);
+});
+
+// ══════════════════ Botao estrutural do template ══════════════════
+//
+// O template aprovado tem um botao de URL DINAMICA, e a Graph API recusa com 131008
+// ("Button at index 0 of type Url requires a parameter") todo envio que nao mande o parametro
+// dele. Nao e caso de borda: sem isso, 100% dos envios da campanha falham. Ja falhou de
+// verdade contra a API, com este erro.
+
+test('botao: com botao_parametro_fixo preenchido, o payload ganha o componente de botao', () => {
+  const p = meta.montarPayload({
+    telefone: '5547999582500',
+    template: { ...TEMPLATE, botao_parametro_fixo: 'indisponivel' },
+    variaveis: ['Ana', 'Vendedor', 'https://chat.whatsapp.com/X'],
+  });
+
+  // O corpo continua sendo o PRIMEIRO componente: a ordem body-antes-de-button e a que a
+  // Cloud API documenta, e o teste do payload acima indexa components[0].
+  assert.equal(p.template.components[0].type, 'body');
+  assert.equal(p.template.components.length, 2);
+  assert.deepEqual(p.template.components[1], {
+    type: 'button',
+    sub_type: 'url',
+    index: '0',
+    parameters: [{ type: 'text', text: 'indisponivel' }],
+  });
+  // `index` como STRING, que e como a Cloud API documenta o campo.
+  assert.equal(typeof p.template.components[1].index, 'string');
+});
+
+test('botao: sem botao_parametro_fixo, o payload NAO ganha botao nenhum', () => {
+  // O erro simetrico do 131008: mandar botao para um template que nao tem tambem e rejeitado.
+  // O default tem que ser "nao manda" — um template futuro sem botao nao pode ganhar um por
+  // heranca do vizinho.
+  for (const valor of [undefined, null, '', '   ']) {
+    const p = meta.montarPayload({
+      telefone: '5547999582500',
+      template: { ...TEMPLATE, botao_parametro_fixo: valor },
+      variaveis: ['Ana', 'Vendedor', 'x'],
+    });
+    assert.equal(p.template.components.length, 1, `valor ${JSON.stringify(valor)} nao podia gerar botao`);
+    assert.equal(p.template.components[0].type, 'body');
+  }
+});
+
+test('botao: o valor do banco chega ate o adaptador no envio real', async () => {
+  zerar();
+  db.definirConfigBool(job.CHAVE_ATIVO, true);
+  // O job le a coluna junto com a linha da fila; se o SELECT nao a trouxesse, o parametro
+  // chegaria undefined aqui e a campanha inteira falharia com 131008 em producao.
+  const { cid } = montarCenario({ botaoParametroFixo: 'indisponivel' });
+  adicionar(cid, '5547999582500', 'Ana Paula', 'Joinville');
+
+  const recebido = [];
+  await semRuido(() =>
+    job.processarCicloCampanhaWhatsapp(deps({
+      enviarTemplate: async (a) => { recebido.push(a); return { wamid: 'w' }; },
+    })));
+
+  assert.equal(recebido[0].template.botao_parametro_fixo, 'indisponivel');
+});
+
+test('botao: template com a coluna NULL nao recebe botao no envio real', async () => {
+  zerar();
+  db.definirConfigBool(job.CHAVE_ATIVO, true);
+  const { cid } = montarCenario();
+  adicionar(cid, '5547999582500', 'Ana Paula', 'Joinville');
+
+  const recebido = [];
+  await semRuido(() =>
+    job.processarCicloCampanhaWhatsapp(deps({
+      enviarTemplate: async (a) => { recebido.push(a); return { wamid: 'w' }; },
+    })));
+
+  assert.equal(recebido[0].template.botao_parametro_fixo, null);
+  const p = meta.montarPayload({ telefone: '5547999582500', template: recebido[0].template, variaveis: [] });
+  assert.equal(p.template.components.length, 1);
 });
 
 test('classificacao: codigo da Meta vence o status HTTP', () => {

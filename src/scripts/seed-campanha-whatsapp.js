@@ -34,6 +34,12 @@ const TEMPLATE = {
     { posicao: 2, campo: 'cargo_vaga' },
     { posicao: 3, campo: 'link_grupo_regiao' },
   ],
+  // O template aprovado tem um botao de URL DINAMICA, e a Graph API recusa (131008) qualquer
+  // envio que nao mande o parametro dele — inclusive quando o botao nao serve para nada, que
+  // e o caso: a URL base cadastrada la e 'http://business.facebook.com/{{1}}', ficou errada
+  // (deveria ser chat.whatsapp.com) e nao pode mais ser editada. O link de verdade do grupo
+  // vai no CORPO, na variavel 3. Este valor existe so para o payload ter a forma exigida.
+  botao_parametro_fixo: 'indisponivel',
 };
 
 // ── SEGUNDO TEMPLATE: PLACEHOLDER, INATIVO ──
@@ -69,13 +75,39 @@ function main() {
 
   const infoTemplate = conn
     .prepare(
-      `INSERT OR IGNORE INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo)
+       VALUES (?, ?, ?, ?, ?)`,
     )
-    .run(TEMPLATE.nome_meta, TEMPLATE.idioma, TEMPLATE.categoria, JSON.stringify(TEMPLATE.variaveis));
+    .run(
+      TEMPLATE.nome_meta,
+      TEMPLATE.idioma,
+      TEMPLATE.categoria,
+      JSON.stringify(TEMPLATE.variaveis),
+      TEMPLATE.botao_parametro_fixo,
+    );
 
   console.log(
     `  template '${TEMPLATE.nome_meta}': ${infoTemplate.changes ? 'criado' : 'ja existia (nada mudou)'}`,
+  );
+
+  // ── BACKFILL do parametro do botao ──
+  // O INSERT OR IGNORE acima nao toca a linha que ja existe, e o registro de producao foi
+  // criado antes desta coluna existir — ou seja, ficaria NULL e TODO envio da campanha
+  // continuaria falhando com 131008. Este UPDATE e a unica forma de o registro antigo ganhar
+  // o valor.
+  //
+  // `IS NULL` no WHERE: se alguem ja tiver ajustado o valor a mao no painel, o seed nao
+  // desfaz. Idempotente como o resto do script — a segunda execucao muda 0 linhas.
+  const infoBotao = conn
+    .prepare(
+      `UPDATE templates_whatsapp
+          SET botao_parametro_fixo = ?, atualizado_em = datetime('now')
+        WHERE nome_meta = ? AND botao_parametro_fixo IS NULL`,
+    )
+    .run(TEMPLATE.botao_parametro_fixo, TEMPLATE.nome_meta);
+  console.log(
+    `  botao_parametro_fixo de '${TEMPLATE.nome_meta}': ` +
+      `${infoBotao.changes ? `preenchido com '${TEMPLATE.botao_parametro_fixo}'` : 'ja tinha valor (nada mudou)'}`,
   );
 
   const infoDivulgacao = conn
