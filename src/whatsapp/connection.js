@@ -89,6 +89,18 @@ function ligado() {
   return String(process.env.WHATSAPP_BAILEYS_ATIVO || '').toLowerCase() === 'true';
 }
 
+// Gatilho do boot, IRMAO de ligado() e nao a mesma coisa:
+//   ligado()               o subsistema esta habilitado (guarda na entrada de conectar)
+//   conectarNoBootLigado() ESTE boot deve mesmo abrir o socket agora
+//
+// Mora aqui, e nao em server.js, porque tem DOIS leitores — o boot, que age sobre ela, e a
+// tela /admin/whatsapp, que explica ao operador por que nada conectou. Duas copias do mesmo
+// parsing divergem com o tempo, e a divergencia aqui tem sintoma cruel: a tela afirmando que
+// esta tudo certo enquanto o boot nao conecta.
+function conectarNoBootLigado() {
+  return String(process.env.WHATSAPP_BAILEYS_CONECTAR_NO_BOOT || '').toLowerCase() === 'true';
+}
+
 function status() {
   return {
     status: estado.status,
@@ -289,6 +301,7 @@ module.exports = {
   isRestartRequired,
   atrasoBackoff,
   ligado,
+  conectarNoBootLigado,
   fechando,
   _resetar,
   BACKOFF_BASE_MS,

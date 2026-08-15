@@ -179,17 +179,18 @@ function iniciar() {
 //
 // A guarda de WHATSAPP_BAILEYS_ATIVO continua DENTRO de conectar() (connection.js:196) e nao
 // foi tocada: sao duas camadas, nao uma substituindo a outra.
-function conectarNoBoot() {
-  return String(process.env.WHATSAPP_BAILEYS_CONECTAR_NO_BOOT || '').toLowerCase() === 'true';
-}
-
+//
+// A leitura da flag mora em whatsapp/connection (conectarNoBootLigado), e nao aqui: a tela
+// /admin/whatsapp precisa da MESMA resposta para explicar ao operador por que nada conectou,
+// e duas copias do parsing divergiriam.
+//
 // `deps.conectar` injetavel pelo teste, no mesmo molde de connection.conectar({criarSocket}):
 // a ligacao boot -> conectar e o que se quer provar, e prova-la nao pode custar um socket real.
 //
 // Devolve boolean (tentou/nao tentou) em vez de void: da ao teste uma assercao direta, alem
 // do espiao.
 function conectarWhatsappNoBoot(deps = {}) {
-  if (!conectarNoBoot()) {
+  if (!conexaoWhatsapp.conectarNoBootLigado()) {
     // Linha explicita, e nao silencio. A ausencia de log foi o que fez a investigacao do QR
     // ausente custar uma etapa inteira de diagnostico: nada no log dizia por que o socket
     // nunca abria, porque nao havia codigo nenhum para dize-lo.

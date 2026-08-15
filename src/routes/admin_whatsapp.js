@@ -50,9 +50,13 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
       connection_status: s.status,
       updated_at: s.atualizadoEm,
       tem_qr: s.temQr,
-      // Os tres motivos de "conectado" ser impossivel agora. Sem eles, a tela diria
-      // "desconectado" e deixaria o operador adivinhar qual das tres coisas falta.
+      // Os motivos de "conectado" ser impossivel agora. Sem eles, a tela diria
+      // "desconectado" e deixaria o operador adivinhar qual das coisas falta.
       baileys_ativo: s.ligado,
+      // Terceiro motivo, acrescentado depois: era o unico que faltava, e a ausencia dele
+      // deixava a tela dizer "nao falta nada" com o boot nao conectando. A leitura vem de
+      // whatsapp/connection para nao existir um segundo parsing da mesma env.
+      conectar_no_boot: conexao.conectarNoBootLigado(),
       chave_cifragem_ok: chaveConfigurada(),
       sessao_gravada: contarChavesAuth() > 0,
       tentativas: s.tentativas,
@@ -111,6 +115,16 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
     if (!e.baileys_ativo) {
       pendencias.push(
         'WHATSAPP_BAILEYS_ATIVO não está em <code>true</code>. A instância não tenta conectar.',
+      );
+    }
+    // Por ultimo de proposito: e o unico que se resolve sozinho no restart seguinte, entao
+    // corrigir os dois de cima antes evita ligar o pareamento e descobrir no QR que faltava
+    // outra coisa.
+    if (!e.conectar_no_boot) {
+      pendencias.push(
+        'Pareamento automático no boot: <b>desligado</b> — defina ' +
+          '<code>WHATSAPP_BAILEYS_CONECTAR_NO_BOOT=true</code> no Railway para iniciar a ' +
+          'conexão no próximo restart.',
       );
     }
 
