@@ -25,6 +25,7 @@ const lembreteInicio = require('./lib/lembreteInicio');
 const limpezaAudio = require('./lib/limpezaAudio');
 const dispararPromocao = require('./lib/dispararPromocao');
 const sequenciaWhatsapp = require('./whatsapp/sequenciaOutbox');
+const conexaoWhatsapp = require('./whatsapp/connection');
 const campanhaWhatsapp = require('./lib/campanhaWhatsapp');
 const { router: webhookMeta } = require('./routes/webhook_meta');
 
@@ -161,6 +162,65 @@ function iniciar() {
   agendarDisparoPromocao();
   agendarSequenciaWhatsapp();
   agendarCampanhaWhatsapp();
+  conectarWhatsappNoBoot();
+}
+
+// Gatilho da conexao do Baileys no boot.
+//
+// ── POR QUE UMA VARIAVEL PROPRIA, E NAO WHATSAPP_BAILEYS_ATIVO ──
+// As duas parecem a mesma coisa e nao sao:
+//   WHATSAPP_BAILEYS_ATIVO             o subsistema esta habilitado (guarda DENTRO de conectar)
+//   WHATSAPP_BAILEYS_CONECTAR_NO_BOOT  ESTE boot deve mesmo abrir o socket agora
+//
+// Sem a separacao, o proprio deploy que liga o boot a conectar() ja dispararia pareamento:
+// WHATSAPP_BAILEYS_ATIVO ja esta em true em producao, definida para outros fins (a guarda de
+// conectar e o ciclo da sequencia). Quem escaneia o QR e uma pessoa, com o celular do numero
+// em maos — ela precisa escolher a hora, e nao descobrir pelo log que o momento passou.
+//
+// A guarda de WHATSAPP_BAILEYS_ATIVO continua DENTRO de conectar() (connection.js:196) e nao
+// foi tocada: sao duas camadas, nao uma substituindo a outra.
+function conectarNoBoot() {
+  return String(process.env.WHATSAPP_BAILEYS_CONECTAR_NO_BOOT || '').toLowerCase() === 'true';
+}
+
+// `deps.conectar` injetavel pelo teste, no mesmo molde de connection.conectar({criarSocket}):
+// a ligacao boot -> conectar e o que se quer provar, e prova-la nao pode custar um socket real.
+//
+// Devolve boolean (tentou/nao tentou) em vez de void: da ao teste uma assercao direta, alem
+// do espiao.
+function conectarWhatsappNoBoot(deps = {}) {
+  if (!conectarNoBoot()) {
+    // Linha explicita, e nao silencio. A ausencia de log foi o que fez a investigacao do QR
+    // ausente custar uma etapa inteira de diagnostico: nada no log dizia por que o socket
+    // nunca abria, porque nao havia codigo nenhum para dize-lo.
+    console.log('[wa-conn] desativado (WHATSAPP_BAILEYS_CONECTAR_NO_BOOT); conexao nao iniciada no boot.');
+    return false;
+  }
+
+  const conectar = deps.conectar || conexaoWhatsapp.conectar;
+  console.log('[wa-conn] WHATSAPP_BAILEYS_CONECTAR_NO_BOOT=true; iniciando conexao no boot.');
+
+  // Fire-and-forget, igual as sete varreduras: o boot NAO espera o socket. A resolucao de
+  // versao do Baileys faz uma chamada de rede, e um `await` aqui atrasaria o /health por
+  // algo que nao e requisito para o app servir HTTP.
+  //
+  // A chamada e SINCRONA (e nao Promise.resolve().then(...)): adiar para um microtask nao
+  // ganharia nada — o boot ja nao espera o resultado — e tornaria "o boot chamou conectar"
+  // impossivel de afirmar sem timing no teste.
+  //
+  // try/catch E .catch, os dois: conectar() e async, mas um erro lancado ANTES do primeiro
+  // await (ex.: require do baileys falhando) chega sincrono. Sem o try, esse caso derrubaria
+  // iniciar() inteiro. Sem o .catch, a rejeicao viraria unhandledRejection, que no Node 22
+  // mata o processo. Falhar em conectar nao pode derrubar o site.
+  try {
+    Promise.resolve(conectar()).catch((err) => {
+      console.error(`[wa-conn] falha ao iniciar a conexao no boot: ${err.message}`);
+    });
+  } catch (err) {
+    console.error(`[wa-conn] falha ao iniciar a conexao no boot: ${err.message}`);
+  }
+
+  return true;
 }
 
 // Agendador do follow-up de entrevistas nao concluidas.
@@ -319,4 +379,4 @@ if (require.main === module) {
   iniciar();
 }
 
-module.exports = { criarApp, iniciar };
+module.exports = { criarApp, iniciar, conectarWhatsappNoBoot };
