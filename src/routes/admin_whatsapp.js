@@ -6,9 +6,15 @@
 //
 // ── ESTA TELA NAO CONECTA NADA ──
 // Ela EXIBE o estado do socket e serve o QR quando ele existe. Quem abre a conexao e o boot
-// do server.js, e so quando WHATSAPP_BAILEYS_ATIVO=true. Abrir socket a partir de um GET de
-// painel seria dar a um clique de navegador o poder de iniciar uma sessao de WhatsApp — e um
-// refresh acidental viraria uma tentativa de conexao.
+// do server.js (conectarWhatsappNoBoot), e so quando WHATSAPP_BAILEYS_CONECTAR_NO_BOOT=true.
+// Abrir socket a partir de um GET de painel seria dar a um clique de navegador o poder de
+// iniciar uma sessao de WhatsApp — e um refresh acidental viraria uma tentativa de conexao.
+//
+// ⚠️ Ate 2026-08-14 este bloco dizia "so quando WHATSAPP_BAILEYS_ATIVO=true", e estava
+// errado por dois motivos: aquela variavel e a guarda DENTRO de conectar(), nao o gatilho; e
+// gatilho nenhum existia — server.js nao importava este modulo. O QR nunca aparecia, e nada
+// no log explicava por que. A licao e que uma tela nao pode ser a unica documentacao de um
+// comportamento que mora em outro arquivo.
 //
 // ── O QR VIVE EM MEMORIA, NAO NO BANCO ──
 // Divergencia REGISTRADA em relacao ao enunciado, que pedia "404 se nao houver QR pendente
@@ -118,7 +124,10 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
     <h1>WhatsApp — pareamento</h1>
     <p class="admin-sub" style="margin-bottom:1.25rem">
       Instância <b>${escapeHtml(conexao.status().instancia)}</b>. Esta tela apenas exibe o
-      estado e o QR — a conexão é iniciada no boot da aplicação.
+      estado e o QR — a conexão é aberta pela aplicação ao iniciar, e somente quando o
+      pareamento automático está habilitado no ambiente. Com ele desligado, nenhum socket é
+      aberto e o status permanece em <b>Desconectado</b>: não há nada a fazer nesta tela até
+      que o responsável técnico habilite e reinicie o serviço.
     </p>
 
     ${blocoPendencias}
