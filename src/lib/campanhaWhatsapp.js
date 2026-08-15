@@ -1,6 +1,12 @@
 'use strict';
 
-// Job de disparo da campanha por WhatsApp (Meta Cloud API).
+// Job de disparo da campanha por WhatsApp (transporte: Central Whats).
+//
+// ── O QUE A TROCA DE TRANSPORTE MUDOU AQUI: NADA DE LOGICA ──
+// O envio saia direto para a Graph API e agora vai para o Central Whats. Este arquivo so
+// troca de qual modulo importa `enviarTemplate` e `classificar`: teto por ciclo, throttle,
+// opt-out, contagem de tentativas, categorias de erro e kill-switch continuam identicos,
+// porque nenhum deles jamais dependeu de com quem se fala do outro lado do POST.
 //
 // SETIMA varredura periodica do projeto. Mesma anatomia das seis anteriores — interruptor
 // antes de tocar o banco, trava contra ciclos sobrepostos, teto por ciclo, marcacao SO apos
@@ -8,7 +14,7 @@
 //
 // ── O QUE MUDA EM RELACAO A CAMPANHA DE E-MAIL ──
 //   e-mail    teto 125 / ciclo, throttle 500 ms   esta: 30 / ciclo, throttle 2 s
-//   e-mail    4 categorias de erro                esta: 3 (ver providers/whatsappMeta)
+//   e-mail    4 categorias de erro                esta: 3 (ver providers/centralWhats)
 //   e-mail    nenhuma consulta de opt-out por linha  esta: SIM, por telefone
 //   e-mail    conteudo montado por nos            esta: template aprovado + variaveis
 //
@@ -17,7 +23,7 @@
 // conservador e barato; comecar agressivo pode custar o canal inteiro.
 
 const dbPadrao = require('../db');
-const meta = require('../providers/whatsappMeta/metaWhatsapp');
+const transporte = require('../providers/centralWhats/centralWhats');
 const { normalizarTelefoneRecebido } = require('./whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
 const { montarUrlVaga, UTM_SOURCE_WHATSAPP } = require('./ctaCampanha');
@@ -87,8 +93,8 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
   }
   if (!pendentes.length) return resumo;
 
-  const enviar = deps.enviarTemplate || meta.enviarTemplate;
-  const classificar = deps.classificar || meta.classificarErroMeta;
+  const enviar = deps.enviarTemplate || transporte.enviarTemplate;
+  const classificar = deps.classificar || transporte.classificarErroCentralWhats;
   const dormir = deps.dormir || dormirPadrao;
   const intervalo = deps.intervaloMs === undefined ? ENVIO_INTERVALO_MS : deps.intervaloMs;
 
@@ -169,7 +175,8 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
           nome_meta: linha.template_nome,
           idioma: linha.template_idioma,
           // Propriedade do template aprovado na Meta, nao deste destinatario: quando
-          // preenchida, o adaptador acrescenta o componente de botao que a Graph API exige.
+          // preenchida, o transporte acrescenta o parametro de botao que a Meta exige (hoje
+          // como a chave "button0" de `vars`, antes como componente da Graph API).
           // Vem do banco junto com a linha da fila para nao custar uma consulta por envio.
           botao_parametro_fixo: linha.template_botao_parametro_fixo,
         },

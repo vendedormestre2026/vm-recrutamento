@@ -13,7 +13,7 @@ const express = require('express');
 
 const db = require('../db');
 const campanha = require('../lib/campanhaWhatsapp');
-const meta = require('../providers/whatsappMeta/metaWhatsapp');
+const transporte = require('../providers/centralWhats/centralWhats');
 const { CIDADES_VALIDAS } = require('../lib/cidades');
 const publico = require('../lib/publicoCampanhaWhatsapp');
 const { PERFIS_VALIDOS } = require('../lib/promocaoVagas');
@@ -71,8 +71,9 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
     const campanhas = db.listarCampanhasWhatsapp();
     const contagens = contagensPorCampanha();
     const ativo = campanha.ativo();
-    const emMock = meta.modoMock();
-    const faltando = meta.credenciaisFaltando();
+    const emMock = transporte.modoMock();
+    // Agora sao as CENTRALWHATS_*: quem fala com a Meta e o Central Whats, com o token dele.
+    const faltando = transporte.credenciaisFaltando();
     const semLink = regioes.filter((r) => !r.link_convite_grupo).length;
 
     // Diagnostico do que impede um disparo real. Ordem deliberada: da barreira mais externa
