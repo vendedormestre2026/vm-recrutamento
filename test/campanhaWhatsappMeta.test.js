@@ -32,7 +32,11 @@ const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const { criarApp } = require('../src/server');
-const meta = require('../src/providers/whatsappMeta/metaWhatsapp');
+// O transporte e o Central Whats. O adaptador direto da Graph API
+// (providers/whatsappMeta/metaWhatsapp.js) esta DORMENTE, sem importador — e por isso nao e
+// exercitado aqui. Se um dia voltar a ser o caminho de envio, os testes dele voltam do
+// historico, do commit que fez esta troca.
+const transporte = require('../src/providers/centralWhats/centralWhats');
 const job = require('../src/lib/campanhaWhatsapp');
 const webhook = require('../src/routes/webhook_meta');
 const { CIDADES_VALIDAS } = require('../src/lib/cidades');
@@ -148,19 +152,20 @@ test('UNIQUE(campanha_id, telefone): a mesma pessoa entra UMA vez', () => {
   assert.equal(fila(cid).length, 1);
 });
 
-// ══════════════════ Adaptador em mock ══════════════════
+// ══════════════════ Transporte em mock ══════════════════
 
 test('mock e o DEFAULT quando a variavel esta ausente', () => {
   const original = process.env.META_CAMPANHA_MOCK;
   delete process.env.META_CAMPANHA_MOCK;
   try {
     // A ausencia nao pode significar "pode enviar": cada mensagem real custa dinheiro e conta
-    // para a qualidade do numero.
-    assert.equal(meta.modoMock(), true);
+    // para a qualidade do numero. O nome da variavel continua citando META de proposito — ela
+    // e sobre a intencao de simular o disparo, nao sobre o transporte.
+    assert.equal(transporte.modoMock(), true);
     process.env.META_CAMPANHA_MOCK = 'true';
-    assert.equal(meta.modoMock(), true);
+    assert.equal(transporte.modoMock(), true);
     process.env.META_CAMPANHA_MOCK = 'false';
-    assert.equal(meta.modoMock(), false);
+    assert.equal(transporte.modoMock(), false);
   } finally {
     if (original === undefined) delete process.env.META_CAMPANHA_MOCK;
     else process.env.META_CAMPANHA_MOCK = original;
@@ -174,42 +179,110 @@ test('mock NAO faz chamada de rede e devolve wamid deterministico', async () => 
     throw new Error('a rede nao pode ser tocada em mock');
   };
   const { r: a } = await semRuido(() =>
-    meta.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: ['Ana', 'SDR', 'x'], httpClient }));
+    transporte.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: ['Ana', 'SDR', 'x'], httpClient }));
   const { r: b } = await semRuido(() =>
-    meta.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: ['Ana', 'SDR', 'x'], httpClient }));
+    transporte.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: ['Ana', 'SDR', 'x'], httpClient }));
 
   assert.equal(chamou, 0, 'nenhuma chamada de rede em mock');
   assert.equal(a.mock, true);
-  assert.match(a.wamid, /^mock-/, 'o prefixo evita casar com evento de webhook real');
+  assert.match(a.wamid, /^mock-/, 'o prefixo evita casar com id real do Central Whats');
   // Deterministico: rodar o ciclo duas vezes nao inventa duas mensagens diferentes.
   assert.equal(a.wamid, b.wamid);
 });
 
+test('mock nao envia mesmo com credenciais do Central Whats presentes', async () => {
+  // O kill-switch tem que vencer a configuracao completa: ter as tres variaveis certas nao
+  // pode, sozinho, virar permissao de disparo.
+  const antes = {
+    base: process.env.CENTRALWHATS_BASE_URL,
+    inst: process.env.CENTRALWHATS_INSTANCE_ID,
+    key: process.env.CENTRALWHATS_API_KEY,
+  };
+  process.env.CENTRALWHATS_BASE_URL = 'https://exemplo-invalido.local';
+  process.env.CENTRALWHATS_INSTANCE_ID = 'instancia-de-teste';
+  process.env.CENTRALWHATS_API_KEY = 'chave-de-teste';
+  try {
+    assert.deepEqual(transporte.credenciaisFaltando(), []);
+    let chamou = 0;
+    const { r } = await semRuido(() =>
+      transporte.enviarTemplate({
+        telefone: '5547999582500',
+        template: TEMPLATE,
+        variaveis: ['Ana'],
+        httpClient: async () => { chamou += 1; throw new Error('a rede nao pode ser tocada em mock'); },
+      }));
+    assert.equal(chamou, 0);
+    assert.equal(r.mock, true);
+  } finally {
+    for (const [k, v] of [['CENTRALWHATS_BASE_URL', antes.base], ['CENTRALWHATS_INSTANCE_ID', antes.inst], ['CENTRALWHATS_API_KEY', antes.key]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test('credenciaisFaltando cobra as CENTRALWHATS_*, nao as META_*', () => {
+  // O painel imprime esta lista como pendencia. Cobrar a variavel errada manda o operador
+  // configurar o que nao e mais usado.
+  //
+  // As tres sao apagadas e restauradas aqui de proposito: o teste nao pode depender de o .env
+  // da maquina ter (ou nao ter) as variaveis preenchidas.
+  const chaves = ['CENTRALWHATS_BASE_URL', 'CENTRALWHATS_INSTANCE_ID', 'CENTRALWHATS_API_KEY'];
+  const antes = chaves.map((k) => [k, process.env[k]]);
+  for (const k of chaves) delete process.env[k];
+  try {
+    assert.deepEqual(transporte.credenciaisFaltando(), chaves);
+    // Uma so preenchida: as outras duas continuam sendo cobradas.
+    process.env.CENTRALWHATS_BASE_URL = 'https://exemplo-invalido.local';
+    assert.deepEqual(transporte.credenciaisFaltando(), ['CENTRALWHATS_INSTANCE_ID', 'CENTRALWHATS_API_KEY']);
+  } finally {
+    for (const [k, v] of antes) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
 test('o log do mock mascara o telefone', async () => {
   const { linhas } = await semRuido(() =>
-    meta.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: [] }));
+    transporte.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: [] }));
   const tudo = linhas.join('\n');
   assert.doesNotMatch(tudo, /5547999582500/, 'numero completo vazou para o log');
   assert.match(tudo, /5547\*+2500/);
 });
 
-test('o payload segue o formato da Cloud API, com variaveis POSICIONAIS', () => {
-  const p = meta.montarPayload({
+test('o payload segue o formato do Central Whats, com vars POSICIONAIS', () => {
+  const p = transporte.montarPayload({
     telefone: '5547999582500',
     template: TEMPLATE,
     variaveis: ['Ana', 'Vendedor', 'https://chat.whatsapp.com/X'],
   });
-  assert.equal(p.messaging_product, 'whatsapp');
   assert.equal(p.type, 'template');
   assert.equal(p.to, '5547999582500');
   assert.equal(p.template.name, TEMPLATE.nome_meta);
-  assert.equal(p.template.language.code, 'pt_BR');
-  // A ordem no array E o {{n}} do template — a Meta nao tem variavel nomeada.
-  assert.deepEqual(p.template.components[0].parameters, [
-    { type: 'text', text: 'Ana' },
-    { type: 'text', text: 'Vendedor' },
-    { type: 'text', text: 'https://chat.whatsapp.com/X' },
-  ]);
+  // `vars` e mapa FLAT, e a chave E o {{n}} do template — a Meta nao tem variavel nomeada, e
+  // a ordem que o job resolve vira "1","2","3" aqui.
+  assert.deepEqual(p.vars, {
+    1: 'Ana',
+    2: 'Vendedor',
+    3: 'https://chat.whatsapp.com/X',
+  });
+  // Nada do formato da Graph API sobreviveu.
+  assert.equal(p.messaging_product, undefined);
+  assert.equal(p.recipient_type, undefined);
+  assert.equal(p.template.components, undefined);
+});
+
+test('o payload NAO leva language — o idioma e resolvido do lado de la', () => {
+  // O template sincronizado no Central Whats e quem decide o idioma. Mandar explicito daqui
+  // pode produzir comportamento diferente do esperado, mesmo com o valor "certo".
+  const p = transporte.montarPayload({
+    telefone: '5547999582500',
+    template: { ...TEMPLATE, idioma: 'pt_BR' },
+    variaveis: ['Ana'],
+  });
+  assert.equal(p.template.language, undefined);
+  assert.deepEqual(Object.keys(p.template), ['name']);
 });
 
 // ══════════════════ Botao estrutural do template ══════════════════
@@ -219,39 +292,37 @@ test('o payload segue o formato da Cloud API, com variaveis POSICIONAIS', () => 
 // dele. Nao e caso de borda: sem isso, 100% dos envios da campanha falham. Ja falhou de
 // verdade contra a API, com este erro.
 
-test('botao: com botao_parametro_fixo preenchido, o payload ganha o componente de botao', () => {
-  const p = meta.montarPayload({
+test('botao: com botao_parametro_fixo preenchido, vars ganha a chave button0', () => {
+  const p = transporte.montarPayload({
     telefone: '5547999582500',
     template: { ...TEMPLATE, botao_parametro_fixo: 'indisponivel' },
     variaveis: ['Ana', 'Vendedor', 'https://chat.whatsapp.com/X'],
   });
 
-  // O corpo continua sendo o PRIMEIRO componente: a ordem body-antes-de-button e a que a
-  // Cloud API documenta, e o teste do payload acima indexa components[0].
-  assert.equal(p.template.components[0].type, 'body');
-  assert.equal(p.template.components.length, 2);
-  assert.deepEqual(p.template.components[1], {
-    type: 'button',
-    sub_type: 'url',
-    index: '0',
-    parameters: [{ type: 'text', text: 'indisponivel' }],
+  // A exigencia da Meta nao mudou com o transporte; mudou a FORMA. Era um componente
+  // {type:'button', sub_type:'url', index:'0'}; agora e uma chave a mais no mesmo mapa flat.
+  assert.equal(p.vars.button0, 'indisponivel');
+  assert.deepEqual(p.vars, {
+    1: 'Ana',
+    2: 'Vendedor',
+    3: 'https://chat.whatsapp.com/X',
+    button0: 'indisponivel',
   });
-  // `index` como STRING, que e como a Cloud API documenta o campo.
-  assert.equal(typeof p.template.components[1].index, 'string');
 });
 
-test('botao: sem botao_parametro_fixo, o payload NAO ganha botao nenhum', () => {
+test('botao: sem botao_parametro_fixo, a chave button0 nem aparece', () => {
   // O erro simetrico do 131008: mandar botao para um template que nao tem tambem e rejeitado.
   // O default tem que ser "nao manda" — um template futuro sem botao nao pode ganhar um por
-  // heranca do vizinho.
+  // heranca do vizinho. E precisa ser AUSENCIA da chave, nao string vazia: "button0":"" ainda
+  // e um botao declarado.
   for (const valor of [undefined, null, '', '   ']) {
-    const p = meta.montarPayload({
+    const p = transporte.montarPayload({
       telefone: '5547999582500',
       template: { ...TEMPLATE, botao_parametro_fixo: valor },
       variaveis: ['Ana', 'Vendedor', 'x'],
     });
-    assert.equal(p.template.components.length, 1, `valor ${JSON.stringify(valor)} nao podia gerar botao`);
-    assert.equal(p.template.components[0].type, 'body');
+    assert.equal('button0' in p.vars, false, `valor ${JSON.stringify(valor)} nao podia gerar botao`);
+    assert.deepEqual(Object.keys(p.vars), ['1', '2', '3']);
   }
 });
 
@@ -285,22 +356,142 @@ test('botao: template com a coluna NULL nao recebe botao no envio real', async (
     })));
 
   assert.equal(recebido[0].template.botao_parametro_fixo, null);
-  const p = meta.montarPayload({ telefone: '5547999582500', template: recebido[0].template, variaveis: [] });
-  assert.equal(p.template.components.length, 1);
+  const p = transporte.montarPayload({ telefone: '5547999582500', template: recebido[0].template, variaveis: [] });
+  assert.equal('button0' in p.vars, false);
 });
 
-test('classificacao: codigo da Meta vence o status HTTP', () => {
-  // Mesma licao ja aprendida no ZeptoMail e no SendGrid: o status nao separa as causas.
-  const c = (m) => meta.classificarErroMeta(new Error(m)).categoria;
-  assert.equal(c('HTTP 400 — {"error":{"code":190,"message":"token"}}'), 'configuracao');
-  assert.equal(c('HTTP 400 — {"error":{"code":131026,"message":"undeliverable"}}'), 'terminal');
-  assert.equal(c('HTTP 400 — {"error":{"code":130429,"message":"rate limit"}}'), 'retentavel');
-  assert.equal(c('HTTP 401 — sem codigo'), 'configuracao');
-  assert.equal(c('HTTP 429 — sem codigo'), 'retentavel');
-  assert.equal(c('HTTP 503 — sem codigo'), 'retentavel');
-  assert.equal(c('Meta retornou: template does not exist'), 'terminal');
+// ══════════════════ Erros do Central Whats ══════════════════
+
+test('classificacao: cada status do Central Whats cai na categoria certa', () => {
+  const c = (m) => transporte.classificarErroCentralWhats(new Error(m)).categoria;
+
+  // ── configuracao: aborta o ciclo e NAO marca ninguem ──
+  // 401 chave invalida/revogada, 403 rota fora da lista branca, 404 instancia errada.
+  // Nenhum muda conforme o destinatario. Como 'terminal', uma chave revogada marcaria a fila
+  // inteira como falha PERMANENTE (o UNIQUE impede rematerializar) — e essa e a razao de a
+  // classificacao divergir da lista original, que punha os tres em terminal.
+  assert.equal(c('Central Whats retornou HTTP 401 — {"error":"unauthorized"}'), 'configuracao');
+  assert.equal(c('Central Whats retornou HTTP 403 — {"error":"forbidden"}'), 'configuracao');
+  assert.equal(c('Central Whats retornou HTTP 404 — {"error":"instance not found"}'), 'configuracao');
+  assert.equal(c('Credenciais do Central Whats ausentes: CENTRALWHATS_API_KEY.'), 'configuracao');
+
+  // ── terminal: marca AQUELE envio e segue ──
+  // 400 payload/template errado (inclui telefone que a Meta recusa, o unico que varia por
+  // pessoa); 422 provider nao suporta o tipo.
+  assert.equal(c('Central Whats retornou HTTP 400 — {"error":"invalid template"}'), 'terminal');
+  assert.equal(c('Central Whats retornou HTTP 422 — {"error":"unsupported"}'), 'terminal');
+
+  // ── retentavel: conta tentativa ate o teto ──
+  // 502 e a Meta recusando por tras do Central Whats; 5xx e o Central Whats fora do ar.
+  assert.equal(c('Central Whats retornou HTTP 502 — {"error":"meta refused"}'), 'retentavel');
+  assert.equal(c('Central Whats retornou HTTP 500 — erro interno'), 'retentavel');
+  assert.equal(c('Central Whats retornou HTTP 429 — rate limit'), 'retentavel');
+  assert.equal(c('Falha de rede ao chamar o Central Whats: ETIMEDOUT'), 'retentavel');
   // Desconhecido -> retentavel, pela assimetria de custo (perder a pessoa e definitivo).
   assert.equal(c('coisa nunca vista'), 'retentavel');
+});
+
+test('classificacao: o teto so existe para retentavel', () => {
+  const t = (m) => transporte.classificarErroCentralWhats(new Error(m));
+  // 'configuracao' e 'terminal' com teto null: o job usa isso para nao contar tentativa.
+  assert.equal(t('Central Whats retornou HTTP 401 — x').teto, null);
+  assert.equal(t('Central Whats retornou HTTP 400 — x').teto, null);
+  assert.equal(t('Central Whats retornou HTTP 502 — x').teto, transporte.TETO_RETENTAVEL);
+});
+
+test('wamid vem de wa_message_id, e nao do id do Central Whats', () => {
+  // O `id` e a chave do registro LA; a coluna wamid sempre guardou o identificador da
+  // mensagem no WhatsApp. Trocar um pelo outro so apareceria muito depois, ao cruzar com
+  // qualquer coisa do lado da Meta.
+  assert.equal(
+    transporte.extrairWamid({ id: 'uuid-central-whats', wa_message_id: 'wamid.ABC', status: 'sent', type: 'template' }),
+    'wamid.ABC',
+  );
+  // Corpo sem o campo, ou ilegivel, NAO pode virar excecao: a mensagem ja foi aceita, e
+  // lancar aqui faria o job retentar alguem que VAI receber — duplicata e denuncia.
+  assert.equal(transporte.extrairWamid({ id: 'so-o-id' }), null);
+  assert.equal(transporte.extrairWamid(null), null);
+  assert.equal(transporte.extrairWamid('nao e objeto'), null);
+});
+
+test('envio real (httpClient injetado): URL, header e corpo do Central Whats', async () => {
+  const antes = {
+    mock: process.env.META_CAMPANHA_MOCK,
+    base: process.env.CENTRALWHATS_BASE_URL,
+    inst: process.env.CENTRALWHATS_INSTANCE_ID,
+    key: process.env.CENTRALWHATS_API_KEY,
+  };
+  process.env.META_CAMPANHA_MOCK = 'false';
+  // Com barra no fim de proposito: '//' no caminho ja rendeu 404 em provedor demais.
+  process.env.CENTRALWHATS_BASE_URL = 'https://exemplo-invalido.local/';
+  process.env.CENTRALWHATS_INSTANCE_ID = 'ea46ca72-0000-0000-0000-000000000000';
+  process.env.CENTRALWHATS_API_KEY = 'chave-de-teste';
+  try {
+    const chamadas = [];
+    const httpClient = async (url, opcoes) => {
+      chamadas.push({ url, opcoes });
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ id: 'uuid-cw', wa_message_id: 'wamid.XYZ', status: 'sent', type: 'template' }),
+      };
+    };
+
+    const { r } = await semRuido(() =>
+      transporte.enviarTemplate({
+        telefone: '5547999582500',
+        template: { ...TEMPLATE, botao_parametro_fixo: 'indisponivel' },
+        variaveis: ['Ana', 'SDR', 'https://chat.whatsapp.com/X'],
+        httpClient,
+      }));
+
+    assert.equal(chamadas.length, 1);
+    assert.equal(
+      chamadas[0].url,
+      'https://exemplo-invalido.local/api/instances/ea46ca72-0000-0000-0000-000000000000/messages',
+    );
+    assert.equal(chamadas[0].opcoes.method, 'POST');
+    assert.equal(chamadas[0].opcoes.headers.Authorization, 'Bearer chave-de-teste');
+    assert.deepEqual(JSON.parse(chamadas[0].opcoes.body), {
+      type: 'template',
+      to: '5547999582500',
+      template: { name: 'confirmacao_cadastro_vaga_vm' },
+      vars: { 1: 'Ana', 2: 'SDR', 3: 'https://chat.whatsapp.com/X', button0: 'indisponivel' },
+    });
+    assert.equal(r.mock, false);
+    assert.equal(r.wamid, 'wamid.XYZ');
+  } finally {
+    for (const [k, v] of [['META_CAMPANHA_MOCK', antes.mock], ['CENTRALWHATS_BASE_URL', antes.base], ['CENTRALWHATS_INSTANCE_ID', antes.inst], ['CENTRALWHATS_API_KEY', antes.key]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test('envio real: HTTP de erro vira excecao com o status legivel na mensagem', async () => {
+  // A classificacao le o status DA MENSAGEM do erro. Se o formato mudar sem o regex mudar
+  // junto, tudo vira 'erro nao classificado' e nada mais aborta ciclo nenhum.
+  const antes = { mock: process.env.META_CAMPANHA_MOCK, base: process.env.CENTRALWHATS_BASE_URL, inst: process.env.CENTRALWHATS_INSTANCE_ID, key: process.env.CENTRALWHATS_API_KEY };
+  process.env.META_CAMPANHA_MOCK = 'false';
+  process.env.CENTRALWHATS_BASE_URL = 'https://exemplo-invalido.local';
+  process.env.CENTRALWHATS_INSTANCE_ID = 'instancia-de-teste';
+  process.env.CENTRALWHATS_API_KEY = 'chave-de-teste';
+  try {
+    const httpClient = async () => ({ ok: false, status: 401, text: async () => '{"error":"invalid api key"}' });
+    await assert.rejects(
+      () => transporte.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: ['Ana'], httpClient }),
+      (err) => {
+        assert.match(err.message, /HTTP 401/);
+        assert.equal(transporte.classificarErroCentralWhats(err).categoria, 'configuracao');
+        return true;
+      },
+    );
+  } finally {
+    for (const [k, v] of [['META_CAMPANHA_MOCK', antes.mock], ['CENTRALWHATS_BASE_URL', antes.base], ['CENTRALWHATS_INSTANCE_ID', antes.inst], ['CENTRALWHATS_API_KEY', antes.key]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });
 
 // ══════════════════ Job ══════════════════
@@ -407,7 +598,7 @@ test('retry: conta tentativa, fica pendente ate o teto, depois falha', async () 
       enviarTemplate: async () => { throw new Error('HTTP 429 — rate limit'); },
     })));
 
-  for (let i = 1; i < meta.TETO_RETENTAVEL; i += 1) {
+  for (let i = 1; i < transporte.TETO_RETENTAVEL; i += 1) {
     const { r } = await rodar();
     assert.equal(r.retentar, 1, `ciclo ${i}`);
     assert.equal(fila(cid)[0].status, 'pendente');
