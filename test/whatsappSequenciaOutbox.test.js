@@ -105,7 +105,7 @@ const deps = (extra = {}) => ({ intervaloMs: 0, dormir: async () => {}, ...extra
 
 // ══════════════════ agendarSequencia ══════════════════
 
-test('agenda as duas etapas: WA1 agora, WA2 em +4h', async () => {
+test('agenda as duas etapas: WA1 agora, WA2 em +15min', async () => {
   zerar();
   ligarTudo();
   const criadoEm = '2026-08-14 10:00:00';
@@ -118,12 +118,12 @@ test('agenda as duas etapas: WA1 agora, WA2 em +4h', async () => {
   assert.deepEqual(linhas.map((l) => l.etapa), ['wa1', 'wa2']);
   assert.equal(linhas[0].status, 'pendente');
   // Telefone normalizado JA no agendamento: gravar cru faria a fila carregar um numero que
-  // o envio nao usa, e o problema so apareceria 4h depois.
+  // o envio nao usa, e o problema so apareceria minutos depois.
   assert.equal(linhas[0].telefone_e164, '5547999582500');
 
-  // WA2 = criado_em + 4h, exato.
+  // WA2 = criado_em + 15min, exato.
   const wa2 = linhas.find((l) => l.etapa === 'wa2');
-  assert.match(wa2.agendado_para, /^2026-08-14 14:00:00$/);
+  assert.match(wa2.agendado_para, /^2026-08-14 10:15:00$/);
 });
 
 test('config desligada: NAO cria linha (nao e "cria e ignora")', async () => {
@@ -318,7 +318,7 @@ test('so processa o que JA VENCEU', async () => {
   // calendario e teste que mente sobre o produto.
   //
   // Agora tudo e relativo ao instante da execucao: criado_em = agora real, logo WA1 vence
-  // imediatamente e WA2 (criado_em + 4h) esta no futuro por construcao, em qualquer dia.
+  // imediatamente e WA2 (criado_em + 15min) esta no futuro por construcao, em qualquer dia.
   const agoraReal = new Date().toISOString().replace('T', ' ').slice(0, 19);
   const app = criarApplication('+55 (47) 99958-2500', agoraReal);
   await comLogs(() => outbox.agendarSequencia({ ...app, criado_em: agoraReal }));
@@ -400,11 +400,11 @@ test('o texto enviado e o da ETAPA certa', async () => {
   await comLogs(() => outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn })));
 
   // Localiza por CONTEUDO, e nao por indice: a fila sai por `agendado_para`, e com um
-  // criado_em antigo o WA2 (criado_em+4h, em 2020) vence o WA1 (agora, 2026). A ordem esta
+  // criado_em antigo o WA2 (criado_em+15min, em 2020) vence o WA1 (agora, 2026). A ordem esta
   // certa; supor que chamadas[0] e o WA1 e que estava errado.
   assert.equal(envio.chamadas.length, 2);
-  const wa1 = envio.chamadas.find((c) => /Não precisa fazer nada agora/i.test(c.texto));
-  const wa2 = envio.chamadas.find((c) => /vídeo curto de apresentação/i.test(c.texto));
+  const wa1 = envio.chamadas.find((c) => /A oportunidade faz sentido pra você/i.test(c.texto));
+  const wa2 = envio.chamadas.find((c) => /COMO PARTICIPAR DO PROCESSO SELETIVO/i.test(c.texto));
 
   assert.ok(wa1, 'o texto do WA1 precisa ter saido');
   assert.ok(wa2, 'o texto do WA2 precisa ter saido');

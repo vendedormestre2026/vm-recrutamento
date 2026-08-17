@@ -109,22 +109,46 @@ test('etapa ausente NAO quebra — e o caso das candidaturas antigas', () => {
   assert.equal(e.enviadoEm, null);
 });
 
-test('limiteDoVideo = wa2.enviado_em + prazo, e null sem envio', () => {
+test('limiteDoVideo = meio-dia do dia seguinte ao wa2.enviado_em (Brasilia), e null sem envio', () => {
+  // 2026-08-14 10:00 UTC = 07:00 em Brasilia (mesmo dia civil) -> +1 dia = 15/08, meio-dia
+  // BRT = 15:00 UTC.
   const linhas = [{ etapa: 'wa2', status: 'enviado', enviado_em: '2026-08-14 10:00:00' }];
-  const limite = ficha.limiteDoVideo(linhas, 24);
-  assert.equal(limite.toISOString(), '2026-08-15T10:00:00.000Z');
+  const limite = ficha.limiteDoVideo(linhas);
+  assert.equal(limite.toISOString(), '2026-08-15T15:00:00.000Z');
 
   // Sem envio nao ha prazo: inventar um a partir do agendamento seria cobrar de um relogio
   // que nunca comecou a correr.
-  assert.equal(ficha.limiteDoVideo([{ etapa: 'wa2', status: 'pendente', enviado_em: null }], 24), null);
-  assert.equal(ficha.limiteDoVideo([], 24), null);
+  assert.equal(ficha.limiteDoVideo([{ etapa: 'wa2', status: 'pendente', enviado_em: null }]), null);
+  assert.equal(ficha.limiteDoVideo([]), null);
 });
 
 test('limiteDoVideo le a data do banco como UTC', () => {
   // Mesma armadilha do outbox: datetime('now') e UTC sem sufixo, e new Date() interpretaria
-  // como local — o prazo sairia deslocado pelo offset da maquina.
-  const limite = ficha.limiteDoVideo([{ etapa: 'wa2', status: 'enviado', enviado_em: '2026-08-14 10:00:00' }], 1);
-  assert.equal(limite.toISOString(), '2026-08-14T11:00:00.000Z');
+  // como local — o dia civil em Brasilia sairia deslocado pelo offset da maquina. 23:30 UTC
+  // ja e 20:30 do MESMO dia em Brasilia (UTC-3), entao o "amanha" certo e o dia seguinte a
+  // esse, nao um dia extra.
+  const limite = ficha.limiteDoVideo([{ etapa: 'wa2', status: 'enviado', enviado_em: '2026-08-14 23:30:00' }]);
+  assert.equal(limite.toISOString(), '2026-08-15T15:00:00.000Z');
+});
+
+test('calcularPrazoAmanhaMeioDia: dia civil em Brasilia, nao em UTC', () => {
+  // Meio-dia UTC: 09:00 em Brasilia, mesmo dia civil -> amanha, meio-dia BRT.
+  assert.equal(
+    ficha.calcularPrazoAmanhaMeioDia(new Date('2026-08-14T12:00:00Z')).toISOString(),
+    '2026-08-15T15:00:00.000Z',
+  );
+  // Fronteira de dia civil: 01:30 UTC de 15/08 ainda e 14/08 as 22:30 em Brasilia (UTC-3) —
+  // o "amanha" certo e 15/08, e nao 16/08 (o que aconteceria se o calculo usasse o dia civil
+  // em UTC em vez do dia civil em Brasilia).
+  assert.equal(
+    ficha.calcularPrazoAmanhaMeioDia(new Date('2026-08-15T01:30:00Z')).toISOString(),
+    '2026-08-15T15:00:00.000Z',
+  );
+  // Input invalido/nulo nao pode produzir data nenhuma (e `new Date(null)` NAO e invalida —
+  // vira epoch — entao a guarda contra null precisa ser explicita, nao so Number.isNaN).
+  assert.equal(ficha.calcularPrazoAmanhaMeioDia(null), null);
+  assert.equal(ficha.calcularPrazoAmanhaMeioDia(undefined), null);
+  assert.equal(ficha.calcularPrazoAmanhaMeioDia('lixo'), null);
 });
 
 test('podeConfirmarVideo so com WA2 ENVIADO', () => {
@@ -235,7 +259,7 @@ test('a tela de confirmacao MOSTRA o prazo antes de pedir a decisao', async () =
     // Um clique que grava "dentro/fora do prazo" sem mostrar contra o que compara e um
     // clique cego, e o resultado decide o destino de um candidato.
     assert.match(html, /WA2 enviado em/);
-    assert.match(html, /Prazo \(\d+h\)/);
+    assert.match(html, /Prazo \(amanhã, meio-dia\)/);
     assert.match(html, /name="dentro_prazo"/);
     assert.match(html, /name="confirmado_por"/);
     // E o recrutador pode corrigir a sugestao. `\s+` porque o template quebra a frase em
@@ -326,7 +350,7 @@ test('a ficha mostra os tres status', async () => {
     await autenticar(base);
     const html = await (await fetch(`${base}/admin/candidato/${id}`, { headers: comAuth() })).text();
     assert.match(html, /WA1 \(imediato\)/);
-    assert.match(html, /WA2 \(\+\d+h, pede vídeo\)/);
+    assert.match(html, /WA2 \(\+15min, pede vídeo\)/);
     assert.match(html, /Vídeo de apresentação/);
     assert.match(html, /socket caiu/, 'o erro do WA2 precisa aparecer na ficha');
   });

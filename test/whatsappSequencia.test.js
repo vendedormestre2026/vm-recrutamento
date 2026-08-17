@@ -18,15 +18,24 @@ const assert = require('node:assert/strict');
 const {
   montarTextoWA1,
   montarTextoWA2,
-  PRAZO_HORAS_PADRAO,
   saudacao,
   trechoVaga,
-  horasValidas,
-  textoPrazo,
+  linhaRemuneracao,
+  linhaLocalidade,
+  linkVaga,
 } = require('../src/lib/whatsappSequencia');
 
 const APP = { nome: 'Ana Paula Silva' };
 const JOB = { titulo: 'Vendedor Externo', empresa: 'Labor Seg', perfil: 'CLOSER' };
+const JOB_COMPLETO = {
+  ...JOB,
+  slug: 'vendedor-externo-labor-seg',
+  potencial_ganhos: 'R$ 5.000 a R$ 8.000/mês',
+  faixa_pagamento: 'R$ 3.000 + comissão',
+  endereco: 'Rua das Flores, 100 - Blumenau/SC',
+  cidade: 'Blumenau',
+  modalidade: 'presencial',
+};
 
 // Artefatos que denunciam template mal preenchido. Nenhum texto pode conter nenhum deles.
 function semArtefatos(texto, rotulo) {
@@ -34,6 +43,9 @@ function semArtefatos(texto, rotulo) {
   assert.doesNotMatch(texto, / ,|  |\bde na\b|\bna \./, `${rotulo}: pontuacao/espaco residual`);
   assert.doesNotMatch(texto, /undefined|null|NaN/, `${rotulo}: valor JS vazou para o texto`);
   assert.doesNotMatch(texto, /^\s|\s$/, `${rotulo}: espaco nas bordas`);
+  // Bloco em branco duplo: uma linha dinamica ausente nao pode deixar o "buraco" dela, so
+  // a linha sumida com o resto colado certo.
+  assert.doesNotMatch(texto, /\n\n\n/, `${rotulo}: bloco em branco duplo`);
 }
 
 // ══════════════════ Helpers ══════════════════
@@ -57,45 +69,81 @@ test('trechoVaga omite empresa vazia e some inteiro sem vaga', () => {
   for (const nada of [null, undefined, {}]) assert.equal(trechoVaga(nada), '');
 });
 
-test('horasValidas cai no default em tudo que nao e numero positivo', () => {
-  assert.equal(horasValidas(48), 48);
-  assert.equal(horasValidas('12'), 12);
-  assert.equal(horasValidas(1.6), 2, 'arredonda: "1.6 horas" nao e texto para humano');
-  // Um prazo de 0 no texto seria uma instrucao impossivel de cumprir — pior que o default.
-  for (const ruim of [0, -5, NaN, Infinity, null, undefined, '', 'abc', {}]) {
-    assert.equal(horasValidas(ruim), PRAZO_HORAS_PADRAO, JSON.stringify(ruim));
-  }
+test('linhaRemuneracao: potencial_ganhos tem prioridade sobre faixa_pagamento', () => {
+  assert.equal(linhaRemuneracao(JOB_COMPLETO), `💰 ${JOB_COMPLETO.potencial_ganhos}`);
+  assert.equal(linhaRemuneracao({ faixa_pagamento: 'R$ 3.000' }), '💰 R$ 3.000');
+  assert.equal(linhaRemuneracao({ potencial_ganhos: '  ' , faixa_pagamento: 'R$ 3.000' }), '💰 R$ 3.000');
+  for (const nada of [null, undefined, {}]) assert.equal(linhaRemuneracao(nada), '');
 });
 
-test('textoPrazo faz plural', () => {
-  assert.equal(textoPrazo(1), '1 hora');
-  assert.equal(textoPrazo(24), '24 horas');
+test('linhaLocalidade: endereco + modalidade juntos, cada um omite independente', () => {
+  assert.equal(linhaLocalidade(JOB_COMPLETO), `📍 ${JOB_COMPLETO.endereco} · 🏢 ${JOB_COMPLETO.modalidade}`);
+  assert.equal(linhaLocalidade({ endereco: 'Rua X' }), '📍 Rua X');
+  assert.equal(linhaLocalidade({ modalidade: 'remoto' }), '🏢 remoto');
+  // endereco tem prioridade sobre cidade (mais especifico).
+  assert.equal(linhaLocalidade({ cidade: 'Blumenau' }), '📍 Blumenau');
+  assert.equal(linhaLocalidade({ endereco: 'Rua X', cidade: 'Blumenau' }), '📍 Rua X');
+  for (const nada of [null, undefined, {}]) assert.equal(linhaLocalidade(nada), '');
+});
+
+test('linkVaga: baseUrl + /vaga/:slug, sem utm; "" sem slug', () => {
+  const url = linkVaga(JOB_COMPLETO);
+  assert.match(url, /\/vaga\/vendedor-externo-labor-seg$/);
+  // Decisao de negocio: quem recebe o WA1 ja se candidatou, nao ha atribuicao de cadastro
+  // a fazer aqui — diferente do link da campanha em massa.
+  assert.doesNotMatch(url, /utm_source|campanha/);
+  for (const nada of [null, undefined, {}, JOB]) assert.equal(linkVaga(nada), '');
 });
 
 // ══════════════════ WA1 ══════════════════
 
-test('WA1: caminho completo', () => {
-  const t = montarTextoWA1(APP, JOB);
+test('WA1: caminho completo, com remuneracao, localidade e link', () => {
+  const t = montarTextoWA1(APP, JOB_COMPLETO);
   assert.match(t, /^Olá, Ana!/);
-  assert.match(t, /Recebemos sua candidatura para a vaga de Vendedor Externo na Labor Seg\./);
-  semArtefatos(t, 'WA1');
+  assert.ok(t.includes('Recebemos sua candidatura para *Vendedor Externo* na *Labor Seg*.'));
+  assert.ok(t.includes(`💰 ${JOB_COMPLETO.potencial_ganhos}`));
+  assert.ok(t.includes(`📍 ${JOB_COMPLETO.endereco} · 🏢 ${JOB_COMPLETO.modalidade}`));
+  assert.ok(t.includes(`Detalhes completos: ${linkVaga(JOB_COMPLETO)}`));
+  assert.ok(t.includes('A oportunidade faz sentido pra você? Se sim, te mando o próximo passo. 🙂'));
+  semArtefatos(t, 'WA1 completo');
 });
 
-test('WA1 NAO pede acao, nao tem prazo e nao tem link', () => {
-  // A regra de negocio: quem acabou de se candidatar ja fez a acao dele. Uma mensagem
-  // automatica que chega junto com o cadastro e ja cobra algo soa como robo de cobranca.
+test('WA1: sem remuneracao, sem localidade e sem slug — linhas somem por inteiro', () => {
   const t = montarTextoWA1(APP, JOB);
-  assert.match(t, /Não precisa fazer nada agora/i);
-  assert.doesNotMatch(t, /https?:\/\//, 'WA1 nao leva link');
+  assert.doesNotMatch(t, /💰/, 'sem potencial_ganhos/faixa_pagamento nao pode sobrar o emoji');
+  assert.doesNotMatch(t, /📍|🏢/, 'sem endereco/cidade/modalidade nao pode sobrar o emoji');
+  assert.doesNotMatch(t, /Detalhes completos/, 'sem slug nao ha link');
+  assert.ok(t.includes('A oportunidade faz sentido pra você?'));
+  semArtefatos(t, 'WA1 sem dados ricos');
+});
+
+test('WA1: so remuneracao (sem localidade) fica sozinha no bloco', () => {
+  const job = { ...JOB, potencial_ganhos: 'R$ 5.000/mês' };
+  const t = montarTextoWA1(APP, job);
+  assert.ok(t.includes('💰 R$ 5.000/mês'));
+  assert.doesNotMatch(t, /📍|🏢/);
+  semArtefatos(t, 'WA1 so remuneracao');
+});
+
+test('WA1: so localidade (sem remuneracao) fica sozinha no bloco', () => {
+  const job = { ...JOB, modalidade: 'remoto' };
+  const t = montarTextoWA1(APP, job);
+  assert.ok(t.includes('🏢 remoto'));
+  assert.doesNotMatch(t, /💰/);
+  semArtefatos(t, 'WA1 so localidade');
+});
+
+test('WA1 nao pede video nem prazo — isso e assunto do WA2', () => {
+  const t = montarTextoWA1(APP, JOB_COMPLETO);
   assert.doesNotMatch(t, /\bhoras\b|\bprazo\b/i, 'prazo e assunto do WA2');
   assert.doesNotMatch(t, /vídeo|video/i, 'o pedido do video e do WA2');
 });
 
 test('WA1 degrada sem quebrar em toda combinacao de campo ausente', () => {
   const casos = [
-    ['sem nome', {}, JOB],
-    ['sem empresa', APP, { titulo: 'Vendedor Externo' }],
-    ['sem vaga', APP, { empresa: 'Labor Seg' }],
+    ['sem nome', {}, JOB_COMPLETO],
+    ['sem empresa', APP, { ...JOB_COMPLETO, empresa: undefined }],
+    ['sem vaga', APP, { ...JOB_COMPLETO, titulo: undefined }],
     ['sem job', APP, null],
     ['sem nada', null, null],
     ['sem nada (objetos vazios)', {}, {}],
@@ -110,28 +158,30 @@ test('WA1 degrada sem quebrar em toda combinacao de campo ausente', () => {
 
 // ══════════════════ WA2 ══════════════════
 
-test('WA2: caminho completo, com o prazo no texto', () => {
-  const t = montarTextoWA2(APP, JOB, 24);
+test('WA2: caminho completo — abertura e as duas primeiras perguntas sao fixas', () => {
+  const t = montarTextoWA2(APP, JOB);
   assert.match(t, /^Olá, Ana!/);
-  assert.match(t, /vídeo curto de apresentação/i);
-  assert.match(t, /Você tem 24 horas a partir desta mensagem/);
+  assert.ok(t.includes('👇 *COMO PARTICIPAR DO PROCESSO SELETIVO* 👇'));
+  assert.ok(t.includes('1️⃣ Quem é você?'));
+  assert.ok(t.includes('2️⃣ Qual é a sua maior ambição e meta de vida?'));
   semArtefatos(t, 'WA2');
 });
 
-test('WA2: prazo customizado vs. default', () => {
-  assert.match(montarTextoWA2(APP, JOB, 48), /48 horas/);
-  assert.match(montarTextoWA2(APP, JOB, 1), /\b1 hora\b/);
-  // Ausente cai no default — e o default vem daqui, nao de um numero cravado no texto.
-  for (const ausente of [undefined, null, 0, 'abc']) {
-    assert.match(montarTextoWA2(APP, JOB, ausente), new RegExp(`${PRAZO_HORAS_PADRAO} horas`), String(ausente));
-  }
+test('WA2: a 3a pergunta reaproveita trechoVaga', () => {
+  assert.ok(montarTextoWA2(APP, JOB).includes(`3️⃣ Por que você é a pessoa certa${trechoVaga(JOB)}?`));
+  assert.ok(montarTextoWA2(APP, null).includes(`3️⃣ Por que você é a pessoa certa${trechoVaga(null)}?`));
+});
+
+test('WA2: o prazo e a frase fixa "amanhã, ao meio-dia"', () => {
+  const t = montarTextoWA2(APP, JOB);
+  assert.ok(t.includes('⏰ *PRAZO*: envie o vídeo aqui mesmo no WhatsApp até amanhã, ao meio-dia.'));
 });
 
 test('WA2 NAO promete automacao que nao existe', () => {
   // A confirmacao do video e 100% humana (o recrutador marca no painel). Prometer
   // "responda que o sistema registra" e como se perde confianca na primeira vez que nao
   // acontece.
-  const t = montarTextoWA2(APP, JOB, 24);
+  const t = montarTextoWA2(APP, JOB);
   assert.doesNotMatch(t, /automaticamente|o sistema (vai|ir[áa])|registrad[oa] automatic/i);
 });
 
@@ -144,11 +194,11 @@ test('WA2 degrada sem quebrar em toda combinacao de campo ausente', () => {
     ['sem nada', null, null],
   ];
   for (const [rotulo, app, job] of casos) {
-    const t = montarTextoWA2(app, job, 24);
+    const t = montarTextoWA2(app, job);
     assert.ok(t.length > 60, `${rotulo}: texto curto demais`);
     // O pedido e o prazo sao o ponto do WA2: nenhuma degradacao pode fazer sumir os dois.
     assert.match(t, /vídeo/i, `${rotulo}: perdeu o pedido do video`);
-    assert.match(t, /24 horas/, `${rotulo}: perdeu o prazo`);
+    assert.ok(t.includes('amanhã, ao meio-dia'), `${rotulo}: perdeu o prazo`);
     semArtefatos(t, `WA2 ${rotulo}`);
   }
 });
@@ -157,7 +207,7 @@ test('WA2 degrada sem quebrar em toda combinacao de campo ausente', () => {
 
 test('as duas mensagens sao diferentes e ambas se identificam', () => {
   const a = montarTextoWA1(APP, JOB);
-  const b = montarTextoWA2(APP, JOB, 24);
+  const b = montarTextoWA2(APP, JOB);
   assert.notEqual(a, b);
   for (const [rotulo, t] of [['WA1', a], ['WA2', b]]) {
     assert.match(t, /Vendedor Mestre/, `${rotulo} precisa dizer de quem e`);
@@ -171,7 +221,7 @@ test('o texto NAO varia por perfil (SDR vs CLOSER) — decisao pendente, ver rel
   const sdr = { ...JOB, perfil: 'SDR' };
   const closer = { ...JOB, perfil: 'CLOSER' };
   assert.equal(montarTextoWA1(APP, sdr), montarTextoWA1(APP, closer));
-  assert.equal(montarTextoWA2(APP, sdr, 24), montarTextoWA2(APP, closer, 24));
+  assert.equal(montarTextoWA2(APP, sdr), montarTextoWA2(APP, closer));
 });
 
 test('nome com espacos extras nao vaza para a saudacao', () => {
