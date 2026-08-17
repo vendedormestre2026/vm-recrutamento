@@ -29,15 +29,17 @@
 const dbPadrao = require('../db');
 const conexao = require('./connection');
 const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('../lib/whatsapp');
-const { montarTextoWA1, montarTextoWA2, PRAZO_HORAS_PADRAO } = require('../lib/whatsappSequencia');
+const { montarTextoWA1, montarTextoWA2 } = require('../lib/whatsappSequencia');
 
 // Interruptor de DISPARO, no mesmo store `configuracoes` das outras cinco varreduras.
 // Confirmado no diagnostico: e config de banco (obterConfigBool), nao variavel de ambiente —
 // o mesmo padrao de promocao_ativa. Por isso NAO ha WHATSAPP_SEQUENCIA_ATIVA no .env.
 const CHAVE_ATIVO = 'whatsapp_sequencia_ativa';
 
-// WA2 sai 4h depois da candidatura. Fechado por regra de negocio.
-const WA2_ATRASO_HORAS = 4;
+// WA2 sai 15 MINUTOS depois da candidatura. Fechado por regra de negocio: e a premissa que
+// deixa o texto do WA2 falar em "amanhã, ao meio-dia" sem calcular nenhuma data — se o atraso
+// fosse maior o "amanhã" poderia nao bater mais com a realidade.
+const WA2_ATRASO_MINUTOS = 15;
 
 // Teto por ciclo. Muito menor que os 125 da campanha porque o volume e outro; existe mesmo
 // assim, porque uma fila represada (instancia fora do ar por um dia) despejaria tudo de uma
@@ -69,11 +71,6 @@ function intervaloMs() {
 function maxTentativas() {
   const n = Number(process.env.WHATSAPP_MAX_TENTATIVAS);
   return Number.isInteger(n) && n > 0 ? n : MAX_TENTATIVAS_PADRAO;
-}
-
-function prazoWa2Horas() {
-  const n = Number(process.env.WHATSAPP_WA2_PRAZO_HORAS);
-  return Number.isFinite(n) && n > 0 ? n : PRAZO_HORAS_PADRAO;
 }
 
 // Telefone mascarado para log. NUNCA logamos numero completo: o stdout do Railway e lido por
@@ -115,7 +112,7 @@ function iso(data) {
 // A. AGENDAMENTO — chamado na criacao da application
 // ──────────────────────────────────────────────────────────────
 
-// Agenda WA1 (agora) e WA2 (criado_em + 4h).
+// Agenda WA1 (agora) e WA2 (criado_em + 15min).
 //
 // NUNCA LANCA. A candidatura ja foi gravada quando isto roda; uma falha aqui nao pode
 // derrubar o POST /api/aplicacao. Mesmo principio do middleware de funil: perder um
@@ -133,7 +130,7 @@ function agendarSequencia(application, deps = {}) {
     if (!ativo({ db })) return { agendados: 0, motivo: 'whatsapp_sequencia_ativa desligado' };
 
     // Telefone normalizado JA no agendamento: gravar o formato cru faria a fila carregar um
-    // numero que o envio nao consegue usar, e o problema so apareceria 4h depois.
+    // numero que o envio nao consegue usar, e o problema so apareceria minutos depois.
     const telefone = normalizarTelefoneWhatsapp(application.telefone);
     if (!telefone) {
       console.warn(
@@ -144,7 +141,7 @@ function agendarSequencia(application, deps = {}) {
 
     const base = paraDataUtc(application.criado_em);
     const agora = new Date();
-    const quandoWa2 = new Date(base.getTime() + WA2_ATRASO_HORAS * 3600 * 1000);
+    const quandoWa2 = new Date(base.getTime() + WA2_ATRASO_MINUTOS * 60 * 1000);
 
     let agendados = 0;
     // Idempotente pelo UNIQUE(application_id, etapa) + DO NOTHING: chamar duas vezes nao
@@ -172,8 +169,13 @@ function agendarSequencia(application, deps = {}) {
 
 function textoDaEtapa(linha) {
   const app = { nome: linha.app_nome };
-  const job = { titulo: linha.job_titulo, empresa: linha.job_empresa, perfil: linha.job_perfil };
-  return linha.etapa === 'wa1' ? montarTextoWA1(app, job) : montarTextoWA2(app, job, prazoWa2Horas());
+  const job = {
+    titulo: linha.job_titulo, empresa: linha.job_empresa, perfil: linha.job_perfil,
+    slug: linha.job_slug, faixa_pagamento: linha.job_faixa_pagamento,
+    potencial_ganhos: linha.job_potencial_ganhos, endereco: linha.job_endereco,
+    cidade: linha.job_cidade, modalidade: linha.job_modalidade,
+  };
+  return linha.etapa === 'wa1' ? montarTextoWA1(app, job) : montarTextoWA2(app, job);
 }
 
 function dormirPadrao(ms) {
@@ -309,10 +311,9 @@ module.exports = {
   varrerSeOcioso,
   ativo,
   modoMock,
-  prazoWa2Horas,
   mascarar,
   CHAVE_ATIVO,
-  WA2_ATRASO_HORAS,
+  WA2_ATRASO_MINUTOS,
   POR_CICLO,
   MAX_TENTATIVAS_PADRAO,
   INTERVALO_PADRAO_MS,
