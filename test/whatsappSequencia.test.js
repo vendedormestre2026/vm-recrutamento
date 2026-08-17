@@ -235,11 +235,21 @@ test('WA1 degrada sem quebrar em toda combinacao de campo ausente', () => {
 
 test('WA2: caminho completo — abertura e as duas primeiras perguntas sao fixas', () => {
   const t = montarTextoWA2(APP, JOB);
-  assert.match(t, /^Olá, Ana!/);
   assert.ok(t.includes('👇 *COMO PARTICIPAR DO PROCESSO SELETIVO* 👇'));
   assert.ok(t.includes('1️⃣ Quem é você?'));
   assert.ok(t.includes('2️⃣ Qual é a sua maior ambição e meta de vida?'));
   semArtefatos(t, 'WA2');
+});
+
+test('WA2 SEM saudacao (Incremento 11): comeca direto em "COMO PARTICIPAR", sem "Olá"', () => {
+  // A saudacao ja aconteceu no WA1, minutos antes, no MESMO fio de conversa — repeti-la no
+  // WA2 alongava a mensagem sem acrescentar nada.
+  const t = montarTextoWA2(APP, JOB);
+  assert.match(t, /^👇 \*COMO PARTICIPAR DO PROCESSO SELETIVO\* 👇/);
+  assert.doesNotMatch(t, /^Olá/);
+  assert.doesNotMatch(t, /\bOlá\b/);
+  // Nome do candidato tambem nao aparece mais em lugar nenhum do WA2 (so vinha via saudacao).
+  assert.doesNotMatch(t, new RegExp(APP.nome.split(' ')[0]));
 });
 
 test('WA2: a 3a pergunta reaproveita trechoVaga', () => {
@@ -280,13 +290,14 @@ test('WA2 degrada sem quebrar em toda combinacao de campo ausente', () => {
 
 // ══════════════════ As duas juntas ══════════════════
 
-test('as duas mensagens sao diferentes e ambas se identificam', () => {
+test('as duas mensagens sao diferentes; so o WA1 se identifica (WA2 e o MESMO fio)', () => {
   const a = montarTextoWA1(APP, JOB);
   const b = montarTextoWA2(APP, JOB);
   assert.notEqual(a, b);
-  for (const [rotulo, t] of [['WA1', a], ['WA2', b]]) {
-    assert.match(t, /Vendedor Mestre/, `${rotulo} precisa dizer de quem e`);
-  }
+  assert.match(a, /Vendedor Mestre/, 'WA1 precisa dizer de quem e — e a 1a mensagem do fio');
+  // WA2 (Incremento 11) NAO repete a identificacao: chega minutos depois, no MESMO fio de
+  // WhatsApp do WA1 — quem esta falando ja esta estabelecido.
+  assert.doesNotMatch(b, /Vendedor Mestre/);
 });
 
 test('o texto NAO varia por perfil (SDR vs CLOSER) — decisao pendente, ver relatorio', () => {

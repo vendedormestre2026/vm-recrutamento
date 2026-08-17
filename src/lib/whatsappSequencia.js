@@ -157,6 +157,11 @@ function montarTextoWA1(application, job) {
 
 // ── WA2 — T+15min, pede o video de apresentacao ──
 //
+// SEM saudacao: decisao de negocio (Incremento 11). A saudacao ja aconteceu no WA1, minutos
+// antes — repeti-la aqui alongava a mensagem sem acrescentar nada. Vai direto ao "COMO
+// PARTICIPAR". `application` fica sem uso nesta funcao (mantido no parametro so pra nao
+// obrigar o call site a mudar a assinatura).
+//
 // Abertura e as duas primeiras perguntas sao FIXAS: genericas o bastante pra servir qualquer
 // perfil de vendas. So a 3a pergunta muda, e reaproveita trechoVaga — a mesma regra de
 // omissao de sempre, e nao uma segunda copia dela.
@@ -166,8 +171,6 @@ function montarTextoWA1(application, job) {
 // sistema nao faz e como se perde confianca na primeira vez que nao acontece.
 function montarTextoWA2(application, job) {
   const linhas = [
-    `${saudacao(application && application.nome)} Aqui é da Vendedor Mestre de novo.`,
-    '',
     '👇 *COMO PARTICIPAR DO PROCESSO SELETIVO* 👇',
     'Se você tem o perfil que buscamos, seu primeiro desafio começa agora. Quero avaliar sua ' +
       'comunicação, energia e capacidade de gerar conexão.',
