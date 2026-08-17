@@ -1366,7 +1366,7 @@ router.get('/candidato/:id', (req, res) => {
   const linhasWa = db.listarSequenciaWhatsappDaApplication(cand.id);
   const wa1 = fichaWa.estadoEtapa(linhasWa, 'wa1');
   const wa2 = fichaWa.estadoEtapa(linhasWa, 'wa2');
-  const limiteVideo = fichaWa.limiteDoVideo(linhasWa, sequenciaWhatsapp.prazoWa2Horas());
+  const limiteVideo = fichaWa.limiteDoVideo(linhasWa);
   const situacaoVideo = fichaWa.situacaoVideo(cand, linhasWa);
 
   const linhaEtapa = (rotulo, e) =>
@@ -1386,7 +1386,7 @@ router.get('/candidato/:id', (req, res) => {
       <h2>Sequência de WhatsApp</h2>
       <dl class="rel-id">
         ${linhaEtapa('WA1 (imediato)', wa1)}
-        ${linhaEtapa('WA2 (+' + sequenciaWhatsapp.WA2_ATRASO_HORAS + 'h, pede vídeo)', wa2)}
+        ${linhaEtapa('WA2 (+' + sequenciaWhatsapp.WA2_ATRASO_MINUTOS + 'min, pede vídeo)', wa2)}
         <div><dt>Vídeo de apresentação</dt><dd>${escapeHtml(situacaoVideo.rotulo)}
           ${situacaoVideo.confirmado && situacaoVideo.por ? `<br><small style="color:var(--cinza)">por ${escapeHtml(situacaoVideo.por)} em ${escapeHtml(formatarDataHora(situacaoVideo.em))}</small>` : ''}
         </dd></div>
@@ -1494,7 +1494,7 @@ router.get('/candidato/:id/video-wa2', (req, res) => {
     });
   }
 
-  const limite = fichaWa.limiteDoVideo(linhas, sequenciaWhatsapp.prazoWa2Horas());
+  const limite = fichaWa.limiteDoVideo(linhas);
   const sugestao = fichaWa.sugestaoDentroPrazo(limite);
   const atual = fichaWa.situacaoVideo(cand, linhas);
   const wa2 = fichaWa.estadoEtapa(linhas, 'wa2');
@@ -1506,7 +1506,7 @@ router.get('/candidato/:id/video-wa2', (req, res) => {
     <div class="bloco-card" style="margin-top:1rem">
       <dl class="rel-id">
         <div><dt>WA2 enviado em</dt><dd>${escapeHtml(formatarDataHora(wa2.enviadoEm))}</dd></div>
-        <div><dt>Prazo (${sequenciaWhatsapp.prazoWa2Horas()}h)</dt><dd><b>${escapeHtml(formatarDataHora(limite.toISOString()))}</b></dd></div>
+        <div><dt>Prazo (amanhã, meio-dia)</dt><dd><b>${escapeHtml(formatarDataHora(limite.toISOString()))}</b></dd></div>
         <div><dt>Agora</dt><dd>${escapeHtml(formatarDataHora(new Date().toISOString()))}</dd></div>
       </dl>
     </div>
@@ -4310,7 +4310,7 @@ router.get('/config', (req, res) => {
         <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
           Interruptor do <b>disparo</b>. Marcado, cada nova candidatura agenda duas
           mensagens: <b>WA1</b> na hora (informativo, não pede nada) e <b>WA2</b> em
-          ${sequenciaWhatsapp.WA2_ATRASO_HORAS}h (pede o vídeo de apresentação).
+          ${sequenciaWhatsapp.WA2_ATRASO_MINUTOS} minutos (pede o vídeo de apresentação).
           Desmarcado (padrão), <b>nada é agendado</b> — não é "agenda e ignora", é não criar
           a linha, para que ligar depois não dispare mensagens para quem se candidatou
           semanas antes.
