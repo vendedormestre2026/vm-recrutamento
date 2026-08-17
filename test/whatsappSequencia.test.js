@@ -35,6 +35,7 @@ const JOB_COMPLETO = {
   endereco: 'Rua das Flores, 100 - Blumenau/SC',
   cidade: 'Blumenau',
   modalidade: 'presencial',
+  regime: 'CLT',
 };
 
 // Artefatos que denunciam template mal preenchido. Nenhum texto pode conter nenhum deles.
@@ -70,20 +71,34 @@ test('trechoVaga omite empresa vazia e some inteiro sem vaga', () => {
 });
 
 test('linhaRemuneracao: potencial_ganhos tem prioridade sobre faixa_pagamento', () => {
-  assert.equal(linhaRemuneracao(JOB_COMPLETO), `💰 ${JOB_COMPLETO.potencial_ganhos}`);
-  assert.equal(linhaRemuneracao({ faixa_pagamento: 'R$ 3.000' }), '💰 R$ 3.000');
-  assert.equal(linhaRemuneracao({ potencial_ganhos: '  ' , faixa_pagamento: 'R$ 3.000' }), '💰 R$ 3.000');
-  for (const nada of [null, undefined, {}]) assert.equal(linhaRemuneracao(nada), '');
+  assert.equal(
+    linhaRemuneracao(JOB_COMPLETO),
+    `💰 Média de ganhos dos melhores vendedores: ${JOB_COMPLETO.potencial_ganhos}`,
+  );
+  assert.equal(
+    linhaRemuneracao({ faixa_pagamento: 'R$ 3.000' }),
+    '💰 Média de ganhos dos melhores vendedores: R$ 3.000',
+  );
+  assert.equal(
+    linhaRemuneracao({ potencial_ganhos: '  ', faixa_pagamento: 'R$ 3.000' }),
+    '💰 Média de ganhos dos melhores vendedores: R$ 3.000',
+  );
+  for (const nada of [null, undefined, {}]) assert.equal(linhaRemuneracao(nada), null);
 });
 
-test('linhaLocalidade: endereco + modalidade juntos, cada um omite independente', () => {
-  assert.equal(linhaLocalidade(JOB_COMPLETO), `📍 ${JOB_COMPLETO.endereco} · 🏢 ${JOB_COMPLETO.modalidade}`);
+test('linhaLocalidade: endereco + modalidade (capitalizada) + regime, uma linha cada', () => {
+  assert.equal(
+    linhaLocalidade(JOB_COMPLETO),
+    `📍 ${JOB_COMPLETO.endereco}\n🏢 Presencial\n📄 ${JOB_COMPLETO.regime}`,
+  );
   assert.equal(linhaLocalidade({ endereco: 'Rua X' }), '📍 Rua X');
-  assert.equal(linhaLocalidade({ modalidade: 'remoto' }), '🏢 remoto');
+  assert.equal(linhaLocalidade({ modalidade: 'remoto' }), '🏢 Remoto');
+  // Regime sozinho: a lista de 1 item nao pode sobrar '\n' nem virar array vazando.
+  assert.equal(linhaLocalidade({ regime: 'PJ' }), '📄 PJ');
   // endereco tem prioridade sobre cidade (mais especifico).
   assert.equal(linhaLocalidade({ cidade: 'Blumenau' }), '📍 Blumenau');
   assert.equal(linhaLocalidade({ endereco: 'Rua X', cidade: 'Blumenau' }), '📍 Rua X');
-  for (const nada of [null, undefined, {}]) assert.equal(linhaLocalidade(nada), '');
+  for (const nada of [null, undefined, {}]) assert.equal(linhaLocalidade(nada), null);
 });
 
 test('linkVaga: baseUrl + /vaga/:slug, sem utm; "" sem slug', () => {
@@ -97,13 +112,16 @@ test('linkVaga: baseUrl + /vaga/:slug, sem utm; "" sem slug', () => {
 
 // ══════════════════ WA1 ══════════════════
 
-test('WA1: caminho completo, com remuneracao, localidade e link', () => {
+test('WA1: caminho completo, com remuneracao, localidade (multi-linha) e link', () => {
   const t = montarTextoWA1(APP, JOB_COMPLETO);
   assert.match(t, /^Olá, Ana!/);
   assert.ok(t.includes('Recebemos sua candidatura para *Vendedor Externo* na *Labor Seg*.'));
-  assert.ok(t.includes(`💰 ${JOB_COMPLETO.potencial_ganhos}`));
-  assert.ok(t.includes(`📍 ${JOB_COMPLETO.endereco} · 🏢 ${JOB_COMPLETO.modalidade}`));
-  assert.ok(t.includes(`Detalhes completos: ${linkVaga(JOB_COMPLETO)}`));
+  assert.ok(t.includes(`💰 Média de ganhos dos melhores vendedores: ${JOB_COMPLETO.potencial_ganhos}`));
+  // linhaLocalidade e multi-linha: cada dado (endereco/modalidade/regime) numa linha propria.
+  assert.ok(t.includes(`📍 ${JOB_COMPLETO.endereco}\n🏢 Presencial\n📄 ${JOB_COMPLETO.regime}`));
+  assert.ok(
+    t.includes(`Para ver mais detalhes da vaga, acesse a página oficial dela aqui: ${linkVaga(JOB_COMPLETO)}`),
+  );
   assert.ok(t.includes('A oportunidade faz sentido pra você? Se sim, te mando o próximo passo. 🙂'));
   semArtefatos(t, 'WA1 completo');
 });
@@ -111,8 +129,8 @@ test('WA1: caminho completo, com remuneracao, localidade e link', () => {
 test('WA1: sem remuneracao, sem localidade e sem slug — linhas somem por inteiro', () => {
   const t = montarTextoWA1(APP, JOB);
   assert.doesNotMatch(t, /💰/, 'sem potencial_ganhos/faixa_pagamento nao pode sobrar o emoji');
-  assert.doesNotMatch(t, /📍|🏢/, 'sem endereco/cidade/modalidade nao pode sobrar o emoji');
-  assert.doesNotMatch(t, /Detalhes completos/, 'sem slug nao ha link');
+  assert.doesNotMatch(t, /📍|🏢|📄/, 'sem endereco/cidade/modalidade/regime nao pode sobrar o emoji');
+  assert.doesNotMatch(t, /Para ver mais detalhes/, 'sem slug nao ha link');
   assert.ok(t.includes('A oportunidade faz sentido pra você?'));
   semArtefatos(t, 'WA1 sem dados ricos');
 });
@@ -120,17 +138,25 @@ test('WA1: sem remuneracao, sem localidade e sem slug — linhas somem por intei
 test('WA1: so remuneracao (sem localidade) fica sozinha no bloco', () => {
   const job = { ...JOB, potencial_ganhos: 'R$ 5.000/mês' };
   const t = montarTextoWA1(APP, job);
-  assert.ok(t.includes('💰 R$ 5.000/mês'));
-  assert.doesNotMatch(t, /📍|🏢/);
+  assert.ok(t.includes('💰 Média de ganhos dos melhores vendedores: R$ 5.000/mês'));
+  assert.doesNotMatch(t, /📍|🏢|📄/);
   semArtefatos(t, 'WA1 so remuneracao');
 });
 
 test('WA1: so localidade (sem remuneracao) fica sozinha no bloco', () => {
   const job = { ...JOB, modalidade: 'remoto' };
   const t = montarTextoWA1(APP, job);
-  assert.ok(t.includes('🏢 remoto'));
+  assert.ok(t.includes('🏢 Remoto'));
   assert.doesNotMatch(t, /💰/);
   semArtefatos(t, 'WA1 so localidade');
+});
+
+test('WA1: so regime (sem localidade nem modalidade) fica sozinho, sem \\n sobrando', () => {
+  const job = { ...JOB, regime: 'PJ' };
+  const t = montarTextoWA1(APP, job);
+  assert.ok(t.includes('📄 PJ'));
+  assert.doesNotMatch(t, /📍|🏢/);
+  semArtefatos(t, 'WA1 so regime');
 });
 
 test('WA1 nao pede video nem prazo — isso e assunto do WA2', () => {

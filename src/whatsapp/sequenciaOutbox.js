@@ -173,7 +173,7 @@ function textoDaEtapa(linha) {
     titulo: linha.job_titulo, empresa: linha.job_empresa, perfil: linha.job_perfil,
     slug: linha.job_slug, faixa_pagamento: linha.job_faixa_pagamento,
     potencial_ganhos: linha.job_potencial_ganhos, endereco: linha.job_endereco,
-    cidade: linha.job_cidade, modalidade: linha.job_modalidade,
+    cidade: linha.job_cidade, modalidade: linha.job_modalidade, regime: linha.job_regime,
   };
   return linha.etapa === 'wa1' ? montarTextoWA1(app, job) : montarTextoWA2(app, job);
 }

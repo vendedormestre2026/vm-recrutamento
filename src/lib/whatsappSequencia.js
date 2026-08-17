@@ -46,24 +46,36 @@ function trechoVaga(job) {
   return empresa ? ` para a vaga de ${vaga} na ${empresa}` : ` para a vaga de ${vaga}`;
 }
 
+// Primeira letra maiuscula. Mesmo padrao de lib/ctaCampanha.js.
+function capitalizar(s) {
+  const t = String(s == null ? '' : s).trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : '';
+}
+
 // 💰 linha de remuneracao: potencial_ganhos tem prioridade sobre faixa_pagamento (mesma
 // ordem que a pagina publica da vaga usa). Omite a linha inteira se nenhum dos dois existir.
 function linhaRemuneracao(job) {
-  const valor =
+  const v =
     String((job && job.potencial_ganhos) || '').trim() ||
     String((job && job.faixa_pagamento) || '').trim();
-  return valor ? `💰 ${valor}` : '';
+  return v ? `💰 Média de ganhos dos melhores vendedores: ${v}` : null;
 }
 
-// 📍 localidade + 🏢 modalidade, juntas com " · ". Cada uma omite independente se faltar.
-// Local: endereco tem prioridade sobre cidade (endereco e mais especifico).
+// 📍 localidade, 🏢 modalidade e 📄 regime — uma linha por dado, cada uma omite
+// independente se faltar. Local: endereco tem prioridade sobre cidade (mais especifico).
+//
+// Multi-linha (junta com '\n', e nao mais ' · '): devolve varias linhas de uma vez, e quem
+// chama (montarTextoWA1) precisa espalhar cada uma no array `linhas` ANTES de limparEspacos —
+// senao o '\n' embutido colide com o `\s{2,}` que a funcao colapsa para espaco unico.
 function linhaLocalidade(job) {
-  const local = String((job && job.endereco) || '').trim() || String((job && job.cidade) || '').trim();
+  const localidade = String((job && job.endereco) || (job && job.cidade) || '').trim();
   const modalidade = String((job && job.modalidade) || '').trim();
+  const regime = String((job && job.regime) || '').trim();
   const partes = [];
-  if (local) partes.push(`📍 ${local}`);
-  if (modalidade) partes.push(`🏢 ${modalidade}`);
-  return partes.join(' · ');
+  if (localidade) partes.push(`📍 ${localidade}`);
+  if (modalidade) partes.push(`🏢 ${capitalizar(modalidade)}`);
+  if (regime) partes.push(`📄 ${regime}`);
+  return partes.length ? partes.join('\n') : null;
 }
 
 // Link de volta pra pagina publica da vaga, a partir do slug. '' se nao houver slug.
@@ -105,13 +117,16 @@ function montarTextoWA1(application, job) {
   if (remuneracao || localidade) {
     linhas.push('');
     if (remuneracao) linhas.push(remuneracao);
-    if (localidade) linhas.push(localidade);
+    // linhaLocalidade pode devolver varias linhas juntas por '\n' — espalha cada uma no
+    // array ANTES de limparEspacos rodar por cima (senao o '\n' embutido seria tratado
+    // como espaco e colapsado).
+    if (localidade) linhas.push(...localidade.split('\n'));
   }
 
   const link = linkVaga(job);
   if (link) {
     linhas.push('');
-    linhas.push(`Detalhes completos: ${link}`);
+    linhas.push(`Para ver mais detalhes da vaga, acesse a página oficial dela aqui: ${link}`);
   }
 
   linhas.push('');
