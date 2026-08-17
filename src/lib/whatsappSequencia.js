@@ -8,23 +8,23 @@
 // divergiriam no dia em que uma fosse ajustada.
 //
 // ── AS DUAS MENSAGENS TEM NATUREZAS DIFERENTES ──
-//   WA1  T+0, informativo. NAO pede nada — quem acabou de se candidatar ja fez a acao dele.
-//        Uma mensagem automatica que chega junto com o cadastro e ja cobra algo soa como
-//        robo de cobranca, e o custo disso e a pessoa sair do processo antes de comecar.
-//   WA2  T+4h, pede o video. Aqui a acao E o ponto, e o prazo tem que estar no texto: pedir
-//        "o quanto antes" produz resposta em prazo indefinido e ninguem tem base para
-//        cobrar depois.
+//   WA1  T+0. Resume a vaga (remuneracao, localidade, link) e termina com uma pergunta de
+//        engajamento — a resposta e a prova de que a pessoa leu. Ainda NAO pede o video: uma
+//        mensagem automatica que chega junto com o cadastro e ja cobra algo soa como robo de
+//        cobranca, e o custo disso e a pessoa sair do processo antes de comecar.
+//   WA2  T+15min, pede o video. Aqui a acao E o ponto, e o prazo tem que estar no texto: pedir
+//        "o quanto antes" produz resposta em prazo indefinido e ninguem tem base para cobrar
+//        depois.
 //
-// ── O PRAZO VEM DE FORA ──
-// `prazoHoras` e parametro, com default 24. Nao ha numero cravado no texto: o valor mora na
-// config (WHATSAPP_WA2_PRAZO_HORAS) e quem chama repassa. Hardcodar aqui faria a mudanca do
-// prazo exigir deploy de codigo em vez de troca de variavel.
+// ── O PRAZO E FRASE FIXA, e nao mais parametro ──
+// Decisao de negocio: o prazo do video no texto e sempre "amanhã, ao meio-dia" (horario de
+// Brasilia). Isso so e seguro porque o WA2 sai 15 MINUTOS depois da candidatura (ver
+// WA2_ATRASO_MINUTOS em whatsapp/sequenciaOutbox.js) — "amanha" bate com a realidade em
+// qualquer candidatura, sempre. A data exata para o painel comparar "chegou dentro do prazo?"
+// e calculada em lib/whatsappFicha.js (calcularPrazoAmanhaMeioDia), separado deste texto.
 
+const { config } = require('../config');
 const { primeiroNomeDe, textoEmpresa, limparEspacos } = require('./whatsapp');
-
-// Default do prazo do WA2, em horas. Espelha o default documentado no .env.example; quem
-// chama passa o valor da config, e este numero e a rede embaixo.
-const PRAZO_HORAS_PADRAO = 24;
 
 // Saudacao com ou sem nome. Duas variantes de FRASE INTEIRA, e nao um placeholder que fica
 // vazio: "Olá , tudo bem?" e o tipo de detalhe que denuncia automacao mal-feita, e a
@@ -46,57 +46,106 @@ function trechoVaga(job) {
   return empresa ? ` para a vaga de ${vaga} na ${empresa}` : ` para a vaga de ${vaga}`;
 }
 
-// Normaliza o prazo. Valor ausente, zero, negativo ou nao-numerico cai no default — um prazo
-// de "0 horas" no texto seria pior que o default silencioso, porque a pessoa leria uma
-// instrucao impossivel de cumprir.
-function horasValidas(prazoHoras) {
-  const n = Number(prazoHoras);
-  return Number.isFinite(n) && n > 0 ? Math.round(n) : PRAZO_HORAS_PADRAO;
+// 💰 linha de remuneracao: potencial_ganhos tem prioridade sobre faixa_pagamento (mesma
+// ordem que a pagina publica da vaga usa). Omite a linha inteira se nenhum dos dois existir.
+function linhaRemuneracao(job) {
+  const valor =
+    String((job && job.potencial_ganhos) || '').trim() ||
+    String((job && job.faixa_pagamento) || '').trim();
+  return valor ? `💰 ${valor}` : '';
 }
 
-// "24 horas" / "1 hora". Plural correto porque o texto vai para uma pessoa, nao para um log.
-function textoPrazo(horas) {
-  return horas === 1 ? '1 hora' : `${horas} horas`;
+// 📍 localidade + 🏢 modalidade, juntas com " · ". Cada uma omite independente se faltar.
+// Local: endereco tem prioridade sobre cidade (endereco e mais especifico).
+function linhaLocalidade(job) {
+  const local = String((job && job.endereco) || '').trim() || String((job && job.cidade) || '').trim();
+  const modalidade = String((job && job.modalidade) || '').trim();
+  const partes = [];
+  if (local) partes.push(`📍 ${local}`);
+  if (modalidade) partes.push(`🏢 ${modalidade}`);
+  return partes.join(' · ');
 }
 
-// ── WA1 — T+0, informativo ──
+// Link de volta pra pagina publica da vaga, a partir do slug. '' se nao houver slug.
 //
-// Confirma o recebimento e diz o que vem a seguir. Sem pedido de acao, sem link, sem prazo.
-// Se um dia alguem quiser incluir uma chamada aqui, o comentario do topo explica por que a
-// ausencia e deliberada.
+// SEM utm: decisao de negocio. Quem recebe o WA1 JA se candidatou — nao ha cadastro a
+// atribuir, diferente do link da campanha em massa (lib/ctaCampanha.js#montarUrlVaga), que
+// existe justamente para atribuir clique a campanha.
+function linkVaga(job) {
+  const slug = String((job && job.slug) || '').trim();
+  return slug ? `${config.baseUrl}/vaga/${encodeURIComponent(slug)}` : '';
+}
+
+// "Recebemos sua candidatura para *TITULO* na *EMPRESA*." — o negrito e a marcacao de
+// enfase do WhatsApp (asterisco). Mesma regra de omissao de trechoVaga (sem vaga, a frase
+// vira generica; sem empresa, so ela some), so que embutida aqui porque o texto e outro
+// (negrito, pontuacao propria) e nao reaproveita aquele helper.
+function linhaCandidatura(job) {
+  const vaga = String((job && job.titulo) || '').trim();
+  if (!vaga) return 'Recebemos sua candidatura. Ela já está com o nosso time.';
+  const empresa = textoEmpresa(job && job.empresa);
+  const alvo = empresa ? `*${vaga}* na *${empresa}*` : `*${vaga}*`;
+  return `Recebemos sua candidatura para ${alvo}. Ela já está com o nosso time.`;
+}
+
+// ── WA1 — T+0, resumo dinamico da vaga + pergunta de engajamento ──
+//
+// Cada linha dinamica (remuneracao, localidade, link) some por inteiro quando o dado nao
+// existe, e o espaco em branco que ela deixaria some junto — nunca um bloco em branco duplo
+// no lugar de uma linha que faltou.
 function montarTextoWA1(application, job) {
   const linhas = [
     `${saudacao(application && application.nome)} Aqui é da Vendedor Mestre.`,
     '',
-    `Recebemos sua candidatura${trechoVaga(job)}. Ela já está com o nosso time.`,
-    '',
-    'Nos próximos dias você vai receber por aqui os próximos passos do processo. ' +
-      'Não precisa fazer nada agora — é só ficar de olho nesta conversa.',
+    linhaCandidatura(job),
   ];
+
+  const remuneracao = linhaRemuneracao(job);
+  const localidade = linhaLocalidade(job);
+  if (remuneracao || localidade) {
+    linhas.push('');
+    if (remuneracao) linhas.push(remuneracao);
+    if (localidade) linhas.push(localidade);
+  }
+
+  const link = linkVaga(job);
+  if (link) {
+    linhas.push('');
+    linhas.push(`Detalhes completos: ${link}`);
+  }
+
+  linhas.push('');
+  linhas.push('A oportunidade faz sentido pra você? Se sim, te mando o próximo passo. 🙂');
+
   return linhas.map((l) => limparEspacos(l)).join('\n');
 }
 
-// ── WA2 — T+4h, pede o video de apresentacao ──
+// ── WA2 — T+15min, pede o video de apresentacao ──
 //
-// O prazo entra no texto por decisao de negocio: sem ele, "assim que puder" vira prazo
-// indefinido e nao ha base para a confirmacao manual dizer se veio dentro ou fora do tempo.
+// Abertura e as duas primeiras perguntas sao FIXAS: genericas o bastante pra servir qualquer
+// perfil de vendas. So a 3a pergunta muda, e reaproveita trechoVaga — a mesma regra de
+// omissao de sempre, e nao uma segunda copia dela.
 //
 // A confirmacao e 100% humana (o recrutador marca no painel), entao o texto NAO promete
 // nenhuma automacao — nada de "responda com o video e o sistema registra". Prometer o que o
 // sistema nao faz e como se perde confianca na primeira vez que nao acontece.
-function montarTextoWA2(application, job, prazoHoras) {
-  const horas = horasValidas(prazoHoras);
+function montarTextoWA2(application, job) {
   const linhas = [
     `${saudacao(application && application.nome)} Aqui é da Vendedor Mestre de novo.`,
     '',
-    `Para seguir com sua candidatura${trechoVaga(job)}, precisamos de um vídeo curto ` +
-      'de apresentação — pode ser gravado aqui mesmo pelo WhatsApp.',
+    '👇 *COMO PARTICIPAR DO PROCESSO SELETIVO* 👇',
+    'Se você tem o perfil que buscamos, seu primeiro desafio começa agora. Quero avaliar sua ' +
+      'comunicação, energia e capacidade de gerar conexão.',
     '',
-    'Fale seu nome, sua experiência com vendas e por que quer essa vaga. ' +
-      'Até 2 minutos é suficiente.',
+    'Grave um vídeo simples pelo celular, de 1 a 2 minutos, respondendo a 3 perguntas:',
+    '1️⃣ Quem é você?',
+    '2️⃣ Qual é a sua maior ambição e meta de vida?',
+    `3️⃣ Por que você é a pessoa certa${trechoVaga(job)}?`,
     '',
-    `Você tem ${textoPrazo(horas)} a partir desta mensagem para enviar. ` +
-      'É só responder aqui nesta conversa.',
+    '⏰ *PRAZO*: envie o vídeo aqui mesmo no WhatsApp até amanhã, ao meio-dia.',
+    '',
+    'Se tiver alguma dúvida pontual sobre a vaga, pode me perguntar. Aguardo seu vídeo e boa ' +
+      'sorte! 🚀',
   ];
   return linhas.map((l) => limparEspacos(l)).join('\n');
 }
@@ -104,10 +153,10 @@ function montarTextoWA2(application, job, prazoHoras) {
 module.exports = {
   montarTextoWA1,
   montarTextoWA2,
-  PRAZO_HORAS_PADRAO,
   // Exportados para teste e para quem precisar do mesmo formato em outro lugar.
   saudacao,
   trechoVaga,
-  horasValidas,
-  textoPrazo,
+  linhaRemuneracao,
+  linhaLocalidade,
+  linkVaga,
 };
