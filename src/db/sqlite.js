@@ -2737,7 +2737,10 @@ function listarPendentesSequenciaWhatsapp({ limite = 50, agora = null } = {}) {
     .prepare(
       `SELECT s.id, s.application_id, s.etapa, s.telefone_e164, s.tentativas, s.agendado_para,
               a.nome AS app_nome, a.telefone AS app_telefone,
-              j.titulo AS job_titulo, j.empresa AS job_empresa, j.perfil AS job_perfil
+              j.titulo AS job_titulo, j.empresa AS job_empresa, j.perfil AS job_perfil,
+              j.slug AS job_slug, j.faixa_pagamento AS job_faixa_pagamento,
+              j.potencial_ganhos AS job_potencial_ganhos, j.endereco AS job_endereco,
+              j.cidade AS job_cidade, j.modalidade AS job_modalidade
          FROM whatsapp_sequencia_envios s
          JOIN applications a ON a.id = s.application_id
          LEFT JOIN jobs j ON j.id = a.job_id
