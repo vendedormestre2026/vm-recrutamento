@@ -1034,6 +1034,8 @@ router.get('/', (req, res) => {
         <a class="btn btn--ghost" href="/admin/perfis-curriculo">Perfis de currículo</a>
         <a class="btn btn--ghost" href="/admin/talentos">Banco de talentos</a>
         <a class="btn btn--ghost" href="/admin/promocao">Promoção de Vagas</a>
+        <a class="btn btn--ghost" href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>
+        <a class="btn btn--ghost" href="/admin/whatsapp">WhatsApp (pareamento)</a>
         <a class="btn btn--ghost" href="/admin/config">Configurações</a>
         <a class="btn btn--ghost" href="/admin/uso">Custos / Uso API</a>
       </div>
