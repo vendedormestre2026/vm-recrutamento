@@ -54,11 +54,25 @@ function capitalizar(s) {
 
 // 💰 linha de remuneracao: potencial_ganhos tem prioridade sobre faixa_pagamento (mesma
 // ordem que a pagina publica da vaga usa). Omite a linha inteira se nenhum dos dois existir.
+//
+// Multi-linha (mesmo padrao de linhaLocalidade): o Jean cadastra potencial_ganhos como
+// varias linhas ("R$ 6.500+/mês" / "Vendedores experientes:" / "R$ 8.000 a R$ 13.000+/mês"),
+// separadas por \r\n no banco. Amassar isso numa frase corrida (o que limparEspacos faria
+// se a string chegasse com '\n' embutido, sem passar por split antes) lê como uma frase so,
+// nao como duas informacoes. So a PRIMEIRA linha leva o rotulo "Média de ganhos..." — as
+// demais sao continuacao do mesmo dado, nao precisam repetir o emoji/rotulo.
 function linhaRemuneracao(job) {
-  const v =
+  const bruto =
     String((job && job.potencial_ganhos) || '').trim() ||
     String((job && job.faixa_pagamento) || '').trim();
-  return v ? `💰 Média de ganhos dos melhores vendedores: ${v}` : null;
+  if (!bruto) return null;
+  const linhasValor = bruto
+    .split(/\r\n|\r|\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!linhasValor.length) return null;
+  const [primeira, ...resto] = linhasValor;
+  return [`💰 Média de ganhos dos melhores vendedores: ${primeira}`, ...resto].join('\n');
 }
 
 // 📍 localidade, 🏢 modalidade e 📄 regime — uma linha por dado, cada uma omite
@@ -116,10 +130,10 @@ function montarTextoWA1(application, job) {
   const localidade = linhaLocalidade(job);
   if (remuneracao || localidade) {
     linhas.push('');
-    if (remuneracao) linhas.push(remuneracao);
-    // linhaLocalidade pode devolver varias linhas juntas por '\n' — espalha cada uma no
-    // array ANTES de limparEspacos rodar por cima (senao o '\n' embutido seria tratado
-    // como espaco e colapsado).
+    // Ambas podem devolver varias linhas juntas por '\n' — espalha cada uma no array ANTES
+    // de limparEspacos rodar por cima (senao o '\n' embutido seria tratado como espaco e
+    // colapsado).
+    if (remuneracao) linhas.push(...remuneracao.split('\n'));
     if (localidade) linhas.push(...localidade.split('\n'));
   }
 

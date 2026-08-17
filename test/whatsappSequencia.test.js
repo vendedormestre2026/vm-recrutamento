@@ -86,6 +86,30 @@ test('linhaRemuneracao: potencial_ganhos tem prioridade sobre faixa_pagamento', 
   for (const nada of [null, undefined, {}]) assert.equal(linhaRemuneracao(nada), null);
 });
 
+test('linhaRemuneracao: potencial_ganhos multi-linha (\\r\\n) preserva cada linha, so a 1a leva o rotulo', () => {
+  // Dado real da vaga id=1 (achado na validacao mock em producao): o Jean cadastra
+  // potencial_ganhos como varias linhas separadas por \r\n. Amassar isso numa frase corrida
+  // lê como um unico texto confuso, nao como duas informacoes distintas.
+  const bruto =
+    'R$ 6.500,00+/mês\r\nVendedores experientes e com carteira consolidada:\r\nR$ 8.000 a R$ 13.000+ / mês';
+  assert.equal(
+    linhaRemuneracao({ potencial_ganhos: bruto }),
+    '💰 Média de ganhos dos melhores vendedores: R$ 6.500,00+/mês\n' +
+      'Vendedores experientes e com carteira consolidada:\n' +
+      'R$ 8.000 a R$ 13.000+ / mês',
+  );
+  // Linha unica: comportamento identico ao de antes, nada muda.
+  assert.equal(
+    linhaRemuneracao({ potencial_ganhos: 'R$ 5.000/mês' }),
+    '💰 Média de ganhos dos melhores vendedores: R$ 5.000/mês',
+  );
+  // Linhas em branco no meio do cadastro nao podem sobrar como linha vazia na mensagem.
+  assert.equal(
+    linhaRemuneracao({ potencial_ganhos: 'R$ 5.000/mês\r\n\r\nR$ 8.000/mês' }),
+    '💰 Média de ganhos dos melhores vendedores: R$ 5.000/mês\nR$ 8.000/mês',
+  );
+});
+
 test('linhaLocalidade: endereco + modalidade (capitalizada) + regime, uma linha cada', () => {
   assert.equal(
     linhaLocalidade(JOB_COMPLETO),
@@ -141,6 +165,29 @@ test('WA1: so remuneracao (sem localidade) fica sozinha no bloco', () => {
   assert.ok(t.includes('💰 Média de ganhos dos melhores vendedores: R$ 5.000/mês'));
   assert.doesNotMatch(t, /📍|🏢|📄/);
   semArtefatos(t, 'WA1 so remuneracao');
+});
+
+test('WA1: remuneracao multi-linha (\\r\\n) vira multiplas linhas no texto, nao frase corrida', () => {
+  const job = {
+    ...JOB,
+    potencial_ganhos: 'R$ 6.500,00+/mês\r\nVendedores experientes e com carteira consolidada:\r\nR$ 8.000 a R$ 13.000+ / mês',
+    endereco: 'São Paulo – Cidade Monções',
+    modalidade: 'presencial',
+    regime: 'CLT',
+  };
+  const t = montarTextoWA1(APP, job);
+  assert.ok(
+    t.includes(
+      '💰 Média de ganhos dos melhores vendedores: R$ 6.500,00+/mês\n' +
+        'Vendedores experientes e com carteira consolidada:\n' +
+        'R$ 8.000 a R$ 13.000+ / mês\n' +
+        '📍 São Paulo – Cidade Monções\n' +
+        '🏢 Presencial\n' +
+        '📄 CLT',
+    ),
+    'as linhas da remuneracao, localidade, modalidade e regime devem ficar juntas, uma por linha, sem bloco em branco entre elas',
+  );
+  semArtefatos(t, 'WA1 remuneracao multi-linha');
 });
 
 test('WA1: so localidade (sem remuneracao) fica sozinha no bloco', () => {
