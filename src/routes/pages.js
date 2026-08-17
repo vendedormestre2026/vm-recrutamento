@@ -11,7 +11,7 @@ const session = require('../lib/session');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const { extrairUtmDaQuery, lerUtmDoCookie, serializarUtmParaCookie } = require('../lib/utm');
-const { mensagemPosEntrevista, mensagemNovaCandidatura } = require('../lib/whatsapp');
+const { mensagemPosEntrevista, mensagemNovaCandidatura, montarLinkWhatsapp } = require('../lib/whatsapp');
 const {
   verificarToken,
   lerEmailDaUrl,
@@ -113,27 +113,28 @@ router.get('/', (req, res) => {
   );
 });
 
-// ── Tela 1: Vaga ──
-router.get('/vaga/:slug', (req, res) => {
-  const vaga = db.obterVagaPorSlug(req.params.slug);
+// Os dois guards de /vaga/:slug (nao encontrada / encerrada), compartilhados pela rota
+// publica e por /vaga/:slug/confirmacao (link do WA1). Ja responde e devolve null quando a
+// vaga nao pode ser mostrada; devolve a vaga quando esta tudo certo, e quem chamou segue.
+function carregarVagaOuNull(req, res, slug) {
+  const vaga = db.obterVagaPorSlug(slug);
   if (!vaga) {
-    return res
-      .status(404)
-      .send(
-        pagina({
+    res.status(404).send(
+      pagina({
+        titulo: 'Vaga nao encontrada',
+        tema: 'claro',
+        conteudo: placeholder({
           titulo: 'Vaga nao encontrada',
-          tema: 'claro',
-          conteudo: placeholder({
-            titulo: 'Vaga nao encontrada',
-            descricao: 'O link da vaga pode estar incorreto.',
-            acao: botao('/', 'Voltar ao inicio', 'secundario'),
-          }),
+          descricao: 'O link da vaga pode estar incorreto.',
+          acao: botao('/', 'Voltar ao inicio', 'secundario'),
         }),
-      );
+      }),
+    );
+    return null;
   }
   // Vaga encerrada (ativo=0): nao acessivel pelo candidato.
   if (!vaga.ativo) {
-    return res.status(404).send(
+    res.status(404).send(
       pagina({
         titulo: 'Vaga encerrada',
         tema: 'claro',
@@ -144,53 +145,16 @@ router.get('/vaga/:slug', (req, res) => {
         }),
       }),
     );
+    return null;
   }
+  return vaga;
+}
 
-  // Origem do lead (first-touch): captura os cinco parametros UTM da query da campanha
-  // num cookie proprio (vm_utm, JSON). NAO ha sessao de servidor nesta etapa; o cookie
-  // sobrevive ao hop /vaga -> /aplicar e e lido no POST /api/aplicacao.
-  // First-touch: se o cookie vm_utm JA EXISTE, ele prevalece — nunca sobrescreve a
-  // primeira origem, independentemente da query atual. So gravamos quando ainda nao ha
-  // cookie E ha UTM na query. Sem UTM na query e sem cookie: nada a fazer (o literal
-  // 'direto' e decidido so no momento da aplicacao, nao aqui).
-  const cookieBruto = (req.cookies && req.cookies.vm_utm) || '';
-  const utmQuery = extrairUtmDaQuery(req.query);
-  // UTM efetiva desta visita: com cookie, vale o cookie (first-touch); senao, a query.
-  const utmEfetiva = cookieBruto ? lerUtmDoCookie(cookieBruto) : utmQuery;
-
-  if (!cookieBruto && utmQuery) {
-    res.cookie('vm_utm', serializarUtmParaCookie(utmQuery), {
-      httpOnly: true,
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      path: '/',
-    });
-  }
-
-  // Registra o acesso (topo do funil) em fire-and-forget: nunca bloqueia nem quebra
-  // o render por causa de metrica. So chega aqui apos os gates 404/inativa acima.
-  // Passa a UTM efetiva para atribuir o acesso a uma origem (null quando nao ha UTM).
-  // `campanha_id` sai da QUERY desta visita, e NAO do cookie: ele responde "este acesso foi
-  // um clique naquele e-mail", enquanto a UTM acima responde "de onde essa pessoa veio da
-  // primeira vez". Guardar a campanha no cookie faria todo retorno organico dos 30 dias
-  // seguintes contar como clique de novo.
-  //
-  // Sem saneamento aqui de proposito: registrarAcessoVaga valida o id contra `campanhas` e
-  // grava NULL se nao existir. Um link velho ou um id digitado a mao nao pode impedir o
-  // registro do acesso.
-  try {
-    // `campanha_whatsapp_id` e parametro IRMAO de `campanha_id`, nao substituto: as duas
-    // campanhas vivem em tabelas diferentes, com ids independentes.
-    db.registrarAcessoVaga(
-      vaga.id,
-      utmEfetiva,
-      req.query && req.query.campanha_id,
-      req.query && req.query.campanha_whatsapp_id,
-    );
-  } catch (e) {
-    console.error('[vaga] falha ao registrar acesso (métrica, ignorado):', e.message);
-  }
-
+// Conteudo da vaga (headline, ganhos, selos, descricao, listas, skills, secoes extras,
+// sobre a empresa) — tudo que /vaga/:slug e /vaga/:slug/confirmacao mostram IGUAL. So o CTA
+// final (Aplicar vs. Voltar para o WhatsApp) muda entre as duas rotas, e por isso fica de
+// fora daqui.
+function montarConteudoVaga(vaga) {
   const esc = escapeHtml;
 
   // Monta uma <section> "titulo (h2) + lista". Retorna '' quando nao ha itens
@@ -243,7 +207,7 @@ router.get('/vaga/:slug', (req, res) => {
     .join('');
   const secaoSelos = selos ? `<div class="vm-selos">${selos}</div>` : '';
 
-  const conteudo = `
+  return `
     <article class="vm-vaga">
       <p class="vm-kicker">Vaga aberta · Perfil ${esc(vaga.perfil)}</p>
       <h1 class="vm-title">${esc(vaga.titulo)}</h1>
@@ -271,10 +235,81 @@ router.get('/vaga/:slug', (req, res) => {
             </section>`
           : ''
       }
-    </article>
+    </article>`;
+}
+
+// ── Tela 1: Vaga ──
+router.get('/vaga/:slug', (req, res) => {
+  const vaga = carregarVagaOuNull(req, res, req.params.slug);
+  if (!vaga) return;
+
+  // Origem do lead (first-touch): captura os cinco parametros UTM da query da campanha
+  // num cookie proprio (vm_utm, JSON). NAO ha sessao de servidor nesta etapa; o cookie
+  // sobrevive ao hop /vaga -> /aplicar e e lido no POST /api/aplicacao.
+  // First-touch: se o cookie vm_utm JA EXISTE, ele prevalece — nunca sobrescreve a
+  // primeira origem, independentemente da query atual. So gravamos quando ainda nao ha
+  // cookie E ha UTM na query. Sem UTM na query e sem cookie: nada a fazer (o literal
+  // 'direto' e decidido so no momento da aplicacao, nao aqui).
+  const cookieBruto = (req.cookies && req.cookies.vm_utm) || '';
+  const utmQuery = extrairUtmDaQuery(req.query);
+  // UTM efetiva desta visita: com cookie, vale o cookie (first-touch); senao, a query.
+  const utmEfetiva = cookieBruto ? lerUtmDoCookie(cookieBruto) : utmQuery;
+
+  if (!cookieBruto && utmQuery) {
+    res.cookie('vm_utm', serializarUtmParaCookie(utmQuery), {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+  }
+
+  // Registra o acesso (topo do funil) em fire-and-forget: nunca bloqueia nem quebra
+  // o render por causa de metrica. So chega aqui apos os gates 404/inativa acima.
+  // Passa a UTM efetiva para atribuir o acesso a uma origem (null quando nao ha UTM).
+  // `campanha_id` sai da QUERY desta visita, e NAO do cookie: ele responde "este acesso foi
+  // um clique naquele e-mail", enquanto a UTM acima responde "de onde essa pessoa veio da
+  // primeira vez". Guardar a campanha no cookie faria todo retorno organico dos 30 dias
+  // seguintes contar como clique de novo.
+  //
+  // Sem saneamento aqui de proposito: registrarAcessoVaga valida o id contra `campanhas` e
+  // grava NULL se nao existir. Um link velho ou um id digitado a mao nao pode impedir o
+  // registro do acesso.
+  try {
+    // `campanha_whatsapp_id` e parametro IRMAO de `campanha_id`, nao substituto: as duas
+    // campanhas vivem em tabelas diferentes, com ids independentes.
+    db.registrarAcessoVaga(
+      vaga.id,
+      utmEfetiva,
+      req.query && req.query.campanha_id,
+      req.query && req.query.campanha_whatsapp_id,
+    );
+  } catch (e) {
+    console.error('[vaga] falha ao registrar acesso (métrica, ignorado):', e.message);
+  }
+
+  const conteudo = `${montarConteudoVaga(vaga)}
     <div class="vm-cta-fixa">
       ${botao(`/aplicar/${vaga.slug}`, 'Aplicar')}
     </div>`;
+
+  res.send(pagina({ titulo: vaga.titulo, tema: 'claro', conteudo }));
+});
+
+// ── Tela 1B: Confirmacao (link do WA1) — mesmo conteudo da vaga, sem CTA de candidatura ──
+//
+// Usada SO pelo link que o WA1 envia (lib/whatsappSequencia.js#linkVaga), para quem JA se
+// candidatou. Por isso NAO repete a captura de UTM/cookie nem registrarAcessoVaga da rota
+// acima: essa visita nao e um acesso de topo de funil, e contar como tal inflaria a
+// atribuicao de origem com retornos de gente que ja aplicou.
+router.get('/vaga/:slug/confirmacao', (req, res) => {
+  const vaga = carregarVagaOuNull(req, res, req.params.slug);
+  if (!vaga) return;
+
+  // Telefone invalido/ausente -> null -> sem botao, e nao um link quebrado.
+  const linkWhatsapp = montarLinkWhatsapp(config.recrutador.whatsapp);
+  const conteudo = `${montarConteudoVaga(vaga)}
+    ${linkWhatsapp ? `<div class="vm-cta-fixa">${botao(linkWhatsapp, 'VOLTAR PARA O WHATSAPP')}</div>` : ''}`;
 
   res.send(pagina({ titulo: vaga.titulo, tema: 'claro', conteudo }));
 });

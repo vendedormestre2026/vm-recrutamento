@@ -125,9 +125,11 @@ test('linhaLocalidade: endereco + modalidade (capitalizada) + regime, uma linha 
   for (const nada of [null, undefined, {}]) assert.equal(linhaLocalidade(nada), null);
 });
 
-test('linkVaga: baseUrl + /vaga/:slug, sem utm; "" sem slug', () => {
+test('linkVaga: baseUrl + /vaga/:slug/confirmacao, sem utm; "" sem slug', () => {
   const url = linkVaga(JOB_COMPLETO);
-  assert.match(url, /\/vaga\/vendedor-externo-labor-seg$/);
+  // /confirmacao, e nao a pagina publica com o CTA "Aplicar": quem recebe o WA1 ja se
+  // candidatou, mandar de volta pro formulario de aplicar seria confuso.
+  assert.match(url, /\/vaga\/vendedor-externo-labor-seg\/confirmacao$/);
   // Decisao de negocio: quem recebe o WA1 ja se candidatou, nao ha atribuicao de cadastro
   // a fazer aqui — diferente do link da campanha em massa.
   assert.doesNotMatch(url, /utm_source|campanha/);

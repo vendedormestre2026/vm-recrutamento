@@ -92,14 +92,20 @@ function linhaLocalidade(job) {
   return partes.length ? partes.join('\n') : null;
 }
 
-// Link de volta pra pagina publica da vaga, a partir do slug. '' se nao houver slug.
+// Link de volta pra pagina de CONFIRMACAO da vaga (/vaga/:slug/confirmacao), a partir do
+// slug. '' se nao houver slug.
+//
+// NAO e a pagina publica /vaga/:slug (essa tem o CTA "Aplicar"): quem recebe o WA1 JA se
+// candidatou, e mandar de volta pra tela de aplicar seria confuso e reabriria um formulario
+// que nao faz mais sentido pra essa pessoa. A rota /confirmacao mostra o mesmo conteudo da
+// vaga, mas termina em "Voltar para o WhatsApp" (routes/pages.js).
 //
 // SEM utm: decisao de negocio. Quem recebe o WA1 JA se candidatou — nao ha cadastro a
 // atribuir, diferente do link da campanha em massa (lib/ctaCampanha.js#montarUrlVaga), que
 // existe justamente para atribuir clique a campanha.
 function linkVaga(job) {
   const slug = String((job && job.slug) || '').trim();
-  return slug ? `${config.baseUrl}/vaga/${encodeURIComponent(slug)}` : '';
+  return slug ? `${config.baseUrl}/vaga/${encodeURIComponent(slug)}/confirmacao` : '';
 }
 
 // "Recebemos sua candidatura para *TITULO* na *EMPRESA*." — o negrito e a marcacao de
