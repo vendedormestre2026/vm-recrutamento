@@ -30,7 +30,7 @@ const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const { criarApp } = require('../src/server');
-const { lerCriteriosDoForm } = require('../src/routes/admin_promocao');
+const { lerCriteriosDoForm, montarConteudoListagemPromocao } = require('../src/routes/admin_promocao');
 
 migrar();
 
@@ -127,6 +127,22 @@ test('GET /admin/promocao lista campanhas (vazio no comeco) e oferece criar', as
     assert.match(html, /Nenhuma campanha criada ainda/);
     assert.match(html, /\/admin\/promocao\/nova/);
   });
+});
+
+test('montarConteudoListagemPromocao: fragmento puro (Item 3 do ETAPA B, Commit 5) sem o paginaAdmin em volta', () => {
+  // Extraida para ser reaproveitada pela futura pagina /admin/divulgacao-vagas (Commit 7)
+  // sem duplicar a logica desta tela. Aqui so confirma que e uma funcao pura chamavel
+  // fora da rota, devolvendo o MESMO fragmento que a rota standalone envia hoje (ja
+  // coberto ponta-a-ponta pelo teste 'GET /admin/promocao lista campanhas...' acima).
+  const conteudo = montarConteudoListagemPromocao({
+    formatarDataHora: (v) => String(v),
+    fmtInt: (v) => String(v),
+  });
+  assert.match(conteudo, /Promoção de Vagas/);
+  assert.match(conteudo, /\/admin\/promocao\/nova/);
+  // E so o fragmento — nao a pagina inteira (isso e responsabilidade do paginaAdmin).
+  assert.ok(!conteudo.includes('<html'));
+  assert.ok(!conteudo.includes('<title>'));
 });
 
 test('GET /admin/promocao/nova so oferece vagas ATIVAS', async () => {

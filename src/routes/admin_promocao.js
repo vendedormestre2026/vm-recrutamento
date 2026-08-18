@@ -120,6 +120,67 @@ function lerCriteriosDoForm(b = {}) {
   };
 }
 
+// HTML interno da listagem (/admin/promocao), SEM o paginaAdmin(...) em volta — extraida
+// para uma funcao pura (Item 3 do ETAPA B "Ajustes no Admin", Commit 5) reaproveitada tanto
+// pela rota standalone abaixo (comportamento inalterado) quanto pela nova pagina
+// /admin/divulgacao-vagas (Commit 7), que a embute como uma das abas.
+function montarConteudoListagemPromocao({ formatarDataHora, fmtInt }) {
+  const campanhas = db.listarCampanhas();
+
+  const linhas = campanhas
+    .map((c) => {
+      const rotulo = ROTULO_STATUS_CAMPANHA[c.status] || c.status;
+      const badge =
+        c.status === 'rascunho'
+          ? `<span class="badge badge--aplicado">${escapeHtml(rotulo)}</span>`
+          : `<span class="badge badge--ativa">${escapeHtml(rotulo)}</span>`;
+      return `
+        <tr>
+          <td><a href="/admin/promocao/${c.id}">${escapeHtml(c.assunto || '(sem assunto)')}</a></td>
+          <td>${escapeHtml(c.vaga_titulo || '(vaga removida)')}</td>
+          <td>${badge}</td>
+          <td class="col-num">${fmtInt(c.total_destinatarios)}</td>
+          <td>${formatarDataHora(c.criado_em)}</td>
+          <td style="display:flex;gap:.4rem;flex-wrap:wrap;">
+            <a class="btn btn--ghost" href="/admin/promocao/${c.id}">Ver</a>
+            ${
+              // SO em rascunho, e sem versao desabilitada nos demais status — mesmo
+              // principio ja documentado em blocoDisparo: "um botao morto so ensinaria o
+              // Jean a ignorar o botao". Aqui ele leva a tela de confirmacao, nunca apaga
+              // direto (o form nao carrega `confirmado`).
+              c.status === 'rascunho'
+                ? `<form method="POST" action="/admin/promocao/${c.id}/excluir" style="margin:0;">
+                     <button type="submit" class="btn btn--ghost">Excluir</button>
+                   </form>`
+                : ''
+            }
+          </td>
+        </tr>`;
+    })
+    .join('');
+
+  return `
+      <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+        <h1 style="margin:0;">Promoção de Vagas</h1>
+        <a class="btn" href="/admin/promocao/nova">+ Nova campanha</a>
+      </div>
+      <p style="color:var(--cinza);font-size:.9rem;margin:0 0 1rem;">
+        Divulgação de uma vaga por e-mail para a base de contatos. Toda campanha nasce
+        como <b>rascunho</b> e não envia nada sozinha.
+      </p>
+      <div class="admin-tab-scroll">
+        <table class="admin-tab">
+          <thead>
+            <tr><th>Assunto</th><th>Vaga</th><th>Status</th><th class="col-num">Destinatários</th><th>Criada em</th><th>Ações</th></tr>
+          </thead>
+          <tbody>
+            ${linhas || '<tr><td colspan="6">Nenhuma campanha criada ainda.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+}
+
 function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
   const router = express.Router();
 
@@ -650,61 +711,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
 
   // ── GET /admin/promocao ── listagem ──
   router.get('/', (req, res) => {
-    const campanhas = db.listarCampanhas();
-
-    const linhas = campanhas
-      .map((c) => {
-        const rotulo = ROTULO_STATUS_CAMPANHA[c.status] || c.status;
-        const badge =
-          c.status === 'rascunho'
-            ? `<span class="badge badge--aplicado">${escapeHtml(rotulo)}</span>`
-            : `<span class="badge badge--ativa">${escapeHtml(rotulo)}</span>`;
-        return `
-          <tr>
-            <td><a href="/admin/promocao/${c.id}">${escapeHtml(c.assunto || '(sem assunto)')}</a></td>
-            <td>${escapeHtml(c.vaga_titulo || '(vaga removida)')}</td>
-            <td>${badge}</td>
-            <td class="col-num">${fmtInt(c.total_destinatarios)}</td>
-            <td>${formatarDataHora(c.criado_em)}</td>
-            <td style="display:flex;gap:.4rem;flex-wrap:wrap;">
-              <a class="btn btn--ghost" href="/admin/promocao/${c.id}">Ver</a>
-              ${
-                // SO em rascunho, e sem versao desabilitada nos demais status — mesmo
-                // principio ja documentado em blocoDisparo: "um botao morto so ensinaria o
-                // Jean a ignorar o botao". Aqui ele leva a tela de confirmacao, nunca apaga
-                // direto (o form nao carrega `confirmado`).
-                c.status === 'rascunho'
-                  ? `<form method="POST" action="/admin/promocao/${c.id}/excluir" style="margin:0;">
-                       <button type="submit" class="btn btn--ghost">Excluir</button>
-                     </form>`
-                  : ''
-              }
-            </td>
-          </tr>`;
-      })
-      .join('');
-
-    const conteudo = `
-      <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
-        <h1 style="margin:0;">Promoção de Vagas</h1>
-        <a class="btn" href="/admin/promocao/nova">+ Nova campanha</a>
-      </div>
-      <p style="color:var(--cinza);font-size:.9rem;margin:0 0 1rem;">
-        Divulgação de uma vaga por e-mail para a base de contatos. Toda campanha nasce
-        como <b>rascunho</b> e não envia nada sozinha.
-      </p>
-      <div class="admin-tab-scroll">
-        <table class="admin-tab">
-          <thead>
-            <tr><th>Assunto</th><th>Vaga</th><th>Status</th><th class="col-num">Destinatários</th><th>Criada em</th><th>Ações</th></tr>
-          </thead>
-          <tbody>
-            ${linhas || '<tr><td colspan="6">Nenhuma campanha criada ainda.</td></tr>'}
-          </tbody>
-        </table>
-      </div>`;
-
+    const conteudo = montarConteudoListagemPromocao({ formatarDataHora, fmtInt });
     res.send(paginaAdmin({ titulo: 'Promoção de Vagas', conteudo }));
   });
 
@@ -1346,4 +1353,4 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
   return router;
 }
 
-module.exports = { criarRouterPromocao, lerCriteriosDoForm };
+module.exports = { criarRouterPromocao, lerCriteriosDoForm, montarConteudoListagemPromocao };
