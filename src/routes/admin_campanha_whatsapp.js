@@ -125,6 +125,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
   };
 
   return `
+    <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
     <h1>Campanha por WhatsApp</h1>
     <p class="admin-sub" style="margin-bottom:1.25rem">
       Envio em massa pela API oficial da Meta. Frente separada da sequência WA1/WA2 —

@@ -833,6 +833,16 @@ test('admin: a tela lista pracas, templates e diz o que falta', async () => {
   });
 });
 
+test('admin: botao "Voltar ao painel" (Item 5 do ETAPA B "Ajustes no Admin", Commit 11)', async () => {
+  zerar();
+  montarCenario();
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    // Mesmo padrao usado em ~15 outras telas do admin, logo antes do <h1>.
+    assert.match(html, /<p><a class="btn btn--ghost" href="\/admin">← Voltar ao painel<\/a><\/p>\s*<h1>Campanha por WhatsApp<\/h1>/);
+  });
+});
+
 test('montarConteudoCampanhaWhatsapp: fragmento puro (Item 3 do ETAPA B, Commit 6) sem o paginaAdmin em volta', () => {
   // Extraida para ser reaproveitada pela futura pagina /admin/divulgacao-vagas (Commit 7)
   // sem duplicar a logica desta tela. Aqui so confirma que e uma funcao pura chamavel
