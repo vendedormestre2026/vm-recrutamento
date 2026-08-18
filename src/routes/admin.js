@@ -1029,17 +1029,12 @@ router.get('/', (req, res) => {
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
       <h1 style="margin:0;">Candidatos</h1>
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
-        <a class="btn btn--ghost" href="/admin?status_ia=avancar">Ver aprovados pela IA</a>
         <a class="btn btn--ghost" href="/admin/dashboard">Funil de Conversão</a>
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
-        <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
-        <a class="btn btn--ghost" href="/admin/perfis-curriculo">Perfis de currículo</a>
         <a class="btn btn--ghost" href="/admin/talentos">Banco de talentos</a>
         <a class="btn btn--ghost" href="/admin/promocao">Promoção de Vagas</a>
         <a class="btn btn--ghost" href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>
-        <a class="btn btn--ghost" href="/admin/whatsapp">WhatsApp (pareamento)</a>
         <a class="btn btn--ghost" href="/admin/config">Configurações</a>
-        <a class="btn btn--ghost" href="/admin/uso">Custos / Uso API</a>
       </div>
     </div>
     ${filtros}
@@ -4237,6 +4232,13 @@ router.get('/config', (req, res) => {
     <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
     <h1>Configurações gerais</h1>
     ${salvo}
+
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem;">
+      <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
+      <a class="btn btn--ghost" href="/admin/perfis-curriculo">Perfis de currículo</a>
+      <a class="btn btn--ghost" href="/admin/whatsapp">WhatsApp (pareamento)</a>
+      <a class="btn btn--ghost" href="/admin/uso">Custos / Uso API</a>
+    </div>
 
     <section class="rel-sec">
       <h2>Entrevista automática (geral)</h2>
