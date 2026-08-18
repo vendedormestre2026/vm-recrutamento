@@ -1,13 +1,13 @@
 'use strict';
 
-// Item 3 do ETAPA B "Ajustes no Admin" — Commit 4: reorganizacao do menu principal.
+// Item 3 do ETAPA B "Ajustes no Admin" — Commits 4 e 7: reorganizacao do menu principal.
 //
 // Cobre:
 //   1. menu principal (/admin) NAO tem mais "Ver aprovados pela IA", "Editar roteiro",
 //      "Perfis de currículo", "WhatsApp (pareamento)" nem "Custos / Uso API";
 //   2. menu principal continua com Funil de Conversão, Vagas, Banco de talentos,
-//      Promoção de Vagas, Campanha por WhatsApp e Configurações (estas duas ultimas
-//      substituidas por "Divulgação de Vagas" so no Commit 7);
+//      Divulgação de Vagas (Commit 7 — substitui os antigos "Promoção de Vagas" e
+//      "Campanha por WhatsApp") e Configurações;
 //   3. /admin/config ganhou uma secao de links para as 4 telas que sairam do menu.
 //
 // Nao cobre o FILTRO "Aprovados pela IA" em si (select de status_ia) — so o item de
@@ -76,9 +76,11 @@ test('menu principal (/admin): os itens que continuam ainda aparecem', async () 
   assert.match(html, /href="\/admin\/dashboard">Funil de Conversão</);
   assert.match(html, /href="\/admin\/vagas">Vagas</);
   assert.match(html, /href="\/admin\/talentos">Banco de talentos</);
-  assert.match(html, /href="\/admin\/promocao">Promoção de Vagas</);
-  assert.match(html, /href="\/admin\/campanhas-whatsapp">Campanha por WhatsApp</);
+  assert.match(html, /href="\/admin\/divulgacao-vagas">Divulgação de Vagas</);
   assert.match(html, /href="\/admin\/config">Configurações</);
+  // Os dois botoes antigos (Commit 7) nao aparecem mais como atalhos SEPARADOS do menu.
+  assert.ok(!html.includes('>Promoção de Vagas<'));
+  assert.ok(!html.includes('>Campanha por WhatsApp<'));
 });
 
 test('/admin/config: ganhou links para as 4 telas que sairam do menu principal', async () => {

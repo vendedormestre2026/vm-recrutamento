@@ -417,11 +417,16 @@ test('a listagem passa a mostrar as campanhas criadas', async () => {
 
 // ── Navegacao ──
 
-test('o painel principal tem o link para a Promocao de Vagas', async () => {
+test('o painel principal tem o link para Divulgação de Vagas (aba Promocao, Item 3 do ETAPA B/Commit 7)', async () => {
+  // Ate o Commit 7 do ETAPA B "Ajustes no Admin", o menu principal linkava direto para
+  // /admin/promocao; a partir dali, os dois botoes antigos (Promocao + Campanha por
+  // WhatsApp) foram substituidos por um so, para a pagina de abas — a rota standalone
+  // /admin/promocao continua existindo (ver adminDivulgacaoVagas.test.js), so nao e mais
+  // o link direto do menu.
   await comServidor(async (base) => {
     await autenticar(base);
     const html = await (await fetch(`${base}/admin`, { headers: comAuth() })).text();
-    assert.match(html, /href="\/admin\/promocao"/);
+    assert.match(html, /href="\/admin\/divulgacao-vagas"/);
   });
 });
 

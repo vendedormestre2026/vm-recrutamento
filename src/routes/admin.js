@@ -42,11 +42,11 @@ const {
   badgeVereditoHtml,
 } = require('../lib/relatorio');
 const { gerarRelatorioPdf, slugNome } = require('../lib/relatorioPdf');
-const { criarRouterPromocao } = require('./admin_promocao');
+const { criarRouterPromocao, montarConteudoListagemPromocao } = require('./admin_promocao');
 const { criarRouterWhatsapp } = require('./admin_whatsapp');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
 const campanhaWhatsapp = require('../lib/campanhaWhatsapp');
-const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
+const { criarRouterCampanhaWhatsapp, montarConteudoCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
 
@@ -1032,8 +1032,7 @@ router.get('/', (req, res) => {
         <a class="btn btn--ghost" href="/admin/dashboard">Funil de Conversão</a>
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
         <a class="btn btn--ghost" href="/admin/talentos">Banco de talentos</a>
-        <a class="btn btn--ghost" href="/admin/promocao">Promoção de Vagas</a>
-        <a class="btn btn--ghost" href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>
+        <a class="btn btn--ghost" href="/admin/divulgacao-vagas">Divulgação de Vagas</a>
         <a class="btn btn--ghost" href="/admin/config">Configurações</a>
       </div>
     </div>
@@ -4541,5 +4540,34 @@ router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmt
 // cima, igual as demais telas do painel.
 router.use('/whatsapp', criarRouterWhatsapp({ paginaAdmin, escapeHtml }));
 router.use('/campanhas-whatsapp', criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }));
+
+// ── GET /divulgacao-vagas ── Promoção de Vagas + Campanha por WhatsApp em abas ──
+// (Item 3 do ETAPA B "Ajustes no Admin", Commit 7). NAO substitui as rotas standalone
+// (/admin/promocao, /admin/campanhas-whatsapp) — elas continuam existindo e sao para onde
+// os formularios de cada aba fazem POST/redirect (efeito colateral aceito: uma acao dentro
+// da aba tira o operador desta pagina e o leva a tela antiga isolada; ver diagnostico).
+// Reaproveita os MESMOS fragmentos de HTML das telas standalone (montarConteudoListagem
+// Promocao/montarConteudoCampanhaWhatsapp, extraidos nos Commits 5-6) — sem duplicar logica
+// nem HTML. Cada fragmento ja traz seu proprio "Voltar ao painel" e titulo — por isso esta
+// pagina nao repete um <h1> proprio, so a barra de abas.
+router.get('/divulgacao-vagas', (req, res) => {
+  const aba = req.query.aba === 'whatsapp' ? 'whatsapp' : 'promocao';
+
+  const abaLink = (valor, rotulo) =>
+    `<a class="btn ${aba === valor ? '' : 'btn--ghost'}" href="/admin/divulgacao-vagas?aba=${valor}">${rotulo}</a>`;
+
+  const conteudo = `
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.25rem;">
+      ${abaLink('promocao', 'Promoção de Vagas')}
+      ${abaLink('whatsapp', 'Campanha por WhatsApp')}
+    </div>
+    ${
+      aba === 'whatsapp'
+        ? montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt })
+        : montarConteudoListagemPromocao({ formatarDataHora, fmtInt })
+    }`;
+
+  res.send(paginaAdmin({ titulo: 'Divulgação de Vagas', conteudo }));
+});
 
 module.exports = router;
