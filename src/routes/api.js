@@ -15,7 +15,7 @@ const db = require('../db');
 const session = require('../lib/session');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
 const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
-const { extrairTextoPdf, extensaoDoArquivo } = require('../lib/curriculo');
+const { extrairTextoPdf, extensaoDoArquivo, tipoCurriculoAceito } = require('../lib/curriculo');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const { lerUtmDoCookie } = require('../lib/utm');
@@ -51,14 +51,13 @@ const MAX_VIDEO_BYTES = 300 * 1024 * 1024; // 300 MB (gravacao da entrevista int
 const VIDEO_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000; // teto do upload ao Drive (~5 min)
 
 // Upload em memoria: validamos tipo/tamanho e so gravamos no disco depois de
-// gerar o token (o nome do arquivo e <token>.pdf).
+// gerar o token (o nome do arquivo e <token>.<extensao real> — ver lib/curriculo.js).
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_PDF_BYTES },
   fileFilter(req, file, cb) {
-    const ehPdf = file.mimetype === 'application/pdf' && /\.pdf$/i.test(file.originalname);
-    if (!ehPdf) {
-      const erro = new Error('Envie o currículo em formato PDF.');
+    if (!tipoCurriculoAceito(file)) {
+      const erro = new Error('Envie o currículo em PDF, JPG, PNG ou DOCX.');
       erro.code = 'TIPO_INVALIDO';
       return cb(erro);
     }
@@ -172,7 +171,7 @@ router.post('/aplicacao', (req, res) => {
         return res.status(400).json({ ok: false, erro: 'Informe um e-mail válido.' });
       }
       if (!req.file) {
-        return res.status(400).json({ ok: false, erro: 'Anexe seu currículo em PDF.' });
+        return res.status(400).json({ ok: false, erro: 'Anexe seu currículo (PDF, JPG, PNG ou DOCX).' });
       }
       // Consentimento LGPD (obrigatorio): o checkbox da tela de aplicacao. A validacao
       // do front e so conveniencia; aqui e a barreira de verdade.

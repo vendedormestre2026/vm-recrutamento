@@ -1,14 +1,9 @@
 'use strict';
 
 // POST /api/aplicacao — o arquivo e salvo com a EXTENSAO REAL, nao mais fixa em .pdf
-// (Incremento 1 do prompt de upload de curriculo em JPG/PNG/DOCX).
-//
-// ── POR QUE SO PDF AQUI ──
-// O fileFilter do multer (routes/api.js) so aceita PDF at o Incremento 3 ampliar. Testar os
-// outros 3 tipos (JPG/PNG/DOCX) ponta a ponta por HTTP so faz sentido depois que o filtro os
-// deixar passar — a cobertura deles entra no teste do Incremento 3/4, quando a rota de fato
-// aceitar. Este arquivo prova o que JA E verdade agora: PDF continua salvando com .pdf, e o
-// caminho gravado em applications.curriculo_path tem a extensao certa.
+// (Incremento 1), e desde o Incremento 3 o fileFilter aceita PDF, JPG, PNG e DOCX (nao mais
+// so PDF). Este arquivo cobre os dois: extensao correta no disco pra cada tipo aceito, e
+// rejeicao continua de verdade pra tipo nao aceito (.txt, .doc binario antigo).
 
 const os = require('node:os');
 const path = require('node:path');
@@ -78,7 +73,7 @@ test('PDF aceito: curriculo_path grava com extensao .pdf, arquivo existe no disc
   });
 });
 
-test('JPG/PNG/DOCX ainda NAO passam pelo fileFilter (fica pro Incremento 3) — 400, nao 200', async () => {
+test('JPG, PNG e DOCX sao aceitos (Incremento 3): 200, curriculo_path com a extensao certa', async () => {
   await comServidor(async (base) => {
     const casos = [
       ['jpg', 'foto.jpg', 'image/jpeg'],
@@ -91,7 +86,45 @@ test('JPG/PNG/DOCX ainda NAO passam pelo fileFilter (fica pro Incremento 3) — 
         method: 'POST',
         body: formulario({ email, nomeArquivo, tipo, conteudo: `conteudo fake de ${ext}` }),
       });
-      assert.equal(res.status, 400, `${ext} deveria ser rejeitado ate o Incremento 3 ampliar o fileFilter`);
+      const corpo = await res.json();
+      assert.equal(res.status, 200, `${ext}: ${JSON.stringify(corpo)}`);
+
+      const app = buscarPorEmail(email);
+      assert.ok(app, `${ext}: candidatura precisa ter sido criada`);
+      assert.match(app.curriculo_path, new RegExp(`\\.${ext}$`), `${ext}: extensao errada em curriculo_path`);
+      assert.equal(fs.existsSync(app.curriculo_path), true, `${ext}: arquivo precisa existir no disco`);
+    }
+  });
+});
+
+test('.jpeg (variante de JPEG) e aceito e salvo com extensao canonica .jpg', async () => {
+  await comServidor(async (base) => {
+    const email = 'upload.jpeg-variante@teste.com';
+    const res = await fetch(`${base}/api/aplicacao`, {
+      method: 'POST',
+      body: formulario({ email, nomeArquivo: 'foto.jpeg', tipo: 'image/jpeg', conteudo: 'conteudo fake de jpeg' }),
+    });
+    assert.equal(res.status, 200);
+    const app = buscarPorEmail(email);
+    assert.match(app.curriculo_path, /\.jpg$/, '.jpeg no upload vira .jpg no disco (extensao canonica)');
+  });
+});
+
+test('tipo nao aceito (.txt, .doc binario antigo) continua rejeitado com 400', async () => {
+  await comServidor(async (base) => {
+    const casos = [
+      ['txt', 'curriculo.txt', 'text/plain'],
+      ['doc', 'curriculo.doc', 'application/msword'],
+    ];
+    for (const [ext, nomeArquivo, tipo] of casos) {
+      const email = `upload.rejeitado.${ext}@teste.com`;
+      const res = await fetch(`${base}/api/aplicacao`, {
+        method: 'POST',
+        body: formulario({ email, nomeArquivo, tipo, conteudo: `conteudo fake de ${ext}` }),
+      });
+      const corpo = await res.json();
+      assert.equal(res.status, 400, `${ext} deveria continuar rejeitado`);
+      assert.match(corpo.erro, /PDF, JPG, PNG ou DOCX/i);
       assert.equal(buscarPorEmail(email), undefined);
     }
   });

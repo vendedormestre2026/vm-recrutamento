@@ -15,7 +15,7 @@ const multer = require('multer');
 
 const { config } = require('../config');
 const db = require('../db');
-const { extrairTextoPdf, extensaoDoArquivo } = require('../lib/curriculo');
+const { extrairTextoPdf, extensaoDoArquivo, tipoCurriculoAceito } = require('../lib/curriculo');
 const { analisarCurriculo } = require('../lib/analise_curriculo');
 const emailProvider = require('../providers/email');
 const { renderizarResultadoTalentoHtml } = require('./banco_curriculos');
@@ -27,14 +27,14 @@ const MAX_PDF_BYTES = 10 * 1024 * 1024; // 10 MB (mesmo teto do /api/aplicacao)
 const PERFIS_INTERESSE_VALIDOS = ['SDR', 'CLOSER'];
 
 // Upload em memoria: validamos tipo/tamanho e so gravamos no disco depois de gerar o
-// uuid (o nome do arquivo e <uuid>.pdf). Mesmo padrao do upload de curriculo do funil.
+// uuid (o nome do arquivo e <uuid>.<extensao real> — ver lib/curriculo.js). Mesmo padrao do
+// upload de curriculo do funil.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_PDF_BYTES },
   fileFilter(req, file, cb) {
-    const ehPdf = file.mimetype === 'application/pdf' && /\.pdf$/i.test(file.originalname);
-    if (!ehPdf) {
-      const erro = new Error('Envie o currículo em formato PDF.');
+    if (!tipoCurriculoAceito(file)) {
+      const erro = new Error('Envie o currículo em PDF, JPG, PNG ou DOCX.');
       erro.code = 'TIPO_INVALIDO';
       return cb(erro);
     }
@@ -132,7 +132,7 @@ router.post('/banco-curriculos', (req, res) => {
           .json({ ok: false, erro: 'Escolha o perfil de interesse (SDR ou Closer).' });
       }
       if (!req.file) {
-        return res.status(400).json({ ok: false, erro: 'Anexe seu currículo em PDF.' });
+        return res.status(400).json({ ok: false, erro: 'Anexe seu currículo (PDF, JPG, PNG ou DOCX).' });
       }
       // Consentimento LGPD (obrigatorio) — finalidade "banco de talentos", DISTINTA do
       // consentimento de candidatura a vaga. Mesmo padrao de barreira do /api/aplicacao.
