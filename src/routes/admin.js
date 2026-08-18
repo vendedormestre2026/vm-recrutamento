@@ -25,7 +25,7 @@ const lembreteInicio = require('../lib/lembreteInicio');
 const limpezaAudio = require('../lib/limpezaAudio');
 const dispararPromocao = require('../lib/dispararPromocao');
 const emailTestePromocao = require('../lib/emailTestePromocao');
-const { CIDADES_VALIDAS, normalizarCidade } = require('../lib/cidades');
+const { listarCidadesValidas, normalizarCidade } = require('../lib/cidades');
 const { mimetypePorExtensao } = require('../lib/curriculo');
 const {
   normalizarTelefoneWhatsapp,
@@ -2542,7 +2542,16 @@ const REGIMES = [
 // vem de lib/cidades, porque o formulario e so um dos tres consumidores (os outros sao o
 // normalizador e o prompt do import por briefing). Value igual ao rotulo — o que se guarda
 // e o proprio nome canonico da praca, nao um codigo.
-const CIDADES = CIDADES_VALIDAS.map((c) => [c, c]);
+//
+// FUNCAO, e nao constante de modulo (diferente de PERFIS_VALIDOS/MODALIDADES/REGIMES
+// acima): desde a migracao de CIDADES_VALIDAS para tabela (ETAPA B, Incremento 4),
+// listarCidadesValidas() consulta o banco a cada chamada. Calcular isto UMA vez, no
+// require() do arquivo, congelaria o dropdown no estado do banco no momento do boot — uma
+// cidade cadastrada pelo admin (Incremento 5) so apareceria depois de reiniciar o processo,
+// que e o oposto do objetivo. Chamada de dentro de camposVagaHtml, a cada render do form.
+function opcoesCidade() {
+  return listarCidadesValidas().map((c) => [c, c]);
+}
 
 // Gera um slug-base a partir do titulo: sem acentos, minusculo, so [a-z0-9-].
 function gerarSlugBase(titulo) {
@@ -2739,7 +2748,7 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
 
     <label class="campo">
       <span>Cidade (praça)</span>
-      <select name="cidade">${opcoesSelect(vaga.cidade, CIDADES)}</select>
+      <select name="cidade">${opcoesSelect(vaga.cidade, opcoesCidade())}</select>
       <small style="color:var(--cinza);font-size:.8rem">
         Usada para recortar a base por região. Deixe em branco para vaga remota —
         o endereço acima continua sendo o texto exibido na página da vaga.

@@ -80,7 +80,7 @@ function main() {
   // que some do recorte sem erro nenhum.
   const invalidos = [...MAPA].filter(([, c]) => c !== null && normalizarCidade(c) !== c);
   if (invalidos.length) {
-    console.error('ERRO: o mapa tem cidades fora de CIDADES_VALIDAS:');
+    console.error('ERRO: o mapa tem cidades fora do vocabulario de lib/cidades (tabela cidades):');
     for (const [id, c] of invalidos) console.error(`  job ${id}: ${JSON.stringify(c)}`);
     process.exit(1);
   }

@@ -6,6 +6,23 @@
 
 const { config } = require('../config');
 const { aplicarSchema, getDb } = require('./sqlite');
+const { chave } = require('../lib/cidades');
+
+// Vocabulario ORIGINAL de lib/cidades.CIDADES_VALIDAS antes da migracao (Incremento 4) do
+// array congelado para a tabela `cidades`. Preservado aqui, e SO aqui, como semente
+// historica de uma unica vez — nao e mais a fonte de verdade (essa agora e a tabela).
+// Cidade nova se cadastra pelo admin (Incremento 5), nunca editando esta lista.
+const CIDADES_SEED_INICIAL = [
+  'Balneário Camboriú',
+  'Barueri',
+  'Campinas',
+  'Curitiba',
+  'Florianópolis',
+  'Jaraguá do Sul',
+  'Joinville',
+  'São Paulo',
+  'Tijucas',
+];
 
 // Adiciona uma coluna se ela ainda nao existir (idempotente, p/ bancos antigos).
 // CREATE TABLE IF NOT EXISTS nao altera tabelas ja criadas, entao migracoes
@@ -22,6 +39,18 @@ function adicionarColunaSeFaltar(tabela, coluna, definicao) {
 
 function migrar() {
   aplicarSchema();
+
+  // ── Incremento 4 (ETAPA B) — semeia a tabela `cidades`, recem-criada por aplicarSchema,
+  // com o vocabulario que ate aqui vivia congelado em lib/cidades.CIDADES_VALIDAS. INSERT OR
+  // IGNORE por `chave` (nao por id): idempotente e seguro rodar em TODO boot, inclusive
+  // depois que o admin ja tiver cadastrado outras pracas pela tela (Incremento 5) — este
+  // passo nunca sobrescreve nem duplica, so garante que as 9 originais sempre existam, para
+  // nenhuma vaga/campanha ja criada perder a praca que ja tinha.
+  {
+    const stmt = getDb().prepare('INSERT OR IGNORE INTO cidades (nome, chave) VALUES (?, ?)');
+    for (const nome of CIDADES_SEED_INICIAL) stmt.run(nome, chave(nome));
+  }
+
   // Migracoes incrementais (idempotentes) para bancos criados antes desta coluna.
   adicionarColunaSeFaltar('interviews', 'ultimo_resp_id', 'TEXT');
 

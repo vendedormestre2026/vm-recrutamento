@@ -2668,8 +2668,8 @@ function listarCandidatosPorCidadeVaga(cidade) {
 // O sentinela 'Todas as cidades' e barrado aqui explicitamente, alem de ser barrado de novo
 // no motor. Redundante de proposito: e a unica regra deste subsistema cujo erro produz
 // mensagem para quem nao deveria receber, e a checagem custa nada perto disso. Como o
-// parametro `cidade` nunca e o sentinela (o chamador valida contra CIDADES_VALIDAS, que nao
-// o contem), esta condicao e cinto de seguranca — nao a trava principal.
+// parametro `cidade` nunca e o sentinela (o chamador valida contra listarCidadesValidas(),
+// que nao o contem), esta condicao e cinto de seguranca — nao a trava principal.
 function listarLegadoPorCidade(cidade) {
   return getDb()
     .prepare(
@@ -2949,6 +2949,21 @@ function listarTemplatesWhatsapp() {
 
 function obterTemplateWhatsapp(id) {
   return getDb().prepare('SELECT * FROM templates_whatsapp WHERE id = ?').get(id);
+}
+
+// ── Cidades (vocabulario de pracas — ETAPA B, Incremento 4) ──
+//
+// Leitura pura, sem normalizacao/ordenacao: quem decide o que e "canonico" e ordem pt-BR e
+// lib/cidades.js (que chama estas duas funcoes), nao esta camada. Igual ao resto do
+// arquivo — sqlite.js so fala SQL, a regra de negocio mora em lib/.
+function listarCidades() {
+  return getDb().prepare('SELECT * FROM cidades').all();
+}
+
+// Busca por `chave` (normalizada), nao por `nome`: e assim que normalizarCidade tolera
+// caixa/acento e ainda assim devolve o valor canonico armazenado.
+function obterCidadePorChave(chave) {
+  return getDb().prepare('SELECT * FROM cidades WHERE chave = ?').get(chave);
 }
 
 function listarRegioesGrupos() {
@@ -3245,6 +3260,8 @@ module.exports = {
   definirTotalEstimadoCampanhaWhatsapp,
   listarTemplatesWhatsapp,
   obterTemplateWhatsapp,
+  listarCidades,
+  obterCidadePorChave,
   listarRegioesGrupos,
   obterLinkGrupo,
   definirLinkGrupo,

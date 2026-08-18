@@ -30,7 +30,7 @@ const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const { criarApp } = require('../src/server');
-const { CIDADES_VALIDAS } = require('../src/lib/cidades');
+const { listarCidadesValidas } = require('../src/lib/cidades');
 
 migrar();
 
@@ -89,7 +89,7 @@ test('o formulario oferece as 9 pracas e a opcao vazia', async () => {
     const html = await (await fetch(`${base}/admin/vagas/nova`, { headers: comAuth() })).text();
 
     assert.match(html, /<select name="cidade">/, 'o select precisa existir');
-    for (const c of CIDADES_VALIDAS) {
+    for (const c of listarCidadesValidas()) {
       assert.ok(html.includes(`<option value="${c}"`), `falta a opcao ${c}`);
     }
     // A opcao vazia e o que permite vaga remota. Sem ela, o operador seria obrigado a
@@ -203,7 +203,7 @@ const extrair = (cidade) => parseExtracaoVaga(JSON.stringify({ ...EXTRACAO, cida
 
 test('import: o prompt lista as pracas validas, geradas da constante', () => {
   const system = montarMensagensExtracao('briefing qualquer')[0].conteudo;
-  for (const c of CIDADES_VALIDAS) {
+  for (const c of listarCidadesValidas()) {
     assert.ok(system.includes(`"${c}"`), `o prompt precisa oferecer ${c}`);
   }
   // Interpolada, e nao escrita a mao: uma praca nova em lib/cidades tem que aparecer aqui

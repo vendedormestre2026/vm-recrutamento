@@ -1,8 +1,9 @@
 'use strict';
 
-// Vocabulario fechado de CIDADES (pracas de atuacao).
+// Vocabulario de CIDADES (pracas de atuacao) — lido da tabela `cidades` (ETAPA B,
+// Incremento 4).
 //
-// ── POR QUE ESTE ARQUIVO EXISTE ──
+// ── POR QUE ISTO ERA UM ARRAY CONGELADO, E POR QUE DEIXOU DE SER ──
 // `jobs.endereco` e texto livre — digitado no painel ou redigido pelo LLM a partir do
 // briefing (lib/importar_vaga). Em 7 vagas preenchidas, produziu 7 formatos diferentes:
 //
@@ -15,49 +16,26 @@
 //   Campinas, Sao Paulo-SP                cidade + ESTADO, e o pior caso: contem o
 //                                         literal "Sao Paulo" sendo uma vaga de Campinas
 //
-// O ultimo e o que decide a favor de um campo estruturado. Nenhum parser resolve: um
+// O ultimo e o que decidiu a favor de um campo estruturado. Nenhum parser resolve: um
 // LIKE '%Sao Paulo%' classificaria aquela vaga como Sao Paulo e erraria 156 candidatos.
-// E a taxa nao vai melhorar sozinha — o formato de cada endereco novo depende da redacao
-// do briefing, entao 7 formatos em 7 vagas e o comportamento esperado, nao um acidente.
+// Por isso a cidade nasceu como vocabulario FECHADO — um array `Object.freeze` no
+// codigo-fonte — e acrescentar uma praca era uma edicao de codigo deliberada, com revisao,
+// de proposito: a ausencia desse atrito e que tinha produzido as sete variacoes acima.
 //
-// A cidade passa a ser dado CATEGORICO, ao lado de `modalidade` e `regime`, que ja sao
-// enums fechados no mesmo formulario e no mesmo prompt. `endereco` continua existindo e
-// sendo exibido: ele responde "onde exatamente", que continua sendo texto livre legitimo.
-// Este campo responde "qual praca", que e outra pergunta.
+// A tabela `cidades` (schema.sql) MOVE essa barreira de "code review" para "clique no
+// admin" (ver Incremento 5 de ETAPA B), mas nao a remove: o cadastro continua sendo uma
+// acao HUMANA deliberada — a IA do import de briefing so pode SUGERIR (ver
+// lib/importar_vaga.cidadeSugeridaBruta), nunca inserir sozinha. A funcao `chave()` abaixo
+// e a mesma de sempre, e o UNIQUE(chave) da tabela (nao UNIQUE(nome)) e quem impede que
+// duas grafias da mesma cidade ("São José" e "Sao Jose") virem duas linhas — o mesmo
+// incidente que o array fechado original existia para evitar, agora garantido pelo banco.
 //
-// ── POR QUE MODULO PROPRIO, e nao uma constante dentro de importar_vaga ou admin ──
+// ── POR QUE MODULO PROPRIO, e nao db/sqlite diretamente ──
 // Sao tres consumidores previstos desde o inicio (normalizador, formulario do painel,
-// prompt do LLM) e nenhum deles e dono da lista. Deixa-la em qualquer um dos tres faria
-// os outros dois importarem de um lugar que nao explica por que a lista e aquela. Mesmo
-// movimento de providers/emailCampanha/cabecalhos.js, extraido quando o terceiro
-// transporte apareceu: a regra e do dominio, nao de quem a usa primeiro.
-
-// As pracas onde ha operacao. Oito vieram do backfill da base legada (sao exatamente as
-// que db.listarCidadesDistintas() ja devolve hoje, derivadas por dicionario de empresa de
-// origem, nao digitadas). Barueri e a nona, e entra agora porque ja existe vaga la
-// (Alphaville Empresarial Barueri-SP, 65 candidatos) sem representacao no vocabulario.
-//
-// Ordem alfabetica pt-BR, a MESMA de listarCidadesDistintas — as duas listas aparecem
-// lado a lado em tela e divergir na ordem pareceria bug.
-//
-// ── LISTA FECHADA, E ESSE E O PONTO ──
-// Acrescentar uma praca e uma edicao de codigo deliberada, com revisao. E mais atrito que
-// um campo livre, de proposito: foi a ausencia desse atrito que produziu as sete
-// variacoes acima. Quem opera nao deve conseguir inventar uma cidade sem que alguem note.
-//
-// Congelada (Object.freeze) porque a lista viaja por tres modulos e um `.push()` acidental
-// em qualquer um deles mudaria o vocabulario dos outros dois em silencio.
-const CIDADES_VALIDAS = Object.freeze([
-  'Balneário Camboriú',
-  'Barueri',
-  'Campinas',
-  'Curitiba',
-  'Florianópolis',
-  'Jaraguá do Sul',
-  'Joinville',
-  'São Paulo',
-  'Tijucas',
-]);
+// prompt do LLM) e nenhum deles e dono da regra de normalizacao. sqlite.js so fala SQL
+// (listarCidades/obterCidadePorChave); decidir o que e "canonico" e responsabilidade de
+// dominio, e mora aqui — mesmo motivo de sempre, so que a fonte de dado por tras mudou.
+const db = require('../db');
 
 // NAO entra aqui: o sentinela 'Todas as cidades' de `talentos.cidade`.
 //
@@ -73,13 +51,14 @@ const CIDADES_VALIDAS = Object.freeze([
 
 // Chave de comparacao: sem caixa, sem acento, sem espaco nas bordas.
 //
-// A remocao de acento e a mesma tecnica de normalizarModalidade em lib/importar_vaga
-// ("híbrido" -> "hibrido"), e aqui pesa mais: sete das nove pracas tem acento, e a origem
-// mais provavel dos valores e um LLM redigindo a partir de briefing — onde "Sao Paulo" e
-// "Balneario Camboriu" sao grafias correntes. Recusar por causa de um til seria transformar
-// um problema de digitacao em ausencia de dado.
+// Pura e sem dependencia de banco de proposito: migrate.js chama esta funcao sozinha (sem
+// puxar normalizarCidade/listarCidadesValidas, que dependem da tabela) para semear a
+// tabela `cidades` durante a migracao, antes de haver qualquer linha nela.
 //
-// NFD separa a letra do diacritico e a faixa U+0300-U+036F apaga so o diacritico.
+// NFD separa a letra do diacritico e a faixa U+0300-U+036F apaga so o diacritico. Sete das
+// nove pracas originais tem acento, e a origem mais provavel de um valor sem acento e um
+// LLM redigindo a partir de briefing — onde "Sao Paulo" e grafia corrente. Recusar por
+// causa de um til seria transformar um problema de digitacao em ausencia de dado.
 function chave(valor) {
   return String(valor || '')
     .trim()
@@ -88,19 +67,34 @@ function chave(valor) {
     .replace(/[̀-ͯ]/g, '');
 }
 
-// Indice chave -> valor canonico. Construido UMA vez, no load: a lista e congelada e nao
-// muda em runtime, e reconstruir o mapa a cada chamada seria trabalho por nada num caminho
-// que o formulario do painel percorre a cada salvamento de vaga.
-const PORCHAVE = new Map(CIDADES_VALIDAS.map((c) => [chave(c), c]));
+// Lista as pracas cadastradas, em ordem alfabetica pt-BR — a MESMA ordem de
+// db.listarCidadesDistintas(), porque as duas listas aparecem lado a lado em tela e
+// divergir na ordem pareceria bug.
+//
+// Consulta o BANCO a cada chamada, sem cache: a tabela e pequena (poucas dezenas de linhas
+// no maximo — um vocabulario fechado por design), e cachear reintroduziria exatamente o
+// problema que motivou esta migracao — uma cidade cadastrada pelo admin (Incremento 5) so
+// apareceria no dropdown depois de reiniciar o processo, que e o oposto do objetivo.
+//
+// Substitui o antigo array `CIDADES_VALIDAS`: um array congelado nao pode, ao mesmo tempo,
+// ser um valor simples E refletir uma tabela que muda em runtime — por isso virou funcao
+// (unico ponto em que a interface publica deste modulo NAO ficou identica a de antes).
+function listarCidadesValidas() {
+  return db
+    .listarCidades()
+    .map((c) => c.nome)
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
 
-// Normaliza para o valor CANONICO da lista, ou null.
+// Normaliza para o valor CANONICO da tabela, ou null. MESMA assinatura/contrato de sempre
+// (nenhum consumidor mudou por causa desta funcao) — so a fonte de dado por tras trocou.
 //
 // ── ENUM FECHADO, IGUAL A MODALIDADE ──
 // Espelha normalizarModalidade: variacao de caixa/acento NAO e "invalido" (mapeia-se ao
-// canonico), mas qualquer coisa fora da lista e recusada. A diferenca de retorno e
-// deliberada — modalidade devolve '' porque o parse do import trata '' como ausente; aqui
-// devolvemos null, que e o que vai para a coluna `jobs.cidade`. Quem precisa de '' converte
-// no ponto de uso (o import faz isso).
+// canonico via `chave`), mas qualquer coisa fora da tabela e recusada. A diferenca de
+// retorno e deliberada — modalidade devolve '' porque o parse do import trata '' como
+// ausente; aqui devolvemos null, que e o que vai para a coluna `jobs.cidade`. Quem precisa
+// de '' converte no ponto de uso (o import faz isso).
 //
 // ── O QUE ESTA FUNCAO NAO FAZ, E POR QUE ──
 // Nao ha fuzzy-match, nem "contem", nem inferencia a partir de `endereco`. A tentacao e
@@ -110,10 +104,12 @@ const PORCHAVE = new Map(CIDADES_VALIDAS.map((c) => [chave(c), c]));
 // candidatos atras. Um acerto silencioso e um erro silencioso saem do mesmo codigo, e o
 // erro so aparece quando alguem em Campinas recebe convite do grupo de Sao Paulo.
 //
-// Endereco livre continua livre; quem decide a praca e uma escolha explicita, no seletor ou
-// no guard do import. Nao adivinhamos.
+// Endereco livre continua livre; quem decide a praca e uma escolha explicita, no seletor,
+// no guard do import (que so SUGERE, nunca insere — ver cidadeSugeridaBruta) ou no cadastro
+// deliberado do admin. Nao adivinhamos.
 function normalizarCidade(valor) {
-  return PORCHAVE.get(chave(valor)) || null;
+  const linha = db.obterCidadePorChave(chave(valor));
+  return linha ? linha.nome : null;
 }
 
-module.exports = { CIDADES_VALIDAS, normalizarCidade };
+module.exports = { chave, listarCidadesValidas, normalizarCidade };

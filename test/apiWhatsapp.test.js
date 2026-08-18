@@ -34,7 +34,7 @@ const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const { criarApp } = require('../src/server');
 const { config } = require('../src/config');
-const { CIDADES_VALIDAS } = require('../src/lib/cidades');
+const { listarCidadesValidas } = require('../src/lib/cidades');
 
 migrar();
 
@@ -151,7 +151,7 @@ test('cidade ausente: 400 com a lista de opcoes na resposta', async () => {
     const corpo = await res.json();
     // Quem configura o n8n descobre o valor certo na propria resposta, em vez de num log do
     // servidor a que talvez nao tenha acesso.
-    assert.deepEqual(corpo.cidades_validas, CIDADES_VALIDAS);
+    assert.deepEqual(corpo.cidades_validas, listarCidadesValidas());
   });
 });
 

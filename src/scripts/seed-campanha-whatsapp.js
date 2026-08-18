@@ -15,7 +15,7 @@
 // qualquer coisa aqui seria inventar dado.
 
 const db = require('../db');
-const { CIDADES_VALIDAS } = require('../lib/cidades');
+const { listarCidadesValidas } = require('../lib/cidades');
 
 // Template inicial. O nome e a categoria tem que bater EXATAMENTE com o que estiver aprovado
 // no painel da Meta — esta tabela e espelho, nao fonte da verdade.
@@ -135,12 +135,12 @@ function main() {
   );
   const inserir = conn.transaction(() => {
     let novas = 0;
-    for (const cidade of CIDADES_VALIDAS) novas += stmt.run(cidade).changes;
+    for (const cidade of listarCidadesValidas()) novas += stmt.run(cidade).changes;
     return novas;
   });
   const novas = inserir();
 
-  console.log(`  pracas: ${novas} criada(s), ${CIDADES_VALIDAS.length - novas} ja existia(m)`);
+  console.log(`  pracas: ${novas} criada(s), ${listarCidadesValidas().length - novas} ja existia(m)`);
   console.log('');
   console.log('  cidade                    link do grupo');
   console.log('  ' + '-'.repeat(52));

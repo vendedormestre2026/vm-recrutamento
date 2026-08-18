@@ -542,6 +542,30 @@ CREATE TABLE IF NOT EXISTS templates_whatsapp (
   atualizado_em TEXT
 );
 
+-- Vocabulario de cidades (pracas de atuacao) — ETAPA B, Incremento 4.
+--
+-- Ate aqui era um array CONGELADO no codigo (lib/cidades.CIDADES_VALIDAS), de proposito:
+-- acrescentar uma praca exigia edicao de codigo com revisao, porque a alternativa (campo
+-- livre) ja tinha produzido 7 grafias diferentes para a mesma cidade em 7 vagas, incluindo
+-- um endereco de CAMPINAS contendo o literal "Sao Paulo" — ver o historico de
+-- src/lib/cidades.js. Migrar para tabela move essa revisao de "code review" para "clique no
+-- admin", sem abrir mao da barreira: o cadastro (Incremento 5) continua exigindo uma acao
+-- humana deliberada, so que em runtime — a IA do import de briefing NUNCA escreve aqui
+-- sozinha (ver lib/importar_vaga.cidadeSugeridaBruta, so sugestao).
+--
+-- `chave` e o valor normalizado (sem acento/caixa/espaco — mesma funcao chave() de
+-- lib/cidades) com UNIQUE PROPRIO: e ele, e nao `nome`, que impede duas grafias da MESMA
+-- cidade ("Sao Jose" e "São José") virarem duas linhas — exatamente o incidente que o
+-- vocabulario fechado original existia para evitar. `nome` tambem e UNIQUE (repeticao
+-- exata e sempre um subconjunto do que `chave` ja barra, mas deixa o erro do SQLite mais
+-- legivel quando alguem tenta inserir o nome identico).
+CREATE TABLE IF NOT EXISTS cidades (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  nome      TEXT NOT NULL UNIQUE,
+  chave     TEXT NOT NULL UNIQUE,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Link do grupo de WhatsApp por praca.
 --
 -- ── POR QUE TABELA PROPRIA, e nao coluna em `jobs` ──
@@ -549,8 +573,9 @@ CREATE TABLE IF NOT EXISTS templates_whatsapp (
 -- coluna em `jobs` obrigaria a repetir (e manter sincronizado) o mesmo link em cada vaga da
 -- cidade — e o primeiro link desatualizado seria indistinguivel do certo.
 --
--- `cidade` e UNIQUE e usa o vocabulario fechado de lib/cidades (as 9 pracas). Nao ha FK
--- porque o enum vive no codigo, nao numa tabela — mesmo desenho de jobs.cidade.
+-- `cidade` e UNIQUE e usa o vocabulario da tabela `cidades` acima (validado na rota, nao por
+-- FK: mesmo desenho de jobs.cidade — ver o comentario de `cidades` para o porque de nao ter
+-- FK nem CHECK em nenhuma das duas).
 --
 -- `link_convite_grupo` e NULLABLE de proposito: as linhas nascem vazias e o operador
 -- preenche pela tela. Praca sem link nao pode receber campanha, e o job trata isso como

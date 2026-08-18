@@ -27,7 +27,7 @@ const crypto = require('node:crypto');
 
 const { config } = require('../config');
 const db = require('../db');
-const { CIDADES_VALIDAS, normalizarCidade } = require('../lib/cidades');
+const { listarCidadesValidas, normalizarCidade } = require('../lib/cidades');
 const { listarPendentesPorCidade } = require('../lib/publicoDisparoWhatsapp');
 const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 
@@ -99,7 +99,7 @@ router.get('/disparos/pendentes', async (req, res) => {
   if (!cidade) {
     return res.status(400).json({
       erro: 'Informe a cidade: /api/disparos/pendentes?cidade=Joinville',
-      cidades_validas: CIDADES_VALIDAS,
+      cidades_validas: listarCidadesValidas(),
     });
   }
 
@@ -110,7 +110,7 @@ router.get('/disparos/pendentes', async (req, res) => {
     // O motor LANCA em cidade invalida de proposito (ver lib/publicoDisparoWhatsapp). Aqui
     // isso vira 400 com a lista de opcoes: quem esta configurando o n8n descobre o valor
     // certo na propria resposta, em vez de num log do servidor.
-    return res.status(400).json({ erro: err.message, cidades_validas: CIDADES_VALIDAS });
+    return res.status(400).json({ erro: err.message, cidades_validas: listarCidadesValidas() });
   }
 
   return res.json(pendentes);

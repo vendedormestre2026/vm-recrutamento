@@ -14,7 +14,7 @@ const express = require('express');
 const db = require('../db');
 const campanha = require('../lib/campanhaWhatsapp');
 const transporte = require('../providers/centralWhats/centralWhats');
-const { CIDADES_VALIDAS } = require('../lib/cidades');
+const { listarCidadesValidas } = require('../lib/cidades');
 const publico = require('../lib/publicoCampanhaWhatsapp');
 const { PERFIS_VALIDOS } = require('../lib/promocaoVagas');
 
@@ -36,7 +36,7 @@ function lerCriterios(b = {}) {
     // `[].concat` pelo mesmo motivo de admin_promocao: o Express entrega `name` repetido como
     // array com 2+ marcados e como STRING com 1 so — sem isso, marcar uma cidade viraria
     // filtro por cada letra dela.
-    cidades: [].concat(b.cidade || []).map(String).filter((c) => CIDADES_VALIDAS.includes(c)),
+    cidades: [].concat(b.cidade || []).map(String).filter((c) => listarCidadesValidas().includes(c)),
     perfil: PERFIS_VALIDOS.includes(b.perfil) ? b.perfil : undefined,
     perfilIncluirSemAtributo: b.perfil_incluir_sem === '1' || b.perfil_incluir_sem === 'on',
   };
@@ -220,7 +220,7 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
     const cidade = String(b.cidade || '').trim();
     // So aceita praca do vocabulario fechado: o link e por praca, e uma cidade forjada
     // criaria uma linha que nenhum envio jamais consulta.
-    if (!CIDADES_VALIDAS.includes(cidade)) {
+    if (!listarCidadesValidas().includes(cidade)) {
       return res.redirect('/admin/campanhas-whatsapp?erro=cidade');
     }
     db.definirLinkGrupo(cidade, b.link);

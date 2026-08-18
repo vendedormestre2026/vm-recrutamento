@@ -39,7 +39,7 @@ const { criarApp } = require('../src/server');
 const transporte = require('../src/providers/centralWhats/centralWhats');
 const job = require('../src/lib/campanhaWhatsapp');
 const webhook = require('../src/routes/webhook_meta');
-const { CIDADES_VALIDAS } = require('../src/lib/cidades');
+const { listarCidadesValidas } = require('../src/lib/cidades');
 const { montarConteudoCampanhaWhatsapp } = require('../src/routes/admin_campanha_whatsapp');
 const { escapeHtml } = require('../src/views');
 
@@ -785,13 +785,13 @@ test('pedeOptOut: casa a mensagem inteira, nao "contem a palavra"', () => {
 
 test('o seed cobre exatamente as 9 pracas do enum', () => {
   zerar();
-  for (const cidade of CIDADES_VALIDAS) {
+  for (const cidade of listarCidadesValidas()) {
     exec('INSERT OR IGNORE INTO regioes_grupos_whatsapp (cidade) VALUES (?)', cidade);
   }
   const cidades = db.listarRegioesGrupos().map((r) => r.cidade);
   // A lista vem de lib/cidades para nao existir segunda fonte de verdade sobre quais pracas
   // existem.
-  assert.deepEqual(cidades, [...CIDADES_VALIDAS].sort((a, b) => a.localeCompare(b, 'pt-BR')));
+  assert.deepEqual(cidades, [...listarCidadesValidas()].sort((a, b) => a.localeCompare(b, 'pt-BR')));
   assert.equal(db.obterLinkGrupo('Joinville'), null, 'links nascem vazios');
 });
 
@@ -860,7 +860,7 @@ test('montarConteudoCampanhaWhatsapp: fragmento puro (Item 3 do ETAPA B, Commit 
 
 test('admin: salvar link da praca persiste; cidade forjada e recusada', async () => {
   zerar();
-  for (const c of CIDADES_VALIDAS) exec('INSERT OR IGNORE INTO regioes_grupos_whatsapp (cidade) VALUES (?)', c);
+  for (const c of listarCidadesValidas()) exec('INSERT OR IGNORE INTO regioes_grupos_whatsapp (cidade) VALUES (?)', c);
 
   await comAdmin(async (base, h) => {
     const salvar = (cidade, link) =>

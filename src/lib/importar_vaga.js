@@ -6,7 +6,7 @@
 // POST /vagas humano. Espelha o padrao de lib/relatorio.js (prompt + parse isolados da
 // camada HTTP; deps injetaveis p/ teste sem rede/credencial/LLM real).
 
-const { CIDADES_VALIDAS, normalizarCidade } = require('./cidades');
+const { listarCidadesValidas, normalizarCidade } = require('./cidades');
 
 // Campos extraidos (ordem estavel p/ o aviso de "ausentes"). secoes_extras fica DE FORA
 // de proposito: o formato "## Titulo + itens" e peculiar e a IA geraria lixo — melhoria
@@ -69,10 +69,11 @@ function montarMensagensExtracao(briefingTexto) {
     '  "potencial_ganhos": "string",',
     '  "endereco": "string",',
     // Enum fechado, mesma forma de modalidade/regime logo abaixo — a lista de opcoes vai
-    // INTERPOLADA de CIDADES_VALIDAS, e nao escrita a mao aqui: uma praca nova acrescentada
-    // em lib/cidades tem que aparecer no prompt sozinha, senao o LLM nunca a proporia e o
-    // sintoma seria "a IA nunca acerta essa cidade" — difícil de ligar a esta linha.
-    `  "cidade": ${CIDADES_VALIDAS.map((c) => `"${c}"`).join(' | ')} | "",  // so essas; se nao achar, ""`,
+    // INTERPOLADA de listarCidadesValidas() a cada chamada (nao e mais um array congelado:
+    // e uma consulta a tabela `cidades`), e nao escrita a mao aqui: uma praca cadastrada
+    // pelo admin (Incremento 5) tem que aparecer no prompt sozinha, senao o LLM nunca a
+    // proporia e o sintoma seria "a IA nunca acerta essa cidade" — difícil de ligar a esta linha.
+    `  "cidade": ${listarCidadesValidas().map((c) => `"${c}"`).join(' | ')} | "",  // so essas; se nao achar, ""`,
     // O par endereco/cidade e a unica redundancia proposital do formato: `endereco` e o
     // texto exibido na pagina da vaga ("Anita Garibaldi - Joinville-SC"), `cidade` e a praca
     // canonica para recorte de base. Pedir os dois separadamente e o que evita ter que

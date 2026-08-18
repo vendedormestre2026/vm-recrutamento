@@ -102,7 +102,7 @@ async function listarPendentesPorCidade(cidade, deps = {}) {
   if (!praca) {
     throw new Error(
       `Cidade invalida para disparo: ${JSON.stringify(cidade)}. ` +
-        'Use uma das pracas de lib/cidades (CIDADES_VALIDAS).',
+        'Use uma das pracas de lib/cidades (listarCidadesValidas()).',
     );
   }
 

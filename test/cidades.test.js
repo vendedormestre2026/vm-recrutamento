@@ -1,6 +1,8 @@
 'use strict';
 
-// Vocabulario fechado de pracas (src/lib/cidades.js).
+// Vocabulario de pracas (src/lib/cidades.js) — lido da tabela `cidades` desde a ETAPA B,
+// Incremento 4 (era um array congelado ate aqui; ver o comentario no topo do proprio
+// lib/cidades.js para o porque da migracao).
 //
 // ── O QUE ESTA EM JOGO ──
 // Esta lista decide a praca de uma vaga, e a praca decide quem entra num disparo regional.
@@ -12,14 +14,27 @@
 // casos — e erraria "Campinas, Sao Paulo-SP", que e uma vaga de Campinas com 156 candidatos
 // e o literal "Sao Paulo" dentro. Os testes de recusa abaixo existem para que nenhuma
 // "melhoria" futura transforme esta funcao num matcher.
+//
+// ── POR QUE HTTP/DB, e nao mais so-unidade ──
+// A migracao trocou "array no codigo" por "tabela no banco": os testes agora precisam de um
+// banco de verdade (migrar() semeia as 9 pracas originais, ver migrate.js), igual ao padrao
+// ja usado por vagaCidade.test.js.
+
+const os = require('node:os');
+const path = require('node:path');
+
+process.env.DATABASE_PATH = path.join(os.tmpdir(), `vm-test-cidades-${process.pid}-${Date.now()}.db`);
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { CIDADES_VALIDAS, normalizarCidade } = require('../src/lib/cidades');
+const { migrar } = require('../src/db/migrate');
+const { listarCidadesValidas, normalizarCidade, chave } = require('../src/lib/cidades');
 
-test('a lista tem as 9 pracas, congelada e em ordem pt-BR', () => {
-  assert.deepEqual(CIDADES_VALIDAS, [
+migrar();
+
+test('o seed cobre exatamente as 9 pracas do enum, em ordem pt-BR', () => {
+  assert.deepEqual(listarCidadesValidas(), [
     'Balneário Camboriú',
     'Barueri',
     'Campinas',
@@ -30,27 +45,58 @@ test('a lista tem as 9 pracas, congelada e em ordem pt-BR', () => {
     'São Paulo',
     'Tijucas',
   ]);
-  // Congelada: a lista viaja por tres modulos e um push acidental em qualquer um mudaria o
-  // vocabulario dos outros dois em silencio.
-  assert.equal(Object.isFrozen(CIDADES_VALIDAS), true);
   // Mesma ordem de db.listarCidadesDistintas — as duas aparecem lado a lado em tela.
   assert.deepEqual(
-    CIDADES_VALIDAS,
-    [...CIDADES_VALIDAS].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    listarCidadesValidas(),
+    [...listarCidadesValidas()].sort((a, b) => a.localeCompare(b, 'pt-BR')),
   );
+});
+
+test('cidade cadastrada pelo admin aparece na proxima chamada, sem reiniciar o processo', () => {
+  // Nao ha cache: e o proprio ponto da migracao (Incremento 4/5) — congelar isto de novo
+  // (mesmo que num Map local, em vez de Object.freeze) reintroduziria o problema que motivou
+  // trocar array por tabela. Insercao direta no banco so para simular "cidade ja cadastrada"
+  // sem depender do fluxo de admin (fora de escopo deste arquivo).
+  const antes = listarCidadesValidas();
+  assert.equal(antes.includes('Chapecó'), false);
+
+  const db = require('../src/db');
+  db.getDb().prepare('INSERT INTO cidades (nome, chave) VALUES (?, ?)').run('Chapecó', chave('Chapecó'));
+
+  const depois = listarCidadesValidas();
+  assert.equal(depois.includes('Chapecó'), true);
+  assert.equal(normalizarCidade('chapeco'), 'Chapecó');
+
+  // Limpeza: nao vazar para os testes seguintes deste arquivo.
+  db.getDb().prepare('DELETE FROM cidades WHERE chave = ?').run(chave('Chapecó'));
+});
+
+test('a chave normalizada e UNIQUE — duas grafias da mesma cidade nao podem virar duas linhas', () => {
+  // Este e o ponto central da migracao: o array congelado impedia "Sao Jose" e "São José"
+  // de coexistirem porque so havia UMA edicao de codigo possivel. A tabela precisa da MESMA
+  // garantia, agora como constraint de banco — e' `chave` que carrega o UNIQUE, nao `nome`
+  // (ver schema.sql), exatamente para barrar duas grafias da mesma praca.
+  const db = require('../src/db');
+  const conn = db.getDb();
+  conn.prepare('INSERT INTO cidades (nome, chave) VALUES (?, ?)').run('Chapeco Teste', chave('Chapeco Teste'));
+  assert.throws(
+    () => conn.prepare('INSERT INTO cidades (nome, chave) VALUES (?, ?)').run('Chapecó Teste', chave('Chapecó Teste')),
+    /UNIQUE/,
+  );
+  conn.prepare('DELETE FROM cidades WHERE chave = ?').run(chave('Chapeco Teste'));
 });
 
 test('o sentinela de talento NAO e uma praca de vaga', () => {
   // 'Todas as cidades' marca uma PESSOA presente em qualquer praca (531 no legado). Uma
   // vaga acontece em um lugar ou e remota. Aceita-lo aqui faria uma vaga presencial entrar
   // em todo disparo regional.
-  assert.equal(CIDADES_VALIDAS.includes('Todas as cidades'), false);
+  assert.equal(listarCidadesValidas().includes('Todas as cidades'), false);
   assert.equal(normalizarCidade('Todas as cidades'), null);
 });
 
 test('todo valor canonico normaliza para si mesmo', () => {
   // Idempotencia: reeditar uma vaga ja salva nao pode perder a cidade.
-  for (const c of CIDADES_VALIDAS) assert.equal(normalizarCidade(c), c);
+  for (const c of listarCidadesValidas()) assert.equal(normalizarCidade(c), c);
 });
 
 test('caixa e espaco nas bordas nao invalidam', () => {
@@ -89,8 +135,8 @@ test('NAO faz fuzzy-match nem le endereco — enum fechado de verdade', () => {
 });
 
 test('cidade fora da lista e recusada, e nao inventada', () => {
-  // Acrescentar praca e edicao de codigo deliberada. Aceitar aqui seria o campo livre de
-  // volta, com outro nome.
+  // Cadastrar praca e acao deliberada (admin, Incremento 5). Aceitar aqui seria o campo
+  // livre de volta, com outro nome.
   assert.equal(normalizarCidade('Blumenau'), null);
   assert.equal(normalizarCidade('Joinvile'), null, 'erro de digitacao nao vira acerto');
   assert.equal(normalizarCidade('Joinville/SC'), null, 'sufixo de UF nao e o canonico');
