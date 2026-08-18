@@ -1314,7 +1314,7 @@ const CANDIDATOS_POR_PAGINA = 25;
 const ORIGEM_DIRETO = 'direto';
 const ORIGEM_GRUPO_WHATS = 'grupo-whats';
 // Todas as grafias que caem no balde do grupo de WhatsApp (a 1a e a canonica).
-const ORIGENS_GRUPO_WHATS = ['grupo-whats', 'grupowhats'];
+const ORIGENS_GRUPO_WHATS = ['grupo-whats', 'grupowhats', 'grup'];
 
 // Valor cru -> valor canonico do filtro. NULL/vazio/'direto' viram 'direto'; as duas
 // grafias do grupo viram 'grupo-whats'; o resto passa intacto.
@@ -1812,11 +1812,12 @@ function obterOrigemLeads(opcoes = {}) {
   const { desde, ate, jobId } = opcoes;
   const periodo = { desde, ate };
 
-  const rotuloOrigem = (valor) => {
-    if (valor == null) return 'Sem origem';
-    if (valor === 'direto') return 'Direto';
-    return valor;
-  };
+  // NULL fica distinto de 'direto' (ver comentario da funcao acima) — por isso o
+  // caso NULL e tratado aqui, fora da normalizacao de modulo (origemCanonica funde os
+  // dois no filtro de candidatos, de proposito; aqui NAO). O resto (grupo-whats/apelidos,
+  // 'direto' literal, demais origens) reaproveita origemCanonica/rotuloOrigem de modulo,
+  // a MESMA fonte usada por listarOrigensDistintas — sem duplicar a lista de apelidos.
+  const rotuloOrigemLead = (valor) => (valor == null ? 'Sem origem' : rotuloOrigem(origemCanonica(valor)));
 
   // Filtro opcional por vaga: base de condicoes + param, conforme a coluna da tabela.
   const baseJob = (coluna) => (jobId ? [`${coluna} = ?`] : []);
@@ -1826,7 +1827,7 @@ function obterOrigemLeads(opcoes = {}) {
   const mapa = new Map();
   const acumular = (linhas, campo) => {
     for (const l of linhas) {
-      const chave = rotuloOrigem(l.origem);
+      const chave = rotuloOrigemLead(l.origem);
       const atual =
         mapa.get(chave) ||
         { origem: chave, acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 };

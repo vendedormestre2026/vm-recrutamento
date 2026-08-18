@@ -10,7 +10,10 @@
 //      baldes DISTINTOS, e NULLs de tabelas diferentes caem no MESMO balde;
 //   3. filtro de periodo (desde/ate): so conta o que cai no recorte;
 //   4. filtro por vaga (jobId): restringe as 4 etapas aquela vaga;
-//   5. ordenacao: origem com mais aplicacoes vem primeiro.
+//   5. ordenacao: origem com mais aplicacoes vem primeiro;
+//   6. normalizacao (Incremento 1 do ETAPA B "Ajustes no Admin"): grupo-whats/grupowhats/
+//      grup caem no mesmo balde "Grupo WhatsApp", reaproveitando origemCanonica/
+//      rotuloOrigem de modulo (mesma fonte do filtro de candidatos).
 
 const os = require('node:os');
 const path = require('node:path');
@@ -241,4 +244,19 @@ test('obterOrigemLeads (filtro por vaga jobB): so a origem daquela vaga', () => 
 test('obterOrigemLeads: ordena por aplicacoes desc (google no topo)', () => {
   const res = db.obterOrigemLeads();
   assert.equal(res.origens[0].origem, 'google'); // 3 aplicacoes, mais que qualquer outra
+});
+
+test('bucketizacao: grupo-whats, grupowhats e grup caem no MESMO balde "Grupo WhatsApp"', () => {
+  aplicacao(jobA, 'grupo-whats', 'concluido', '2026-06-06 10:00:00');
+  aplicacao(jobA, 'grupowhats', 'concluido', '2026-06-07 10:00:00');
+  aplicacao(jobA, 'grup', 'concluido', '2026-06-08 10:00:00');
+
+  const m = porOrigem(db.obterOrigemLeads());
+
+  assert.ok(m.has('Grupo WhatsApp'), 'as tres grafias precisam virar o rotulo unificado');
+  assert.equal(m.get('Grupo WhatsApp').aplicacoes, 3);
+  assert.ok(
+    !m.has('grupo-whats') && !m.has('grupowhats') && !m.has('grup'),
+    'nenhuma grafia crua pode sobrar como chave propria',
+  );
 });
