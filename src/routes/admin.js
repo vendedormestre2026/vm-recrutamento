@@ -2842,6 +2842,39 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
       quando a <b>Entrevista automática (geral)</b> está ligada em Configurações.</p>`;
 }
 
+// Mini-formulario para corrigir o slug de uma vaga ja criada (POST /vagas/:id/slug,
+// Incremento 1). Separado do form geral da vaga de proposito — mesma razao de
+// atualizarSlugVaga ser funcao a parte em sqlite.js: e uma acao distinta, com botao e
+// confirmacao proprios, nao mais um campo do formulario grande. O confirm() usa aspas
+// curvas (“ ”) em vez de aspas retas dentro da mensagem para nao colidir com as aspas
+// simples que ja delimitam a string do onsubmit (mesmo padrao de confirm() do arquivo,
+// ex. blocoArquivarRestaurar).
+function blocoEditarSlug(vaga, { erroSlug = '' } = {}) {
+  const linkAtual = `${config.baseUrl}/vaga/${vaga.slug}`;
+  const erro =
+    erroSlug === 'duplicado'
+      ? '<p class="aviso-alerta">Esse link já está em uso por outra vaga — escolha outro.</p>'
+      : erroSlug === 'vazio'
+        ? '<p class="aviso-alerta">O link não pode ficar vazio.</p>'
+        : '';
+  return `
+    <section class="rel-sec">
+      <h2>Link da vaga (slug)</h2>
+      <p style="color:var(--cinza);font-size:.85rem;margin:0 0 .6rem;">
+        Link público atual: <b>${escapeHtml(linkAtual)}</b></p>
+      ${erro}
+      <form method="POST" action="/admin/vagas/${vaga.id}/slug"
+            onsubmit="return confirm('Candidatos que já receberam o link atual por e-mail ou WhatsApp vão ver “página não encontrada” depois dessa mudança. Continuar?')"
+            style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap;">
+        <label class="campo" style="flex:1;min-width:16rem;margin:0;">
+          <span>Slug</span>
+          <input type="text" name="slug" value="${escapeHtml(vaga.slug)}">
+        </label>
+        <button type="submit" class="btn btn--ghost">Salvar link</button>
+      </form>
+    </section>`;
+}
+
 // Bloco "Links por etapa": URLs ABSOLUTAS (config.baseUrl + caminho) de cada etapa
 // do funil desta vaga, para parametrizar no GTM. Cada uma com botao "Copiar". A de
 // "Confirmacao (Lead)" e a pagina que carrega logo apos o formulario e marca o LEAD
@@ -3122,6 +3155,9 @@ router.get('/vagas/:id', (req, res) => {
          de vídeo foi mantido como estava. Os demais campos foram salvos. Cole a URL completa
          do vídeo (não listado) ou apenas o ID.</p>`
       : '';
+  // Slug (Incremento 1/2): erroSlug='vazio'|'duplicado' renderiza dentro do proprio bloco
+  // (blocoEditarSlug); salvoSlug=1 usa a mesma mensagem de sucesso do form geral.
+  const salvoSlug = req.query.salvoSlug === '1' ? '<p class="aviso-ok">Link salvo.</p>' : '';
 
   const conteudo = `
     <p><a class="btn btn--ghost" href="/admin/vagas">← Voltar às vagas</a></p>
@@ -3130,6 +3166,8 @@ router.get('/vagas/:id', (req, res) => {
     ${avisoVideo}
     ${avisoRoteiroFaltando(vaga)}
     ${blocoLinksEtapa(vaga)}
+    ${salvoSlug}
+    ${blocoEditarSlug(vaga, { erroSlug: req.query.erroSlug })}
     <form method="POST" action="/admin/vagas/${vaga.id}">
       ${camposVagaHtml(vaga, { perfilEditavel: false })}
       <button type="submit" class="btn">Salvar alterações</button>
