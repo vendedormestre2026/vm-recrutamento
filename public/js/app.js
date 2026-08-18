@@ -16,6 +16,18 @@
 })();
 
 // ── Tela de Aplicacao ──
+//
+// ── QA MANUAL do campo de telefone (erroTelefoneLocal) ──
+// Sem jsdom no projeto, node:test nao executa este arquivo (ele espera `document`). Cenarios
+// para checar a mao no navegador ao tocar este trecho:
+//   1. Campo de digitos com "+55 11985761491"       -> bloqueia, "Não inclua o código do país..."
+//   2. Campo de digitos com "0055 11 985761491"     -> bloqueia, mesma mensagem
+//   3. Campo de digitos com "11985761491" (11 dig.) -> passa
+//   4. Campo de digitos com "2169912185" (10 dig.)  -> passa (formato de fixo, sem opiniao
+//      sobre o primeiro digito — ver nota do relatorio de diagnostico sobre o caso Samara)
+//   5. Campo de digitos com "998765" (poucos dig.)  -> bloqueia, "Telefone inválido..."
+//   6. Campo de digitos com "5511985761491" (DDD 55 legitimo, SEM + nem 00) -> passa (nao e
+//      tratado como DDI duplicado — DDD 55 e real, ver comentario de erroTelefoneLocal)
 (function () {
   const form = document.getElementById('form-aplicacao');
   if (!form) return;
@@ -78,6 +90,34 @@
     }
   });
 
+  // Telefone: o <select name="ddi"> ja contribui "+55" (ou outro codigo) separado — este
+  // campo e SO digitos locais (DDD + numero). Um "+" no inicio so pode ser o candidato
+  // digitando o codigo do pais de novo (caso real: candidata cujo cadastro chegou como
+  // "+55 +5511985761491", DDI duplicado, e a sequencia de WhatsApp nunca chegou por causa
+  // disso). "0055" e o mesmo problema, so que no formato de discagem internacional.
+  //
+  // Bare "55" no inicio (sem "+" nem "00") NAO e tratado como DDI duplicado aqui de
+  // proposito: DDD 55 e real (Santa Maria/Chapeco, RS/SC), e "55" sozinho no comeco e
+  // indistinguivel de um DDD legitimo so pelo texto. Um "55" que na verdade for DDI
+  // duplicado ainda cai na checagem de contagem de digitos abaixo, porque o numero
+  // resultante fica fora da faixa [10,11].
+  function erroTelefoneLocal(valorBruto) {
+    const v = String(valorBruto || '').trim();
+    if (!v) return null; // campo vazio: quem cobre isso e a checagem de obrigatoriedade
+    if (v.startsWith('+')) {
+      return 'Não inclua o código do país aqui — ele já está selecionado acima. Digite só o DDD e o número.';
+    }
+    const digitos = v.replace(/\D/g, '');
+    if (digitos.startsWith('0055')) {
+      return 'Não inclua o código do país aqui — ele já está selecionado acima. Digite só o DDD e o número.';
+    }
+    // DDD (2) + numero local (8 fixo ou 9 celular) = 10 ou 11 digitos, sem o DDI.
+    if (digitos.length < 10 || digitos.length > 11) {
+      return 'Telefone inválido. Digite o DDD e o número (10 ou 11 dígitos), sem o código do país.';
+    }
+    return null;
+  }
+
   // Validacao basica do passo 1 (conveniencia; o servidor revalida)
   function validarPasso1() {
     const obrig = [
@@ -97,6 +137,13 @@
     const email = form.querySelector('[name="email"]').value.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       mostrarErro('Informe um e-mail válido.');
+      return false;
+    }
+    const campoTelefone = form.querySelector('[name="telefone"]');
+    const erroTelefone = erroTelefoneLocal(campoTelefone.value);
+    if (erroTelefone) {
+      mostrarErro(erroTelefone);
+      campoTelefone.focus();
       return false;
     }
     if (!inputArquivo.files[0]) {
