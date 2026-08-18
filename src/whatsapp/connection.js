@@ -258,6 +258,52 @@ async function enviarTexto(telefoneNormalizado, texto, deps = {}) {
   return socket.sendMessage(`${digitos}@s.whatsapp.net`, { text: String(texto) });
 }
 
+// Checagem BEST-EFFORT de existencia real no WhatsApp, via onWhatsApp() do Baileys.
+//
+// ── POR QUE BEST-EFFORT, e nao trava rigida ──
+// enviarTexto() (acima) nunca validou se o destino existe — so monta o JID e manda. Isso
+// deixa passar numero corrompido/incompleto sem erro nenhum (ver o diagnostico dos casos
+// Samara/Juliana/Maria). onWhatsApp() resolve isso, mas depende de socket CONECTADO — se a
+// checagem travasse o envio toda vez que o socket estiver instavel, um problema de rede
+// vira motivo pra marcar candidato legitimo como falha. Por isso: sem socket, chamada que
+// lanca, ou resposta vazia -> devolve "nao verificado" (null), e quem chama decide tratar
+// isso como "tenta enviar assim mesmo" (mesmo comportamento de hoje, sem checagem nenhuma).
+//
+// UMA chamada de rede so, independente de quantos numeros forem passados: o Baileys monta
+// uma USyncQuery unica (ver node_modules/@whiskeysockets/baileys/lib/Socket/socket.js) — por
+// isso onWhatsAppLote existe separado: a campanha em massa chama ELE uma vez pra toda a
+// leva, em vez de uma vez por destinatario.
+async function onWhatsAppLote(telefonesNormalizados, deps = {}) {
+  const lista = Array.isArray(telefonesNormalizados) ? telefonesNormalizados : [telefonesNormalizados];
+  const digitos = lista.map((t) => String(t || '').replace(/\D/g, '')).filter(Boolean);
+  const resultado = new Map(digitos.map((d) => [d, null]));
+
+  const socket = deps.socket || estado.socket;
+  if (!socket || typeof socket.onWhatsApp !== 'function') return resultado; // sem socket: tudo "nao verificado"
+  if (estado.status !== 'conectado' && !deps.socket) return resultado;
+  if (!digitos.length) return resultado;
+
+  try {
+    const resposta = await socket.onWhatsApp(...digitos.map((d) => `${d}@s.whatsapp.net`));
+    for (const item of resposta || []) {
+      const d = String(item.jid || '').split('@')[0].replace(/\D/g, '');
+      if (resultado.has(d)) resultado.set(d, Boolean(item.exists));
+    }
+  } catch (err) {
+    console.warn(`[wa-conn] onWhatsApp falhou (best-effort, nao bloqueia envio): ${err.message}`);
+    // resultado ja comeca todo null — mantem "nao verificado" pra todo mundo da leva.
+  }
+  return resultado;
+}
+
+// Variante de UM numero so, pro caminho de envio individual (WA1/WA2). Devolve
+// { existe: true|false|null } — null e "nao verificado", nunca "nao existe".
+async function verificarExisteWhatsapp(telefoneNormalizado, deps = {}) {
+  const mapa = await onWhatsAppLote([telefoneNormalizado], deps);
+  const digitos = String(telefoneNormalizado || '').replace(/\D/g, '');
+  return { existe: mapa.has(digitos) ? mapa.get(digitos) : null };
+}
+
 // Fechamento deliberado. Marca no Set ANTES de fechar, para o listener nao reconectar.
 async function desconectar() {
   fechando.add(INSTANCIA_PADRAO);
@@ -293,6 +339,8 @@ module.exports = {
   conectar,
   desconectar,
   enviarTexto,
+  verificarExisteWhatsapp,
+  onWhatsAppLote,
   status,
   qrAtual,
   limparQr,

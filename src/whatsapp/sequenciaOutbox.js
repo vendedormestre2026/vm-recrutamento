@@ -225,6 +225,7 @@ async function processarCicloSequencia(deps = {}) {
 
   const mock = deps.mock === undefined ? modoMock() : deps.mock;
   const enviar = deps.enviarTexto || conexao.enviarTexto;
+  const verificarExiste = deps.verificarExiste || conexao.verificarExisteWhatsapp;
   const dormir = deps.dormir || dormirPadrao;
   const intervalo = deps.intervaloMs === undefined ? intervaloMs() : deps.intervaloMs;
   const teto = deps.maxTentativas || maxTentativas();
@@ -274,21 +275,32 @@ async function processarCicloSequencia(deps = {}) {
       db.marcarSequenciaWhatsappEnviada(linha.id, deps.agora || null);
       resumo.enviados += 1;
     } else {
-      try {
-        await enviar(telefone, texto);
-        db.marcarSequenciaWhatsappEnviada(linha.id, deps.agora || null);
-        resumo.enviados += 1;
-        console.log(`[wa-seq] ${linha.etapa} enviado para ${mascarar(telefone)} (application ${linha.application_id}).`);
-      } catch (err) {
-        const tentativaAtual = (Number(linha.tentativas) || 0) + 1;
-        if (tentativaAtual >= teto) {
-          db.marcarSequenciaWhatsappFalha(linha.id, err.message);
-          resumo.falhas += 1;
-          console.error(`[wa-seq] ${linha.etapa} da application ${linha.application_id}: falha definitiva apos ${tentativaAtual} tentativa(s): ${err.message}`);
-        } else {
-          db.registrarTentativaSequenciaWhatsapp(linha.id, err.message);
-          resumo.retentar += 1;
-          console.warn(`[wa-seq] ${linha.etapa} da application ${linha.application_id}: tentativa ${tentativaAtual}/${teto} falhou (${err.message}); volta no proximo ciclo.`);
+      // Checagem BEST-EFFORT de existencia real (Incremento 4): so BLOQUEIA quando o
+      // Baileys responde explicitamente "nao existe" — silencio/erro/sem socket mantem o
+      // comportamento de sempre (tenta enviar), porque instabilidade de conexao nao pode
+      // virar motivo pra marcar candidato legitimo como falha. Ver connection.js.
+      const { existe } = await verificarExiste(telefone);
+      if (existe === false) {
+        db.marcarSequenciaWhatsappFalha(linha.id, 'numero nao possui WhatsApp ativo');
+        resumo.falhas += 1;
+        console.warn(`[wa-seq] ${linha.etapa} da application ${linha.application_id}: numero sem WhatsApp (onWhatsApp); marcado como falha.`);
+      } else {
+        try {
+          await enviar(telefone, texto);
+          db.marcarSequenciaWhatsappEnviada(linha.id, deps.agora || null);
+          resumo.enviados += 1;
+          console.log(`[wa-seq] ${linha.etapa} enviado para ${mascarar(telefone)} (application ${linha.application_id}).`);
+        } catch (err) {
+          const tentativaAtual = (Number(linha.tentativas) || 0) + 1;
+          if (tentativaAtual >= teto) {
+            db.marcarSequenciaWhatsappFalha(linha.id, err.message);
+            resumo.falhas += 1;
+            console.error(`[wa-seq] ${linha.etapa} da application ${linha.application_id}: falha definitiva apos ${tentativaAtual} tentativa(s): ${err.message}`);
+          } else {
+            db.registrarTentativaSequenciaWhatsapp(linha.id, err.message);
+            resumo.retentar += 1;
+            console.warn(`[wa-seq] ${linha.etapa} da application ${linha.application_id}: tentativa ${tentativaAtual}/${teto} falhou (${err.message}); volta no proximo ciclo.`);
+          }
         }
       }
     }

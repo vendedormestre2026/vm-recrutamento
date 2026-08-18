@@ -300,3 +300,64 @@ test('shouldReconnect e isRestartRequired isolados', () => {
   assert.equal(conn.isRestartRequired(desconexao(515)), true);
   assert.equal(conn.isRestartRequired(desconexao(401)), false);
 });
+
+// ══════════════════ onWhatsApp — existencia real (Incremento 4) ══════════════════
+//
+// Mesmo padrao de enviarTexto: `deps.socket` injetado ignora o estado.status do modulo
+// (o mesmo `!deps.socket` que ja guarda enviarTexto), pra nao precisar simular conexao().
+
+test('verificarExisteWhatsapp: socket confirma que existe', async () => {
+  const socket = { onWhatsApp: async (...jids) => jids.map((jid) => ({ jid, exists: true })) };
+  const r = await conn.verificarExisteWhatsapp('5511985761491', { socket });
+  assert.deepEqual(r, { existe: true });
+});
+
+test('verificarExisteWhatsapp: socket confirma que NAO existe', async () => {
+  const socket = { onWhatsApp: async (...jids) => jids.map((jid) => ({ jid, exists: false })) };
+  const r = await conn.verificarExisteWhatsapp('5511985761491', { socket });
+  assert.deepEqual(r, { existe: false });
+});
+
+test('verificarExisteWhatsapp: erro do socket -> best-effort, existe:null (nao lanca)', async () => {
+  const socket = { onWhatsApp: async () => { throw new Error('timeout de rede'); } };
+  await semRuido(async () => {
+    const r = await conn.verificarExisteWhatsapp('5511985761491', { socket });
+    assert.deepEqual(r, { existe: null });
+  });
+});
+
+test('verificarExisteWhatsapp: sem socket -> existe:null, nunca lanca', async () => {
+  const r = await conn.verificarExisteWhatsapp('5511985761491', { socket: null });
+  assert.deepEqual(r, { existe: null });
+});
+
+test('verificarExisteWhatsapp: telefone vazio -> existe:null, sem chamar o socket', async () => {
+  let chamado = false;
+  const socket = { onWhatsApp: async () => { chamado = true; return []; } };
+  const r = await conn.verificarExisteWhatsapp('', { socket });
+  assert.deepEqual(r, { existe: null });
+  assert.equal(chamado, false);
+});
+
+test('onWhatsAppLote: UMA chamada de rede para varios numeros, cada um com seu resultado', async () => {
+  let chamadas = 0;
+  const socket = {
+    onWhatsApp: async (...jids) => {
+      chamadas += 1;
+      return jids.map((jid) => ({ jid, exists: jid.startsWith('5511') }));
+    },
+  };
+  const mapa = await conn.onWhatsAppLote(['5511985761491', '5547999582500'], { socket });
+  assert.equal(chamadas, 1, 'lote tem que ser UMA chamada, nao uma por numero');
+  assert.equal(mapa.get('5511985761491'), true);
+  assert.equal(mapa.get('5547999582500'), false);
+});
+
+test('onWhatsAppLote: erro do socket deixa TODOS os numeros da leva como "nao verificado"', async () => {
+  const socket = { onWhatsApp: async () => { throw new Error('timeout'); } };
+  await semRuido(async () => {
+    const mapa = await conn.onWhatsAppLote(['5511985761491', '5547999582500'], { socket });
+    assert.equal(mapa.get('5511985761491'), null);
+    assert.equal(mapa.get('5547999582500'), null);
+  });
+});

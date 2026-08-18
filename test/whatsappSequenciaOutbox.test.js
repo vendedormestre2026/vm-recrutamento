@@ -458,6 +458,63 @@ test('o texto enviado e o da ETAPA certa', async () => {
   assert.match(wa2.texto, /Vendedor Externo na Labor Seg/);
 });
 
+// ══════════════════ onWhatsApp — checagem de existencia real (Incremento 4) ══════════════════
+
+test('onWhatsApp diz que EXISTE: segue o fluxo normal, envia', async () => {
+  zerar();
+  ligarTudo();
+  const app = criarApplication();
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+
+  const envio = envioDuble();
+  const verificarExiste = async () => ({ existe: true });
+  const { r } = await comLogs(() =>
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, verificarExiste })),
+  );
+
+  assert.equal(r.enviados, 2);
+  assert.equal(r.falhas, 0);
+  assert.equal(envio.chamadas.length, 2);
+});
+
+test('onWhatsApp diz que NAO EXISTE: marca falha com mensagem clara, NAO tenta enviar', async () => {
+  zerar();
+  ligarTudo();
+  const app = criarApplication();
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+
+  const envio = envioDuble();
+  const verificarExiste = async () => ({ existe: false });
+  const { r } = await comLogs(() =>
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, verificarExiste })),
+  );
+
+  assert.equal(r.falhas, 2, 'as duas etapas devem falhar — nenhuma tem WhatsApp de verdade');
+  assert.equal(r.enviados, 0);
+  assert.equal(envio.chamadas.length, 0, 'enviarTexto nao pode ter sido chamado');
+  const linhas = fila(app.id);
+  assert.equal(linhas.every((l) => l.status === 'falha' && /nao possui WhatsApp/.test(l.erro)), true);
+});
+
+test('onWhatsApp INDISPONIVEL (socket ausente/erro -> existe:null): NAO bloqueia, comportamento de hoje', async () => {
+  // best-effort: instabilidade de conexao na checagem de existencia nao pode ser motivo pra
+  // marcar candidato legitimo como falha. null e "nao verificado", nao "nao existe".
+  zerar();
+  ligarTudo();
+  const app = criarApplication();
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+
+  const envio = envioDuble();
+  const verificarExiste = async () => ({ existe: null });
+  const { r } = await comLogs(() =>
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, verificarExiste })),
+  );
+
+  assert.equal(r.enviados, 2, 'nao verificado tem que tentar enviar, igual antes desta feature existir');
+  assert.equal(r.falhas, 0);
+  assert.equal(envio.chamadas.length, 2);
+});
+
 test('fila vazia nao faz barulho nem escreve nada', async () => {
   zerar();
   ligarTudo();

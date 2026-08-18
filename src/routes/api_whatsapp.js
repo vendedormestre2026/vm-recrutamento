@@ -94,7 +94,7 @@ router.use(autenticarServico);
 // uma queda do n8n no meio do fluxo deixaria gente presa num estado que ninguem consegue
 // destravar pela API. O preco e que dois fluxos simultaneos sobre a mesma praca mandariam
 // duas vezes; a trava contra isso e operacional (rodar um por vez), nao de codigo.
-router.get('/disparos/pendentes', (req, res) => {
+router.get('/disparos/pendentes', async (req, res) => {
   const cidade = req.query.cidade;
   if (!cidade) {
     return res.status(400).json({
@@ -105,7 +105,7 @@ router.get('/disparos/pendentes', (req, res) => {
 
   let pendentes;
   try {
-    pendentes = listarPendentesPorCidade(cidade);
+    pendentes = await listarPendentesPorCidade(cidade);
   } catch (err) {
     // O motor LANCA em cidade invalida de proposito (ver lib/publicoDisparoWhatsapp). Aqui
     // isso vira 400 com a lista de opcoes: quem esta configurando o n8n descobre o valor

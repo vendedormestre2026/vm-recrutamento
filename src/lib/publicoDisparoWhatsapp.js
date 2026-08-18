@@ -31,6 +31,7 @@
 // por caminhos que nao se parecem, e junta-las em SQL esconderia isso atras de um COALESCE.
 
 const dbPadrao = require('../db');
+const conexaoPadrao = require('../whatsapp/connection');
 const { normalizarCidade } = require('./cidades');
 const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('./whatsapp');
 
@@ -93,8 +94,9 @@ function telefoneUtilizavel(telefone, contexto) {
 // ou "Blumenau" faria um disparo vazio parecer um disparo concluido, e ninguem investiga um
 // zero que parece legitimo. O erro tem que ser barulhento no unico momento em que da para
 // consertar — antes de rodar.
-function listarPendentesPorCidade(cidade, deps = {}) {
+async function listarPendentesPorCidade(cidade, deps = {}) {
   const db = deps.db || dbPadrao;
+  const onWhatsAppLote = deps.onWhatsAppLote || conexaoPadrao.onWhatsAppLote;
 
   const praca = normalizarCidade(cidade);
   if (!praca) {
@@ -165,8 +167,17 @@ function listarPendentesPorCidade(cidade, deps = {}) {
   // telefone (reprocessar e decisao humana) e um convite de outra praca ja entregue nao
   // deve virar um segundo convite.
   const jaEnviados = db.listarTelefonesDisparados();
+  const restantes = [...porTelefone.values()].filter((p) => !jaEnviados.has(p.telefone));
 
-  return [...porTelefone.values()].filter((p) => !jaEnviados.has(p.telefone));
+  // ── 4. EXISTENCIA REAL (Incremento 4) ──
+  // UMA chamada de rede pra toda a leva (onWhatsAppLote monta uma USyncQuery so), no mesmo
+  // espirito FAIL CLOSED de telefoneUtilizavel: quem o Baileys confirma explicitamente NAO
+  // ter WhatsApp sai da lista antes de chegar no n8n. "Nao verificado" (sem socket, erro,
+  // instabilidade) NAO exclui — e o mesmo criterio de tolerancia do envio individual
+  // (whatsapp/sequenciaOutbox.js): checagem de existencia e best-effort, nao trava rigida.
+  if (!restantes.length) return restantes;
+  const existencia = await onWhatsAppLote(restantes.map((p) => p.telefone));
+  return restantes.filter((p) => existencia.get(p.telefone) !== false);
 }
 
 module.exports = {

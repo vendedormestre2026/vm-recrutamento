@@ -1119,7 +1119,7 @@ test('o caso EXATO da auditoria: DDI duplicado fica fora dos DOIS tipos de campa
   }
 });
 
-test('PARIDADE: os dois motores concordam sobre o que e utilizavel', () => {
+test('PARIDADE: os dois motores concordam sobre o que e utilizavel', async () => {
   // Este teste nao existe para a divergencia que ja foi corrigida — existe para a PROXIMA.
   // Se alguem mexer na guarda de um motor e nao do outro, ele quebra aqui.
   zerarSeg();
@@ -1132,10 +1132,12 @@ test('PARIDADE: os dois motores concordam sobre o que e utilizavel', () => {
   }
 
   // Motor NOVO (campanha Meta).
-  const doNovo = new Set(semRuido(() => publico.listarPublicoConviteGrupo({})).r.itens.map((i) => i.telefone));
-  // Motor ANTIGO (disparo pontual, consumido pelo n8n).
+  const doNovo = new Set((await semRuido(() => publico.listarPublicoConviteGrupo({}))).r.itens.map((i) => i.telefone));
+  // Motor ANTIGO (disparo pontual, consumido pelo n8n). Assincrono desde o Incremento 4
+  // (checagem de existencia real via onWhatsAppLote) — sem socket em teste, tudo "nao
+  // verificado" (null), que NAO exclui; o resultado observado e o mesmo de antes.
   const doAntigo = new Set(
-    semRuido(() => disparoPontual.listarPendentesPorCidade('Joinville')).r.map((i) => i.telefone),
+    (await semRuido(() => disparoPontual.listarPendentesPorCidade('Joinville'))).r.map((i) => i.telefone),
   );
 
   // Concordam entre si...
