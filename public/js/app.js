@@ -15,6 +15,24 @@
   };
 })();
 
+// ── Tipos de curriculo aceitos no upload — compartilhado pelos DOIS formularios abaixo ──
+// (Tela de Aplicacao e Banco de Curriculos). Espelha TIPOS_CURRICULO_ACEITOS de
+// lib/curriculo.js no servidor, mas e uma SEGUNDA copia deliberada: nao ha import entre
+// browser e Node, e esta checagem e so conveniencia — quem decide de verdade e o
+// fileFilter do servidor. Mimetype OU extensao (nao os dois juntos, diferente do servidor):
+// o navegador as vezes nao preenche `file.type` corretamente (depende do SO/app que gerou
+// o arquivo), e recusar por isso seria pior que deixar passar e o servidor revalidar.
+function tipoCurriculoAceito(file) {
+  const extensaoOk = /\.(pdf|jpe?g|png|docx)$/i.test(file.name);
+  const mimetypeOk = [
+    'application/pdf',
+    'image/jpeg',
+    'image/png',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ].includes(file.type);
+  return extensaoOk || mimetypeOk;
+}
+
 // ── Tela de Aplicacao ──
 //
 // ── QA MANUAL do campo de telefone (erroTelefoneLocal) ──
@@ -28,6 +46,18 @@
 //   5. Campo de digitos com "998765" (poucos dig.)  -> bloqueia, "Telefone inválido..."
 //   6. Campo de digitos com "5511985761491" (DDD 55 legitimo, SEM + nem 00) -> passa (nao e
 //      tratado como DDI duplicado — DDD 55 e real, ver comentario de erroTelefoneLocal)
+//
+// ── QA MANUAL do upload de curriculo (tipoCurriculoAceito) — mesma limitacao de jsdom ──
+// Repetir nos DOIS formularios (Tela de Aplicacao e Banco de Curriculos, /bancodecurriculos):
+//   1. Selecionar um .pdf real                    -> aceito, preview mostra o nome
+//   2. Selecionar um .jpg e um .png reais         -> aceitos
+//   3. Selecionar um .docx real                   -> aceito
+//   4. Selecionar um .txt ou .doc (Word 97-2003)  -> bloqueia, "Envie o currículo em PDF,
+//      JPG, PNG ou DOCX."
+//   5. Arrastar-e-soltar (drag&drop) um tipo aceito e um tipo rejeitado -> mesmo
+//      comportamento do clique (o listener de 'drop' chama a mesma validarArquivo)
+//   6. Arquivo aceito porem maior que 10MB         -> bloqueia, "O currículo deve ter no
+//      máximo 10 MB." (teto NAO mudou pra nenhum tipo — decisao de produto)
 (function () {
   const form = document.getElementById('form-aplicacao');
   if (!form) return;
@@ -40,16 +70,15 @@
     if (msg) areaErro.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  // Upload de PDF: clique (label nativo) + arrastar/soltar + validacao
+  // Upload de curriculo (PDF/JPG/PNG/DOCX): clique (label nativo) + arrastar/soltar + validacao
   const upload = form.querySelector('[data-upload]');
   const inputArquivo = form.querySelector('input[name="curriculo"]');
   const textoUpload = form.querySelector('[data-upload-texto]');
 
   function validarArquivo(file) {
     if (!file) return true;
-    const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-    if (!ehPdf) {
-      mostrarErro('Envie o currículo em formato PDF.');
+    if (!tipoCurriculoAceito(file)) {
+      mostrarErro('Envie o currículo em PDF, JPG, PNG ou DOCX.');
       return false;
     }
     if (file.size > MAX_PDF) {
@@ -147,7 +176,7 @@
       return false;
     }
     if (!inputArquivo.files[0]) {
-      mostrarErro('Anexe seu currículo em PDF.');
+      mostrarErro('Anexe seu currículo (PDF, JPG, PNG ou DOCX).');
       return false;
     }
     if (!validarArquivo(inputArquivo.files[0])) return false;
@@ -207,16 +236,15 @@
     if (msg) areaErro.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  // Upload de PDF: clique (label nativo) + arrastar/soltar + validacao
+  // Upload de curriculo (PDF/JPG/PNG/DOCX): clique (label nativo) + arrastar/soltar + validacao
   const upload = form.querySelector('[data-upload]');
   const inputArquivo = form.querySelector('input[name="curriculo"]');
   const textoUpload = form.querySelector('[data-upload-texto]');
 
   function validarArquivo(file) {
     if (!file) return true;
-    const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-    if (!ehPdf) {
-      mostrarErro('Envie o currículo em formato PDF.');
+    if (!tipoCurriculoAceito(file)) {
+      mostrarErro('Envie o currículo em PDF, JPG, PNG ou DOCX.');
       return false;
     }
     if (file.size > MAX_PDF) {
@@ -279,7 +307,7 @@
       return false;
     }
     if (!inputArquivo.files[0]) {
-      mostrarErro('Anexe seu currículo em PDF.');
+      mostrarErro('Anexe seu currículo (PDF, JPG, PNG ou DOCX).');
       return false;
     }
     if (!validarArquivo(inputArquivo.files[0])) return false;

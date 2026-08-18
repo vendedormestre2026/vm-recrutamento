@@ -68,12 +68,12 @@ function formularioBancoCurriculos() {
         <input type="url" name="linkedin_url" placeholder="https://linkedin.com/in/...">
       </label>
 
-      <div class="vm-campo">Currículo (PDF)
+      <div class="vm-campo">Currículo
         <label class="vm-upload" data-upload>
-          <input type="file" name="curriculo" accept="application/pdf,.pdf" hidden>
+          <input type="file" name="curriculo" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" hidden>
           <span class="vm-upload__icone" aria-hidden="true">⬆</span>
-          <span class="vm-upload__texto" data-upload-texto>Clique para enviar ou arraste seu PDF aqui</span>
-          <span class="vm-upload__dica">Somente .pdf · até 10 MB</span>
+          <span class="vm-upload__texto" data-upload-texto>Clique para enviar ou arraste seu currículo aqui</span>
+          <span class="vm-upload__dica">PDF, JPG, PNG ou DOCX · até 10 MB</span>
         </label>
       </div>
 
