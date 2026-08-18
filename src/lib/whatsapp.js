@@ -34,6 +34,51 @@ function normalizarTelefoneWhatsapp(telefone, { ddiPadrao = DDI_PADRAO } = {}) {
   return digitos;
 }
 
+// DDDs validos segundo a ANATEL (67 codigos). Fora desta lista, um numero pode ate ter o
+// tamanho certo e ainda nao corresponder a nenhuma area real do Brasil — ex.: "20", "23",
+// "36", "60" nunca foram atribuidos.
+const DDDS_VALIDOS = new Set([
+  11, 12, 13, 14, 15, 16, 17, 18, 19,
+  21, 22, 24,
+  27, 28,
+  31, 32, 33, 34, 35, 37, 38,
+  41, 42, 43, 44, 45, 46, 47, 48, 49,
+  51, 53, 54, 55,
+  61, 62, 63, 64, 65, 66, 67, 68, 69,
+  71, 73, 74, 75, 77, 79,
+  81, 82, 83, 84, 85, 86, 87, 88, 89,
+  91, 92, 93, 94, 95, 96, 97, 98, 99,
+]);
+
+// Validacao ESTRITA de telefone BR: DDI 55 + DDD real (tabela ANATEL) + numero local no
+// formato certo (fixo: 8 digitos comecando em 2-5; celular: 9 digitos comecando em 9 — o
+// "nono digito" e obrigatorio desde 2016, entao um celular sem ele nao existe). Mais
+// rigorosa que normalizarTelefoneWhatsapp, que so checa o teto [10,15] de digitos sem saber
+// nada sobre DDD real ou o formato do numero local.
+//
+// Devolve os digitos normalizados (com DDI, sem '+') se valido; null caso contrario.
+//
+// DECISAO DE PRODUTO: SO aceita BR. Um numero internacional correto (ex.: Portugal +351,
+// caso real ja documentado em applications id 741) e REJEITADO aqui de proposito — nao e
+// bug desta funcao, e o contrato deste formulario.
+function validarTelefoneBrEstrito(telefone) {
+  const normalizado = normalizarTelefoneWhatsapp(telefone);
+  if (!normalizado) return null;
+
+  const m = normalizado.match(/^55(\d{2})(\d{8,9})$/);
+  if (!m) return null;
+
+  const ddd = Number(m[1]);
+  if (!DDDS_VALIDOS.has(ddd)) return null;
+
+  const local = m[2];
+  const ehFixoValido = local.length === 8 && /^[2-5]/.test(local);
+  const ehCelularValido = local.length === 9 && local.startsWith('9');
+  if (!ehFixoValido && !ehCelularValido) return null;
+
+  return normalizado;
+}
+
 // Normaliza um telefone que pode JA VIR NORMALIZADO (so digitos, com DDI, sem '+').
 //
 // ── O BUG QUE ESTA FUNCAO EXISTE PARA IMPEDIR ──
@@ -258,6 +303,7 @@ function mensagemNovaCandidatura({ nome, email, telefone, vaga, empresa } = {}) 
 module.exports = {
   normalizarTelefoneWhatsapp,
   normalizarTelefoneRecebido,
+  validarTelefoneBrEstrito,
   montarLinkWhatsapp,
   mensagemWhatsappCandidato,
   // candidato -> recrutador

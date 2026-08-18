@@ -14,6 +14,7 @@ const { config } = require('../config');
 const db = require('../db');
 const session = require('../lib/session');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
+const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
 const { extrairTextoPdf } = require('../lib/curriculo');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
@@ -192,7 +193,21 @@ router.post('/aplicacao', (req, res) => {
           .json({ ok: false, erro: 'Vaga não encontrada para esta candidatura.' });
       }
 
-      const telefone = `${ddi} ${telefoneNum}`.trim();
+      // Validacao ESTRITA de telefone (DDI 55 + DDD real + formato de numero local valido).
+      // Grava-se o valor JA NORMALIZADO (so digitos, com '+'), e nao o cru concatenado por
+      // string — e o que elimina a divergencia entre o que fica em applications.telefone e o
+      // que os subsistemas downstream (sequencia WA1/WA2, campanha em massa) esperam.
+      // Decisao de produto: so aceita numero brasileiro; internacional e rejeitado aqui, nao
+      // e bug.
+      const telefoneCru = `${ddi} ${telefoneNum}`.trim();
+      const telefoneNormalizado = validarTelefoneBrEstrito(telefoneCru);
+      if (!telefoneNormalizado) {
+        return res.status(400).json({
+          ok: false,
+          erro: 'Não conseguimos validar esse telefone. Confira o DDD e o número e tente novamente.',
+        });
+      }
+      const telefone = `+${telefoneNormalizado}`;
 
       // Origem do lead (first-touch): le o cookie vm_utm com o helper (JSON dos cinco
       // parametros UTM; retrocompativel com o formato legado de string simples). Ausente
