@@ -178,6 +178,16 @@ function textoDaEtapa(linha) {
   return linha.etapa === 'wa1' ? montarTextoWA1(app, job) : montarTextoWA2(app, job);
 }
 
+// Contrato de ida-e-volta: um telefone so e aceito se, normalizado e depois re-normalizado
+// pelo caminho "ja recebido", produzir exatamente ele mesmo. Mesmo criterio de
+// telefoneUtilizavel em lib/publicoDisparoWhatsapp.js — um numero com DDI duplicado passa no
+// teto de digitos isolado, mas nao sobrevive a essa comparacao.
+function telefoneComRoundTrip(bruto) {
+  const normalizado = normalizarTelefoneWhatsapp(bruto);
+  if (!normalizado) return null;
+  return normalizarTelefoneRecebido(normalizado) === normalizado ? normalizado : null;
+}
+
 function dormirPadrao(ms) {
   if (!(ms > 0)) return Promise.resolve();
   return new Promise((r) => setTimeout(r, ms));
@@ -226,14 +236,27 @@ async function processarCicloSequencia(deps = {}) {
     //     5547999582500 -> 555547999582500
     // que e o numero de outra pessoa, e passa no teto de sanidade sem recusa. E o MESMO bug
     // de round-trip que ja custou um disparo travado no subsistema de campanha por WhatsApp.
-    // O fallback (app_telefone) usa a outra funcao de proposito: ali o valor vem CRU do
-    // formulario, com '+'.
+    //
+    // ── O FALLBACK (app_telefone) PASSA PELO MESMO CONTRATO DE IDA-E-VOLTA ──
+    // Achado real (candidatura da Maria Joao): telefone_e164 chegava aqui como
+    // "555511985761491" (DDI duplicado, 15 digitos) e normalizarTelefoneRecebido REJEITAVA
+    // corretamente (null). Mas o fallback antigo chamava normalizarTelefoneWhatsapp direto
+    // sobre app_telefone CRU ("+55 +5511985761491"), que devolvia o MESMO numero corrompido
+    // — e esse valor, isolado, cabia no teto [10,15] e passava sem recusa. O fallback
+    // ressuscitava exatamente o defeito que a checagem primaria existe para pegar.
+    // Agora o fallback tambem precisa SOBREVIVER a ida e volta (normalizarTelefoneWhatsapp
+    // seguido de normalizarTelefoneRecebido, comparando o resultado com ele mesmo) — mesmo
+    // padrao de telefoneUtilizavel em lib/publicoDisparoWhatsapp.js.
     //
     // Telefone invalido NAO vira retry: tentar de novo nao conserta o numero, e a linha
     // ficaria 'pendente' para sempre, reaparecendo em todo ciclo.
-    const telefone = normalizarTelefoneRecebido(linha.telefone_e164) || normalizarTelefoneWhatsapp(linha.app_telefone);
+    const telefone =
+      normalizarTelefoneRecebido(linha.telefone_e164) || telefoneComRoundTrip(linha.app_telefone);
     if (!telefone) {
-      db.marcarSequenciaWhatsappFalha(linha.id, 'telefone invalido');
+      db.marcarSequenciaWhatsappFalha(
+        linha.id,
+        'telefone invalido (nao sobrevive a ida e volta da normalizacao — possivel DDI duplicado ou dado corrompido)',
+      );
       resumo.falhas += 1;
       console.warn(`[wa-seq] ${linha.etapa} da application ${linha.application_id}: telefone invalido; marcado como falha.`);
       continue;

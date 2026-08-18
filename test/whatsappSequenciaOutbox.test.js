@@ -304,6 +304,51 @@ test('telefone invalido na fila vai DIRETO para falha, sem retry', async () => {
   assert.equal(linhas.every((l) => l.status === 'falha' && /telefone invalido/.test(l.erro)), true);
 });
 
+test('caso real (Maria Joao): DDI duplicado em telefone_e164 E em app_telefone -> falha, NAO enviado', async () => {
+  // Replica o bug de producao: o form gravou applications.telefone = "+55 +5511985761491"
+  // (candidata digitou o DDI de novo, por cima do <select> que ja contribuia "+55"). O
+  // agendamento normalizou isso para telefone_e164 = "555511985761491" (15 digitos, DDI
+  // duplicado) — que passa no teto de digitos isolado, mas nao sobrevive a ida-e-volta.
+  //
+  // ANTES da blindagem, o fallback (app_telefone) ressuscitava o MESMO numero corrompido
+  // direto do dado cru, e a linha saia marcada 'enviado' sem erro nenhum — foi exatamente
+  // o que aconteceu com a Maria. Este teste tem que ficar VERMELHO se o fallback voltar a
+  // aceitar app_telefone sem o round-trip (confirmado manualmente antes deste commit).
+  zerar();
+  ligarTudo();
+  const app = criarApplication();
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+  exec("UPDATE whatsapp_sequencia_envios SET telefone_e164 = '555511985761491' WHERE application_id = ?", app.id);
+  exec("UPDATE applications SET telefone = '+55 +5511985761491' WHERE id = ?", app.id);
+
+  const envio = envioDuble();
+  const { r } = await comLogs(() => outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn })));
+
+  assert.equal(r.falhas, 2, 'as duas etapas (wa1 e wa2) tem que falhar, nenhuma enviada');
+  assert.equal(envio.chamadas.length, 0, 'nenhum envio real pode ter sido tentado');
+  const linhas = fila(app.id);
+  assert.equal(linhas.every((l) => l.status === 'falha'), true, 'nao pode sobrar linha "enviado"');
+  assert.equal(
+    linhas.every((l) => /nao sobrevive a ida e volta|DDI duplicado/.test(l.erro)),
+    true,
+    'o erro precisa apontar pra causa, nao so "invalido" generico',
+  );
+});
+
+test('caminho feliz continua igual: telefone_e164 valido nunca precisa do fallback', async () => {
+  zerar();
+  ligarTudo();
+  const app = criarApplication('+55 47 99958-2500');
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+
+  const envio = envioDuble();
+  const { r } = await comLogs(() => outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn })));
+
+  assert.equal(r.enviados, 2);
+  assert.equal(r.falhas, 0);
+  assert.equal(envio.chamadas.length, 2);
+});
+
 // ══════════════════ Relogio, teto e throttle ══════════════════
 
 test('so processa o que JA VENCEU', async () => {
