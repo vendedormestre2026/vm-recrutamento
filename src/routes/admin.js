@@ -4295,50 +4295,24 @@ router.get('/config', (req, res) => {
               Avisar por e-mail a cada <b>nova candidatura</b>
             </span>
           </label>
-          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-            Desmarcado (padrão), nenhum e-mail é enviado quando alguém se candidata — as
-            candidaturas continuam aparecendo normalmente na lista do painel. O
-            <b>relatório da entrevista</b> é outro e-mail e não é afetado por este ajuste.
-          </p>
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="lembrete_inicio_ativo" value="1"${lembreteInicioAtivo ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
               Enviar <b>lembrete de início</b> de entrevista
             </span>
           </label>
-          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-            Lembra, por e-mail, quem se candidatou e <b>nunca abriu a entrevista</b>, com o link
-            para fazê-la. Sai <b>${lembreteInicio.HORAS_ESPERA_LEMBRETE} h depois</b> da
-            candidatura, <b>uma única vez</b> por candidato. É outro público do follow-up
-            abaixo: aqui é quem <b>nunca começou</b>; lá, quem começou e parou no meio.
-            <b>Mantenha desligado até confirmar o funcionamento.</b>
-          </p>
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="followup_ativo" value="1"${followupAtivo ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
               Enviar <b>follow-up</b> de entrevista não concluída
             </span>
           </label>
-          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-            Ativa os e-mails de follow-up para entrevistas não concluídas.
-            <b>Mantenha desligado até confirmar o funcionamento.</b> Os prazos ficam na seção
-            abaixo; com esta caixa desmarcada, nada é enviado, independentemente deles.
-          </p>
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="email_recusa_ativo" value="1"${emailRecusaAtivo ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
               Enviar <b>e-mail de recusa</b> a quem não avançou
             </span>
           </label>
-          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-            Avisa automaticamente, por e-mail, o candidato cujo relatório recomendou
-            <b>não avançar</b>. A mensagem é padrão e discreta: agradece a participação e diz
-            que seguiremos com outros perfis — <b>não menciona a avaliação, nota ou o uso de
-            IA</b>. O envio só acontece <b>6 h depois</b> do relatório ficar pronto, e é
-            cancelado se você marcar o candidato como <b>Aprovado</b> ou <b>Em análise</b>
-            nesse intervalo. Cada candidato recebe no máximo <b>um</b> e-mail destes.
-            <b>Mantenha desligado até confirmar o funcionamento.</b>
-          </p>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
         </section>
 
@@ -4353,12 +4327,6 @@ router.get('/config', (req, res) => {
               <span>Horas de espera antes do 1º e-mail</span>
               <input type="number" name="followup_horas" min="1" step="1" value="${escapeHtml(String(followupHoras))}">
             </label>
-            <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-              Contadas a partir da <b>última atividade</b> na entrevista (a última resposta
-              dada). O <b>2º e-mail</b> sai <b>24 h após o 1º</b> — prazo fixo, não configurável —
-              e só se a entrevista continuar em aberto. São no máximo <b>2 e-mails</b> por
-              candidato. Valor vazio ou inválido volta ao padrão de ${followup.HORAS_ESPERA_PADRAO} h.
-            </p>
             <button type="submit" class="btn">Salvar</button>
           </form>
         </section>
@@ -4376,36 +4344,12 @@ router.get('/config', (req, res) => {
               Enviar a <b>sequência de WhatsApp</b> (WA1 e WA2) a cada nova candidatura
             </span>
           </label>
-          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-            Interruptor do <b>disparo</b>. Marcado, cada nova candidatura agenda duas
-            mensagens: <b>WA1</b> na hora (informativo, não pede nada) e <b>WA2</b> em
-            ${sequenciaWhatsapp.WA2_ATRASO_MINUTOS} minutos (pede o vídeo de apresentação).
-            Desmarcado (padrão), <b>nada é agendado</b> — não é "agenda e ignora", é não criar
-            a linha, para que ligar depois não dispare mensagens para quem se candidatou
-            semanas antes.
-            <br>
-            Este é <b>um dos dois</b> interruptores: a instância só conecta com
-            <code>WHATSAPP_BAILEYS_ATIVO=true</code> no ambiente, e o envio só sai de verdade
-            com <code>WHATSAPP_SEQUENCIA_MOCK=false</code>. Veja o estado da conexão em
-            <a href="/admin/whatsapp">WhatsApp</a>.
-          </p>
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="campanha_whatsapp_ativa" value="1"${campanhaWaAtiva ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
               Enviar as <b>campanhas por WhatsApp</b> (Meta Cloud API)
             </span>
           </label>
-          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-            Interruptor do envio em massa pela API <b>oficial</b> da Meta — frente separada da
-            sequência WA1/WA2 acima. Desmarcado (padrão), campanhas podem ser criadas e
-            ativadas: os envios ficam <b>pendentes</b> e <b>nada sai</b>.
-            <br>
-            Mesmo marcado, nada sai enquanto <code>META_CAMPANHA_MOCK</code> não for
-            <code>false</code>. Cada mensagem tem <b>custo por conversa</b> e conta para a
-            <b>qualidade do número</b> — excesso de denúncia rebaixa o tier ou desabilita o
-            número na Meta. Configure as praças em
-            <a href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>.
-          </p>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
         </section>
 
@@ -4423,12 +4367,6 @@ router.get('/config', (req, res) => {
               <span>Template da mensagem</span>
               <textarea name="whatsapp_template" rows="4">${escapeHtml(whatsappTemplate)}</textarea>
             </label>
-            <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-              Placeholders disponíveis:
-              <b>{primeiro_nome}</b> · <b>{vaga}</b> · <b>{empresa}</b> · <b>{recrutador}</b>.
-              Deixe o template <b>vazio</b> para usar o padrão. Quando a vaga não tem empresa,
-              o trecho “ da empresa {empresa}” é removido automaticamente.
-            </p>
             <button type="submit" class="btn">Salvar</button>
           </form>
         </section>
@@ -4443,15 +4381,6 @@ router.get('/config', (req, res) => {
               Enviar as <b>campanhas de Promoção de Vagas</b>
             </span>
           </label>
-          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-            Interruptor do envio em massa de <a href="/admin/promocao">Promoção de Vagas</a>.
-            Desmarcado (padrão), campanhas podem ser criadas e até disparadas — elas ficam
-            <b>enfileiradas</b> e <b>nenhum e-mail sai</b>. Marcado, a rotina envia até
-            ${dispararPromocao.ENVIOS_POR_CICLO} e-mails a cada 15 minutos até esvaziar a
-            fila. É o único e-mail do sistema que vai para <b>toda a base</b>, e não apenas
-            para quem está num processo em andamento. <b>Só ligue depois de confirmar
-            remetente, domínio verificado e descadastro funcionando.</b>
-          </p>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
         </section>
 
@@ -4467,16 +4396,6 @@ router.get('/config', (req, res) => {
               <input type="email" name="email_teste_promocao" value="${escapeHtml(emailTeste)}"
                 placeholder="voce@suaempresa.com.br">
             </label>
-            <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-              O e-mail de teste sai pelo <b>mesmo</b> provedor e com os <b>mesmos</b> cabeçalhos
-              de descadastro da campanha real — é para isso que ele serve: conferir formatação,
-              assunto e o link de descadastro antes de disparar para a base. O assunto vai
-              prefixado com <b>${escapeHtml(emailTestePromocao.PREFIXO_ASSUNTO.trim())}</b>, ele
-              <b>não</b> cria campanha nem consome destinatário, e funciona mesmo com
-              <b>Promoção de vagas</b> desligada acima. Só depende de o servidor ter
-              <b>DESCADASTRO_SECRET</b> e as credenciais de SMTP de campanha configuradas.
-              <b>Vazio (padrão) desliga o botão.</b>
-            </p>
             <button type="submit" class="btn">Salvar</button>
           </form>
         </section>
@@ -4491,14 +4410,6 @@ router.get('/config', (req, res) => {
               Apagar <b>áudio de entrevistas</b> quando o disco encher
             </span>
           </label>
-          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-            Libera espaço apagando os arquivos de áudio guardados no servidor. Só age
-            <b>quando o disco passa de ${limpezaAudio.limiarPct()}%</b> de uso, e só toca em
-            entrevistas <b>concluídas</b>, <b>com relatório pronto</b> e cujo <b>vídeo já
-            está salvo no Google Drive</b> — o vídeo continua lá, e a transcrição continua
-            no banco. No máximo ${limpezaAudio.remocoesPorCiclo()} entrevistas por vez, e
-            para assim que o disco volta ao normal. <b>A exclusão é definitiva.</b>
-          </p>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
         </section>
       </div>
