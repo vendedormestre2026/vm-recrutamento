@@ -2280,6 +2280,10 @@ router.get('/api/funil', (req, res) => {
 router.get('/dashboard', (req, res) => {
   const desde = req.query.desde != null ? String(req.query.desde).trim() : '';
   const ate = req.query.ate != null ? String(req.query.ate).trim() : '';
+  // Vaga (Item 2 do ETAPA B "Ajustes no Admin"): id inteiro positivo; vazio = todas.
+  // Mesmo saneamento do filtro de vaga na lista de candidatos (admin.js, GET /admin).
+  const vagaIdNum = Number(req.query.vaga);
+  const vagaId = Number.isInteger(vagaIdNum) && vagaIdNum > 0 ? vagaIdNum : '';
   // Pagina da tabela "Origem dos leads" (5 em 5, db.ORIGENS_POR_PAGINA). Nome distinto de
   // qualquer outro parametro desta tela para nao colidir na querystring do dashboard.
   const paginaOrigemNum = Number(req.query.pagina_origem);
@@ -2291,14 +2295,21 @@ router.get('/dashboard', (req, res) => {
   const temErro = erros.length > 0;
 
   // So consulta com datas validas; com erro, mantem a pagina de pe (form + aviso).
+  // O filtro de vaga (jobId) afeta as DUAS tabelas — funil "Por vaga" e "Origem dos leads".
   const funil = temErro
     ? { vagas: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 } }
-    : db.obterFunilConversao({ desde: desde || undefined, ate: ate || undefined });
+    : db.obterFunilConversao({ desde: desde || undefined, ate: ate || undefined, jobId: vagaId || undefined });
 
-  // Origem dos leads (B2): mesmo recorte de periodo do funil (reusa desde/ate validados).
+  // Origem dos leads (B2): mesmo recorte de periodo e vaga do funil (reusa desde/ate/vagaId
+  // ja validados/saneados acima).
   const origem = temErro
     ? { origens: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 }, totalOrigens: 0 }
-    : db.obterOrigemLeads({ desde: desde || undefined, ate: ate || undefined, pagina: paginaOrigem });
+    : db.obterOrigemLeads({
+        desde: desde || undefined,
+        ate: ate || undefined,
+        jobId: vagaId || undefined,
+        pagina: paginaOrigem,
+      });
   const totalPaginasOrigem = Math.max(1, Math.ceil(origem.totalOrigens / db.ORIGENS_POR_PAGINA));
 
   const t = funil.totais;
@@ -2379,20 +2390,31 @@ router.get('/dashboard', (req, res) => {
     })
     .join('');
 
-  const temFiltro = desde || ate;
+  const temFiltro = desde || ate || vagaId;
   const resumoPeriodo = temErro
     ? ''
     : temFiltro
       ? `Período: ${escapeHtml(desde || '…')} até ${escapeHtml(ate || '…')}`
       : 'Período: todo o histórico';
 
+  // <select> de vaga: mesma fonte e mesmo padrao de opcoesVaga da lista de candidatos
+  // (admin.js, GET /admin) — populado por db.listarVagas(), uma consulta so.
+  const opcoesVagaDashboard = db
+    .listarVagas()
+    .map(
+      (v) =>
+        `<option value="${v.id}"${String(vagaId) === String(v.id) ? ' selected' : ''}>${escapeHtml(v.titulo || `Vaga ${v.id}`)}</option>`,
+    )
+    .join('');
+
   // ── Paginacao da tabela "Origem dos leads" ── mesmo padrao visual da lista de
   // candidatos (admin.js, linkPagina/paginacao), so trocando o parametro de pagina e
-  // preservando desde/ate (os unicos filtros desta tela ate aqui).
+  // preservando desde/ate/vaga (os filtros desta tela).
   const linkPaginaOrigem = (n) => {
     const p = new URLSearchParams();
     if (desde) p.set('desde', desde);
     if (ate) p.set('ate', ate);
+    if (vagaId) p.set('vaga', String(vagaId));
     p.set('pagina_origem', String(n));
     return `/admin/dashboard?${p.toString()}`;
   };
@@ -2430,6 +2452,13 @@ router.get('/dashboard', (req, res) => {
       <label class="filtro">
         <span>Até</span>
         <input type="date" name="ate" value="${escapeHtml(ate)}">
+      </label>
+      <label class="filtro">
+        <span>Vaga</span>
+        <select name="vaga">
+          <option value=""${vagaId ? '' : ' selected'}>Todas</option>
+          ${opcoesVagaDashboard}
+        </select>
       </label>
       <button type="submit" class="btn">Filtrar</button>
       ${temFiltro ? '<a class="btn btn--ghost" href="/admin/dashboard">Limpar</a>' : ''}

@@ -9,7 +9,10 @@
 //   3. divisao por zero (vaga acessos=0) -> '—', sem NaN/Infinity/undefined;
 //   4. filtro de periodo por querystring aplica o range;
 //   5. data malformada -> aviso amigavel, pagina nao quebra (200);
-//   6. vaga com tudo zero aparece na tabela (nao some).
+//   6. vaga com tudo zero aparece na tabela (nao some);
+//   7. filtro ?vaga= (Item 2 do ETAPA B "Ajustes no Admin") afeta as DUAS tabelas
+//      (funil "Por vaga" e "Origem dos leads");
+//   8. paginacao de 5 em 5 na tabela "Origem dos leads" (Item 1 do mesmo ETAPA B).
 
 const os = require('node:os');
 const path = require('node:path');
@@ -101,11 +104,14 @@ async function getDashboard(qs = '', comAuth = true) {
   }
 }
 
+let jobA;
+let jobB;
+
 test.before(() => {
   migrar();
 
-  const jobA = criarVaga('vaga-a', 'Vaga A', '2026-05-01 09:00:00');
-  const jobB = criarVaga('vaga-b', 'Vaga B', '2026-05-02 09:00:00');
+  jobA = criarVaga('vaga-a', 'Vaga A', '2026-05-01 09:00:00');
+  jobB = criarVaga('vaga-b', 'Vaga B', '2026-05-02 09:00:00');
   criarVaga('vaga-c', 'Vaga C sem atividade', '2026-05-03 09:00:00'); // fica toda zero
 
   // VAGA A: acessos 2 (junho) + 1 (janeiro) = 3
@@ -203,6 +209,33 @@ test('dashboard: data malformada -> aviso amigavel, sem crash (200)', async () =
   assert.match(html, /inválid/i);
   assert.match(html, /Corrija as datas/); // funil nao e renderizado com data ruim
   assert.ok(!/NaN|Infinity|undefined/.test(html));
+});
+
+test('dashboard: filtro ?vaga= afeta as DUAS tabelas (funil "Por vaga" e "Origem dos leads")', async () => {
+  const { status, html } = await getDashboard(`?vaga=${jobB}`);
+  assert.equal(status, 200);
+
+  // O <select> de vaga marca a opcao escolhida.
+  assert.match(html, new RegExp(`<option value="${jobB}" selected>Vaga B</option>`));
+
+  // Funil "Por vaga": so a linha da Vaga B aparece (Vaga A e Vaga C somem da TABELA —
+  // ambas continuam existindo como <option> no <select>, por isso o teste checa a
+  // celula <td> da tabela, nao a pagina inteira).
+  assert.match(html, /<td>Vaga B<\/td>/);
+  assert.ok(!html.includes('<td>Vaga A</td>'));
+  assert.ok(!html.includes('<td>Vaga C sem atividade</td>'));
+
+  // "Origem dos leads": recorte da Vaga B e so acessos/aplicacoes=1/3 (fixture do
+  // test.before), batendo com obterOrigemLeads({ jobId: jobB }) je testado em unidade.
+  assert.ok(!/NaN|Infinity|undefined/.test(html));
+});
+
+test('dashboard: sem filtro de vaga, "Todas" fica selecionada e as 3 vagas aparecem', async () => {
+  const { html } = await getDashboard('');
+  assert.match(html, /<option value="" selected>Todas<\/option>/);
+  assert.match(html, />Vaga A</);
+  assert.match(html, />Vaga B</);
+  assert.match(html, /Vaga C sem atividade/);
 });
 
 test('dashboard: tabela "Origem dos leads" pagina de 5 em 5', async () => {

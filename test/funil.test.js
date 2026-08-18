@@ -6,11 +6,13 @@
 // Cobre (DB isolado, dados inseridos direto; sem LLM/STT/TTS/Drive/e-mail):
 //   1. obterFunilConversao() sem filtro: os 4 numeros batem por vaga e no total;
 //   2. filtro desde/ate: so conta o que cai no periodo (registros fora ficam de fora);
-//   3. pre_aprovados conta APENAS recomendacao='avancar' (nao 'talvez'/'descartar'/null)
+//   3. filtro jobId (Item 2 do ETAPA B "Ajustes no Admin"): so a vaga escolhida aparece,
+//      com zero ou mais atividade, e totais batem com aquela vaga (nao o consolidado);
+//   4. pre_aprovados conta APENAS recomendacao='avancar' (nao 'talvez'/'descartar'/null)
 //      e sem duplicar quando ha mais de um report 'avancar' na mesma entrevista;
-//   4. GET /admin/api/funil sem auth -> redireciona para o login (como as demais rotas);
-//   5. GET /admin/api/funil com datas malformadas -> 400 claro (nao 500/crash);
-//   6. GET /admin/api/funil autenticado + datas validas -> 200 JSON.
+//   5. GET /admin/api/funil sem auth -> redireciona para o login (como as demais rotas);
+//   6. GET /admin/api/funil com datas malformadas -> 400 claro (nao 500/crash);
+//   7. GET /admin/api/funil autenticado + datas validas -> 200 JSON.
 
 const os = require('node:os');
 const path = require('node:path');
@@ -221,6 +223,39 @@ test('obterFunilConversao (filtro junho): so conta o que cai no periodo', () => 
     aplicacoes: 7,
     entrevistas_realizadas: 5,
     pre_aprovados: 3,
+  });
+});
+
+test('obterFunilConversao (filtro por vaga jobB): so a vaga escolhida aparece', () => {
+  const funil = db.obterFunilConversao({ jobId: jobB });
+
+  assert.deepEqual(funil.vagas.map((v) => v.job_id), [jobB]);
+  assert.deepEqual(
+    {
+      acessos: funil.vagas[0].acessos,
+      aplicacoes: funil.vagas[0].aplicacoes,
+      entrevistas_realizadas: funil.vagas[0].entrevistas_realizadas,
+      pre_aprovados: funil.vagas[0].pre_aprovados,
+    },
+    { acessos: 1, aplicacoes: 3, entrevistas_realizadas: 2, pre_aprovados: 2 },
+  );
+  // Totais batem com a vaga unica (nao com o consolidado de todas as vagas).
+  assert.deepEqual(funil.totais, {
+    acessos: 1,
+    aplicacoes: 3,
+    entrevistas_realizadas: 2,
+    pre_aprovados: 2,
+  });
+});
+
+test('obterFunilConversao (filtro por vaga jobC, sem atividade nenhuma): 1 linha zerada', () => {
+  const funil = db.obterFunilConversao({ jobId: jobC });
+  assert.deepEqual(funil.vagas.map((v) => v.job_id), [jobC]);
+  assert.deepEqual(funil.totais, {
+    acessos: 0,
+    aplicacoes: 0,
+    entrevistas_realizadas: 0,
+    pre_aprovados: 0,
   });
 });
 

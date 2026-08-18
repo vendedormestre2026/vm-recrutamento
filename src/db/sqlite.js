@@ -1713,8 +1713,13 @@ function montarWhere(base, extra) {
 // queries, sem N+1) e casamos os resultados em memoria pela chave job_id.
 function obterFunilConversao(opcoes = {}) {
   const db = getDb();
-  const { desde, ate } = opcoes;
+  const { desde, ate, jobId } = opcoes;
   const periodo = { desde, ate };
+
+  // Filtro opcional por vaga unica (Item 2 do ETAPA B "Ajustes no Admin"): mesmo padrao
+  // de obterOrigemLeads — condicao extra por coluna, so entra quando jobId e informado.
+  const baseJob = (coluna) => (jobId ? [`${coluna} = ?`] : []);
+  const paramsJob = jobId ? [jobId] : [];
 
   // Cada agregacao -> Map job_id -> contagem.
   const paraMapa = (linhas) => {
@@ -1728,9 +1733,9 @@ function obterFunilConversao(opcoes = {}) {
   const acessos = paraMapa(
     db
       .prepare(
-        `SELECT job_id, COUNT(*) AS n FROM vaga_acessos ${montarWhere([], fAcessos)} GROUP BY job_id`,
+        `SELECT job_id, COUNT(*) AS n FROM vaga_acessos ${montarWhere(baseJob('job_id'), fAcessos)} GROUP BY job_id`,
       )
-      .all(...fAcessos.params),
+      .all(...paramsJob, ...fAcessos.params),
   );
 
   // 2) Aplicacoes: applications por job_id (periodo por applications.criado_em).
@@ -1738,9 +1743,9 @@ function obterFunilConversao(opcoes = {}) {
   const aplicacoes = paraMapa(
     db
       .prepare(
-        `SELECT job_id, COUNT(*) AS n FROM applications ${montarWhere([], fApp)} GROUP BY job_id`,
+        `SELECT job_id, COUNT(*) AS n FROM applications ${montarWhere(baseJob('job_id'), fApp)} GROUP BY job_id`,
       )
-      .all(...fApp.params),
+      .all(...paramsJob, ...fApp.params),
   );
 
   // 3) Entrevistas realizadas: interviews concluidas, por job_id (via application_id).
@@ -1752,10 +1757,10 @@ function obterFunilConversao(opcoes = {}) {
         `SELECT a.job_id AS job_id, COUNT(*) AS n
            FROM interviews i
            JOIN applications a ON a.id = i.application_id
-           ${montarWhere(["i.status = 'concluido'"], fEntr)}
+           ${montarWhere(["i.status = 'concluido'", ...baseJob('a.job_id')], fEntr)}
           GROUP BY a.job_id`,
       )
-      .all(...fEntr.params),
+      .all(...paramsJob, ...fEntr.params),
   );
 
   // 4) Pre-aprovados pela IA: reports com recomendacao='avancar', por job_id, seguindo a
@@ -1770,14 +1775,17 @@ function obterFunilConversao(opcoes = {}) {
            FROM reports r
            JOIN interviews i ON i.id = r.interview_id
            JOIN applications a ON a.id = i.application_id
-           ${montarWhere(["r.recomendacao = 'avancar'"], fPre)}
+           ${montarWhere(["r.recomendacao = 'avancar'", ...baseJob('a.job_id')], fPre)}
           GROUP BY a.job_id`,
       )
-      .all(...fPre.params),
+      .all(...paramsJob, ...fPre.params),
   );
 
-  // Todas as vagas (mesmo as sem nenhum acesso/aplicacao aparecem, com zeros).
-  const vagas = db.prepare('SELECT id, titulo, slug FROM jobs ORDER BY criado_em DESC, id DESC').all();
+  // Todas as vagas (mesmo as sem nenhum acesso/aplicacao aparecem, com zeros) — com jobId,
+  // a tabela "Por vaga" se reduz a UMA linha (a vaga escolhida), inexistente vira lista vazia.
+  const vagas = jobId
+    ? db.prepare('SELECT id, titulo, slug FROM jobs WHERE id = ? ORDER BY criado_em DESC, id DESC').all(jobId)
+    : db.prepare('SELECT id, titulo, slug FROM jobs ORDER BY criado_em DESC, id DESC').all();
 
   const linhas = vagas.map((v) => ({
     job_id: v.id,
