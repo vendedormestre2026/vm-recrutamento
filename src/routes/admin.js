@@ -11,6 +11,7 @@
 
 const express = require('express');
 const fs = require('node:fs');
+const path = require('node:path');
 const { config } = require('../config');
 const db = require('../db');
 const drive = require('../providers/drive');
@@ -25,6 +26,7 @@ const limpezaAudio = require('../lib/limpezaAudio');
 const dispararPromocao = require('../lib/dispararPromocao');
 const emailTestePromocao = require('../lib/emailTestePromocao');
 const { CIDADES_VALIDAS, normalizarCidade } = require('../lib/cidades');
+const { mimetypePorExtensao } = require('../lib/curriculo');
 const {
   normalizarTelefoneWhatsapp,
   montarLinkWhatsapp,
@@ -487,7 +489,7 @@ const ICONE_WHATSAPP = `<svg class="ico-whats" viewBox="0 0 24 24" width="21" he
 //
 // Por padrao renderiza o ICONE (lista de candidatos). `comTexto: true` mantem o rotulo
 // escrito — usado na tela de detalhe, onde o botao vive numa fileira de acoes de texto
-// ("Editar", "Baixar currículo (PDF)", ...) e um icone solto destoaria.
+// ("Editar", "Baixar currículo", ...) e um icone solto destoaria.
 //
 // Sem texto visivel, o estado passa a ser comunicado por aria-label (leitores de tela) +
 // title (mouse). O href, a rota e os tres estados sao os mesmos de antes.
@@ -1294,8 +1296,8 @@ router.get('/candidato/:id', (req, res) => {
 
   const temCurriculo = Boolean(cand.curriculo_path);
   const botaoCurriculo = temCurriculo
-    ? `<a class="btn" href="/admin/candidato/${cand.id}/curriculo">Baixar currículo (PDF)</a>`
-    : `<span class="btn btn--off">Baixar currículo (PDF)</span>`;
+    ? `<a class="btn" href="/admin/candidato/${cand.id}/curriculo">Baixar currículo</a>`
+    : `<span class="btn btn--off">Baixar currículo</span>`;
 
   const botaoVideo = videoUrl
     ? `<a class="btn btn--ghost" href="${escapeHtml(videoUrl)}" target="_blank" rel="noopener noreferrer">Abrir vídeo</a>`
@@ -1643,8 +1645,12 @@ router.get('/candidato/:id/curriculo', (req, res) => {
     });
   }
 
-  const nomeArquivo = `${sanitizarNomeArquivo(`curriculo_${cand.nome || ''}_${cand.sobrenome || ''}`)}.pdf`;
-  res.type('application/pdf');
+  // Extensao REAL do arquivo em disco, nao mais fixa em .pdf — o arquivo pode ser
+  // JPG/PNG/DOCX desde o Incremento 1. mimetypePorExtensao devolve octet-stream pra
+  // qualquer coisa fora do mapa, em vez de mentir que e PDF.
+  const extensao = path.extname(caminho).slice(1);
+  const nomeArquivo = `${sanitizarNomeArquivo(`curriculo_${cand.nome || ''}_${cand.sobrenome || ''}`)}.${extensao}`;
+  res.type(mimetypePorExtensao(extensao));
   res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
   return res.sendFile(caminho);
 });
@@ -3859,8 +3865,10 @@ router.get('/talentos/:id/curriculo', (req, res) => {
       descricao: 'O arquivo do currículo não foi localizado no armazenamento.',
     });
   }
-  const nomeArquivo = `${sanitizarNomeArquivo(`curriculo_${talento.nome || ''}`)}.pdf`;
-  res.type('application/pdf');
+  // Extensao REAL do arquivo em disco — mesmo motivo do download do candidato (funil).
+  const extensao = path.extname(caminho).slice(1);
+  const nomeArquivo = `${sanitizarNomeArquivo(`curriculo_${talento.nome || ''}`)}.${extensao}`;
+  res.type(mimetypePorExtensao(extensao));
   res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
   return res.sendFile(caminho);
 });
@@ -3895,13 +3903,13 @@ router.get('/talentos/:id', (req, res) => {
   const ehLegado = talento.categoria === 'legado';
 
   const botaoCurriculo = talento.curriculo_path
-    ? `<a class="btn" href="/admin/talentos/${talento.id}/curriculo">Baixar currículo (PDF)</a>`
+    ? `<a class="btn" href="/admin/talentos/${talento.id}/curriculo">Baixar currículo</a>`
     : ehLegado
       ? `<p style="color:var(--cinza);margin:0;">Registros da base legada não têm currículo:
            a importação trouxe cargo e contato, e o sistema anterior não guardava o arquivo.
            Para receber um currículo desta pessoa, envie o link do
            <a href="/bancodecurriculos">Banco de Currículos</a>.</p>`
-      : `<span class="btn btn--off" title="Este cadastro não tem PDF anexado.">Baixar currículo (PDF)</span>`;
+      : `<span class="btn btn--off" title="Este cadastro não tem currículo anexado.">Baixar currículo</span>`;
 
   // Consentimento: data real quando existe; para legado, a explicacao do porque nao existe.
   const consentimentoHtml = talento.consent_at

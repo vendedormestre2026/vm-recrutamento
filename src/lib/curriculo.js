@@ -52,4 +52,20 @@ async function extrairTextoPdf(buffer) {
   }
 }
 
-module.exports = { extrairTextoPdf, MAX_CARACTERES, TIPOS_CURRICULO_ACEITOS, extensaoDoArquivo };
+// Mimetype pra servir no download, a partir da extensao do arquivo em disco (o inverso de
+// extensaoDoArquivo — mesma lista, direcao contraria). Extensao fora do mapa (arquivo
+// antigo salvo antes deste incremento, ou algo inesperado) cai em application/octet-stream:
+// o navegador oferece "salvar como" em vez de tentar renderizar um tipo errado.
+function mimetypePorExtensao(extensao) {
+  const e = String(extensao || '').toLowerCase().replace(/^\./, '');
+  const t = TIPOS_CURRICULO_ACEITOS.find((x) => x.extensao === e);
+  return t ? t.mimetype : 'application/octet-stream';
+}
+
+module.exports = {
+  extrairTextoPdf,
+  MAX_CARACTERES,
+  TIPOS_CURRICULO_ACEITOS,
+  extensaoDoArquivo,
+  mimetypePorExtensao,
+};
