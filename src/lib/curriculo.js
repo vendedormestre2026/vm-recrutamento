@@ -1,13 +1,20 @@
 'use strict';
 
-// Extracao de texto de curriculo (PDF, e futuramente outros formatos).
+// Extracao de texto de curriculo (PDF via pdf-parse, DOCX via mammoth; JPG/PNG sem OCR, por
+// decisao de produto — ver extrairTextoCurriculo).
 // O texto extraido e guardado em applications.curriculo_texto para o agente Vera
-// referenciar a experiencia do candidato durante a entrevista (Fase 3).
+// referenciar a experiencia do candidato durante a entrevista (Fase 3), e em
+// talentos.curriculo_texto para o motor de analise do Banco de Curriculos.
 //
 // Requeremos o arquivo interno do pdf-parse (lib/pdf-parse.js) em vez do index.js
 // para evitar o bloco de "debug" do pacote, que tenta ler um PDF de teste no disco.
 
 const pdfParse = require('pdf-parse/lib/pdf-parse.js');
+// mammoth, diferente do pdf-parse, nao tem bloco de "debug" nem le nada do disco so por ser
+// importado — o index.js publicado (package.json#main) e so requires de modulos JS puros
+// (unzip/docx-reader/etc.), sem side-effect. Confirmado lendo node_modules/mammoth/lib/index.js
+// antes de assumir isso; import direto do pacote publico e seguro aqui.
+const mammoth = require('mammoth');
 
 const MAX_CARACTERES = 20000;
 
@@ -70,6 +77,37 @@ async function extrairTextoPdf(buffer) {
   }
 }
 
+// Recebe um Buffer do DOCX e devolve o texto extraido (truncado). Mesmo padrao de falha
+// silenciosa de extrairTextoPdf: DOCX corrompido/formato inesperado devolve '' e NUNCA
+// lanca — o cadastro nao pode cair por isso.
+//
+// So .docx (OOXML/zip) — mammoth NAO le .doc binario antigo (formato pre-2007). Um .doc
+// nao e aceito no upload (fora de TIPOS_CURRICULO_ACEITOS), entao essa funcao nunca recebe
+// um; se um dia .doc entrar no allowlist, precisa de outra lib.
+async function extrairTextoDocx(buffer) {
+  try {
+    const resultado = await mammoth.extractRawText({ buffer });
+    const texto = (resultado.value || '').replace(/\s+\n/g, '\n').trim();
+    return texto.slice(0, MAX_CARACTERES);
+  } catch (err) {
+    console.error('[curriculo] falha ao extrair texto do DOCX:', err.message);
+    return '';
+  }
+}
+
+// Decide QUAL extrator usar (ou nenhum) a partir do mimetype do upload. PDF e DOCX tem
+// extrator; JPG/PNG NAO — decisao de produto (sem OCR), curriculo_texto fica ''. O
+// consumidor (system prompt da Vera, analise do banco de talentos) ja degrada sozinho pra
+// texto vazio, o mesmo caminho que um PDF ilegivel ja usa hoje — nao criamos tratamento novo.
+async function extrairTextoCurriculo(file) {
+  if (!file) return '';
+  if (file.mimetype === 'application/pdf') return extrairTextoPdf(file.buffer);
+  if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    return extrairTextoDocx(file.buffer);
+  }
+  return '';
+}
+
 // Mimetype pra servir no download, a partir da extensao do arquivo em disco (o inverso de
 // extensaoDoArquivo — mesma lista, direcao contraria). Extensao fora do mapa (arquivo
 // antigo salvo antes deste incremento, ou algo inesperado) cai em application/octet-stream:
@@ -82,6 +120,8 @@ function mimetypePorExtensao(extensao) {
 
 module.exports = {
   extrairTextoPdf,
+  extrairTextoDocx,
+  extrairTextoCurriculo,
   MAX_CARACTERES,
   TIPOS_CURRICULO_ACEITOS,
   tipoCurriculoAceito,

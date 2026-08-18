@@ -15,7 +15,7 @@ const multer = require('multer');
 
 const { config } = require('../config');
 const db = require('../db');
-const { extrairTextoPdf, extensaoDoArquivo, tipoCurriculoAceito } = require('../lib/curriculo');
+const { extrairTextoCurriculo, extensaoDoArquivo, tipoCurriculoAceito } = require('../lib/curriculo');
 const { analisarCurriculo } = require('../lib/analise_curriculo');
 const emailProvider = require('../providers/email');
 const { renderizarResultadoTalentoHtml } = require('./banco_curriculos');
@@ -155,9 +155,11 @@ router.post('/banco-curriculos', (req, res) => {
       const caminhoPdf = path.join(config.caminhoCurriculosTalentos, `${uuid}.${extensaoDoArquivo(req.file)}`);
       fs.writeFileSync(caminhoPdf, req.file.buffer);
 
-      // Extrai o texto do PDF (truncado em ~20.000 caracteres no helper; PDF ilegivel
-      // devolve '' sem quebrar o cadastro).
-      const curriculoTexto = await extrairTextoPdf(req.file.buffer);
+      // Extrai o texto do curriculo (PDF/DOCX; truncado em ~20.000 caracteres no helper;
+      // arquivo ilegivel devolve '' sem quebrar o cadastro). JPG/PNG NAO passam por
+      // extracao nenhuma — decisao de produto (sem OCR): curriculoTexto fica '', e
+      // analisarCurriculo (abaixo) ja trata isso como "sem texto" sem lancar.
+      const curriculoTexto = await extrairTextoCurriculo(req.file);
 
       // ── Motor de analise (T3) — best-effort: NUNCA bloqueia o cadastro. ──
       // Sem perfil ideal cadastrado, ou com falha na analise (ok:false), o cadastro

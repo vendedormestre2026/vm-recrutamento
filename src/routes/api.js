@@ -15,7 +15,7 @@ const db = require('../db');
 const session = require('../lib/session');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
 const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
-const { extrairTextoPdf, extensaoDoArquivo, tipoCurriculoAceito } = require('../lib/curriculo');
+const { extrairTextoCurriculo, extensaoDoArquivo, tipoCurriculoAceito } = require('../lib/curriculo');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const { lerUtmDoCookie } = require('../lib/utm');
@@ -224,8 +224,11 @@ router.post('/aplicacao', (req, res) => {
       const caminhoPdf = path.join(config.caminhoCurriculos, `${token}.${extensaoDoArquivo(req.file)}`);
       fs.writeFileSync(caminhoPdf, req.file.buffer);
 
-      // Extrai o texto do PDF (truncado em ~20.000 caracteres no helper)
-      const curriculoTexto = await extrairTextoPdf(req.file.buffer);
+      // Extrai o texto do curriculo (PDF/DOCX; truncado em ~20.000 caracteres no helper).
+      // JPG/PNG NAO passam por extracao nenhuma — decisao de produto (sem OCR):
+      // curriculo_texto fica '', e o system prompt da Vera ja degrada sozinho pra esse caso
+      // (mesmo caminho de um PDF ilegivel hoje).
+      const curriculoTexto = await extrairTextoCurriculo(req.file);
 
       // Persiste a application pela camada de dados agnostica
       const applicationId = db.criarAplicacao({

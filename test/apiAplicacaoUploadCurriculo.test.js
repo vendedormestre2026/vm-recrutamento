@@ -1,9 +1,9 @@
 'use strict';
 
 // POST /api/aplicacao — o arquivo e salvo com a EXTENSAO REAL, nao mais fixa em .pdf
-// (Incremento 1), e desde o Incremento 3 o fileFilter aceita PDF, JPG, PNG e DOCX (nao mais
-// so PDF). Este arquivo cobre os dois: extensao correta no disco pra cada tipo aceito, e
-// rejeicao continua de verdade pra tipo nao aceito (.txt, .doc binario antigo).
+// (Incremento 1), desde o Incremento 3 o fileFilter aceita PDF, JPG, PNG e DOCX (nao mais
+// so PDF), e desde o Incremento 5 curriculo_texto e extraido condicionalmente por tipo
+// (DOCX via mammoth; JPG/PNG sem OCR, fica vazio). Este arquivo cobre os quatro.
 
 const os = require('node:os');
 const path = require('node:path');
@@ -57,6 +57,10 @@ function formulario({ email, nomeArquivo, tipo, conteudo }) {
 
 const buscarPorEmail = (email) => db.getDb().prepare('SELECT * FROM applications WHERE email = ?').get(email);
 
+// Fixture real do mammoth (mesma copiada em test/fixtures/ pro curriculo.test.js), conteudo
+// conhecido: "Walking on imported air".
+const DOCX_REAL = fs.readFileSync(path.join(__dirname, 'fixtures', 'single-paragraph.docx'));
+
 test('PDF aceito: curriculo_path grava com extensao .pdf, arquivo existe no disco', async () => {
   await comServidor(async (base) => {
     const email = 'upload.pdf@teste.com';
@@ -107,6 +111,52 @@ test('.jpeg (variante de JPEG) e aceito e salvo com extensao canonica .jpg', asy
     assert.equal(res.status, 200);
     const app = buscarPorEmail(email);
     assert.match(app.curriculo_path, /\.jpg$/, '.jpeg no upload vira .jpg no disco (extensao canonica)');
+  });
+});
+
+test('DOCX real (Incremento 5): curriculo_texto extraido corretamente via mammoth', async () => {
+  await comServidor(async (base) => {
+    const email = 'upload.docx-real@teste.com';
+    const fd = new FormData();
+    fd.set('slug', 'vaga-upload-curriculo');
+    fd.set('nome', 'Candidata');
+    fd.set('sobrenome', 'Teste');
+    fd.set('email', email);
+    fd.set('ddi', '+55');
+    fd.set('telefone', '11940670469');
+    fd.set('consentimento', '1');
+    fd.set(
+      'curriculo',
+      new Blob([DOCX_REAL], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }),
+      'curriculo.docx',
+    );
+    const res = await fetch(`${base}/api/aplicacao`, { method: 'POST', body: fd });
+    assert.equal(res.status, 200);
+
+    const app = buscarPorEmail(email);
+    assert.ok(app, 'candidatura precisa ter sido criada');
+    assert.equal(app.curriculo_texto, 'Walking on imported air');
+  });
+});
+
+test('JPG e PNG (Incremento 5): curriculo_texto fica vazio, sem lancar erro (decisao: sem OCR)', async () => {
+  await comServidor(async (base) => {
+    const casos = [
+      ['jpg', 'foto.jpg', 'image/jpeg'],
+      ['png', 'foto.png', 'image/png'],
+    ];
+    for (const [ext, nomeArquivo, tipo] of casos) {
+      const email = `upload.sem-texto.${ext}@teste.com`;
+      const res = await fetch(`${base}/api/aplicacao`, {
+        method: 'POST',
+        body: formulario({ email, nomeArquivo, tipo, conteudo: `conteudo fake de ${ext}` }),
+      });
+      assert.equal(res.status, 200, `${ext} deveria ser aceito`);
+
+      const app = buscarPorEmail(email);
+      assert.ok(app, `${ext}: candidatura precisa ter sido criada`);
+      assert.ok(!app.curriculo_texto, `${ext}: curriculo_texto deveria ficar vazio (veio "${app.curriculo_texto}")`);
+    }
   });
 });
 

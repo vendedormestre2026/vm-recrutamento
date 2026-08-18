@@ -1,7 +1,7 @@
 'use strict';
 
 // POST /api/banco-curriculos — upload de curriculo, espelhando a cobertura de
-// apiAplicacaoUploadCurriculo.test.js (Incremento 3 do prompt de upload em JPG/PNG/DOCX).
+// apiAplicacaoUploadCurriculo.test.js (Incrementos 3 e 5 do prompt de upload em JPG/PNG/DOCX).
 // Este router (api_banco_curriculos.js) tem seu PROPRIO multer, independente do de
 // routes/api.js — por decisao explicita, os dois ficam como implementacoes espelhadas
 // (nao deduplicadas) nesta tarefa. Por isso a MESMA bateria de casos precisa ser provada
@@ -55,6 +55,10 @@ function formulario({ email, nomeArquivo, tipo, conteudo }) {
 
 const buscarPorEmail = (email) => db.getDb().prepare('SELECT * FROM talentos WHERE email = ?').get(email);
 
+// Fixture real do mammoth (mesma copiada em test/fixtures/ pro curriculo.test.js), conteudo
+// conhecido: "Walking on imported air".
+const DOCX_REAL = fs.readFileSync(path.join(__dirname, 'fixtures', 'single-paragraph.docx'));
+
 test('PDF, JPG, PNG e DOCX sao aceitos: 200, curriculo_path com a extensao certa', async () => {
   await comServidor(async (base) => {
     const casos = [
@@ -90,6 +94,51 @@ test('.jpeg (variante de JPEG) e aceito e salvo com extensao canonica .jpg', asy
     assert.equal(res.status, 200);
     const talento = buscarPorEmail(email);
     assert.match(talento.curriculo_path, /\.jpg$/);
+  });
+});
+
+test('DOCX real (Incremento 5): curriculo_texto extraido corretamente via mammoth', async () => {
+  await comServidor(async (base) => {
+    const email = 'banco.docx-real@teste.com';
+    const fd = new FormData();
+    fd.set('nome', 'Candidata Banco');
+    fd.set('email', email);
+    fd.set('ddi', '+55');
+    fd.set('telefone', '11940670469');
+    fd.set('perfil_interesse', 'SDR');
+    fd.set('consentimento', '1');
+    fd.set(
+      'curriculo',
+      new Blob([DOCX_REAL], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }),
+      'curriculo.docx',
+    );
+    const res = await fetch(`${base}/api/banco-curriculos`, { method: 'POST', body: fd });
+    assert.equal(res.status, 200);
+
+    const talento = buscarPorEmail(email);
+    assert.ok(talento, 'cadastro precisa ter sido criado');
+    assert.equal(talento.curriculo_texto, 'Walking on imported air');
+  });
+});
+
+test('JPG e PNG (Incremento 5): curriculo_texto fica vazio, sem lancar erro (decisao: sem OCR)', async () => {
+  await comServidor(async (base) => {
+    const casos = [
+      ['jpg', 'foto.jpg', 'image/jpeg'],
+      ['png', 'foto.png', 'image/png'],
+    ];
+    for (const [ext, nomeArquivo, tipo] of casos) {
+      const email = `banco.sem-texto.${ext}@teste.com`;
+      const res = await fetch(`${base}/api/banco-curriculos`, {
+        method: 'POST',
+        body: formulario({ email, nomeArquivo, tipo, conteudo: `conteudo fake de ${ext}` }),
+      });
+      assert.equal(res.status, 200, `${ext} deveria ser aceito`);
+
+      const talento = buscarPorEmail(email);
+      assert.ok(talento, `${ext}: cadastro precisa ter sido criado`);
+      assert.ok(!talento.curriculo_texto, `${ext}: curriculo_texto deveria ficar vazio (veio "${talento.curriculo_texto}")`);
+    }
   });
 });
 
