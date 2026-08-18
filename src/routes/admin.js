@@ -3190,6 +3190,43 @@ router.post('/vagas/:id/reativar', (req, res) => {
   res.redirect('/admin/vagas');
 });
 
+// ── POST /admin/vagas/:id/slug ── corrige o link (slug) de uma vaga ja criada ──
+//
+// Acao separada de POST /vagas/:id de proposito (ver o comentario de atualizarVaga em
+// sqlite.js): o form geral da vaga nao mexe em slug, e essa e uma correcao pontual, nao um
+// campo a mais no formulario grande. Formato normalizado com a MESMA funcao usada na
+// criacao (gerarSlugBase) para o admin nao precisar adivinhar o que e "valido" — qualquer
+// texto digitado vira minusculo/sem-acento/hifenizado antes de checar unicidade.
+router.post('/vagas/:id/slug', (req, res) => {
+  const id = Number(req.params.id);
+  const vaga = Number.isInteger(id) ? db.obterVaga(id) : null;
+  if (!vaga) {
+    return res.status(404).send(paginaErroAdmin('Vaga não encontrada.'));
+  }
+
+  const bruto = String((req.body && req.body.slug) || '').trim();
+  if (!bruto) {
+    return res.redirect(`/admin/vagas/${id}?erroSlug=vazio`);
+  }
+
+  const novoSlug = gerarSlugBase(bruto);
+  if (novoSlug === vaga.slug) {
+    // Nada mudou de fato (mesmo valor, ou so diferia por formatacao) — trata como sucesso,
+    // sem UPDATE nem log de troca.
+    return res.redirect(`/admin/vagas/${id}?salvoSlug=1`);
+  }
+
+  const outraVaga = db.obterVagaPorSlug(novoSlug);
+  if (outraVaga && outraVaga.id !== id) {
+    // Erro amigavel: a coluna e UNIQUE, mas o admin nao deve ver um erro cru de SQLite.
+    return res.redirect(`/admin/vagas/${id}?erroSlug=duplicado`);
+  }
+
+  console.log(`[admin] slug da vaga #${id} alterado: '${vaga.slug}' -> '${novoSlug}'`);
+  db.atualizarSlugVaga(id, novoSlug);
+  res.redirect(`/admin/vagas/${id}?salvoSlug=1`);
+});
+
 // ── GET /admin/vaga ── compatibilidade: redireciona p/ a edicao da vaga ativa ──
 router.get('/vaga', (req, res) => {
   const vaga = db.obterVagaAtiva() || db.obterVaga(1);

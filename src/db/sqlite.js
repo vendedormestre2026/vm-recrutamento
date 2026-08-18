@@ -221,6 +221,19 @@ function definirVagaAtiva(id, ativo) {
   return info.changes;
 }
 
+// Troca so o slug da vaga. Separada de atualizarVaga() de proposito: aquela e o form geral
+// (ETAPA A confirmou que nao mexe em slug/perfil/roteiro_id), e o slug e uma acao distinta,
+// com sua propria validacao de unicidade — nao um campo a mais no UPDATE de cima.
+// A validacao de FORMATO (minusculo, sem acento/espaco) e responsabilidade do chamador
+// (mesma normalizacao de gerarSlugUnico em admin.js); aqui so garantimos unicidade e o
+// UPDATE. Retorna o numero de linhas afetadas (0 = id inexistente).
+function atualizarSlugVaga(id, novoSlug) {
+  const info = getDb()
+    .prepare('UPDATE jobs SET slug = ? WHERE id = ?')
+    .run(novoSlug, id);
+  return info.changes;
+}
+
 // Roteiros
 function obterRoteiro(id) {
   return roteiroDeLinha(getDb().prepare('SELECT * FROM roteiros WHERE id = ?').get(id));
@@ -3215,6 +3228,7 @@ module.exports = {
   listarVagas,
   criarVaga,
   atualizarVaga,
+  atualizarSlugVaga,
   definirVagaAtiva,
   // painel (Fase 5)
   CANDIDATOS_POR_PAGINA,
