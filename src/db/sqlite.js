@@ -1305,6 +1305,11 @@ function escaparCuringasLike(termo) {
 // os controles de navegacao. Exportado para o painel nao redeclarar o 25.
 const CANDIDATOS_POR_PAGINA = 25;
 
+// Mesmo raciocinio de CANDIDATOS_POR_PAGINA, aplicado a tabela "Origem dos leads" do
+// dashboard: tamanho fixo, compartilhado entre a paginacao (aqui) e os controles de
+// navegacao (admin.js).
+const ORIGENS_POR_PAGINA = 5;
+
 // ── Origem do lead (utm_source): valor CRU no banco x valor CANONICO no filtro ──
 // O banco guarda a origem exatamente como veio da URL, e por isso tem duplicatas
 // historicas ('grupo-whats' e 'grupowhats' sao a mesma campanha, digitadas diferente)
@@ -1895,14 +1900,16 @@ function obterOrigemLeads(opcoes = {}) {
   );
 
   // Ordena por relevancia: mais aplicacoes primeiro, desempate por acessos e nome (pt-BR).
-  const origens = [...mapa.values()].sort(
+  const origensOrdenadas = [...mapa.values()].sort(
     (a, b) =>
       b.aplicacoes - a.aplicacoes ||
       b.acessos - a.acessos ||
       a.origem.localeCompare(b.origem, 'pt-BR'),
   );
 
-  const totais = origens.reduce(
+  // Totais SEMPRE sobre todas as origens do recorte (desde/ate/jobId), nunca so da
+  // pagina — e o mesmo numero que apareceria se a tabela nao fosse paginada.
+  const totais = origensOrdenadas.reduce(
     (acc, l) => ({
       acessos: acc.acessos + l.acessos,
       aplicacoes: acc.aplicacoes + l.aplicacoes,
@@ -1912,7 +1919,16 @@ function obterOrigemLeads(opcoes = {}) {
     { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 },
   );
 
-  return { origens, totais };
+  // Paginacao de 5 em 5 (ORIGENS_POR_PAGINA), mesmo padrao de CANDIDATOS_POR_PAGINA/
+  // TALENTOS_POR_PAGINA: pagina 1-indexed, saneada aqui de novo (o handler ja sanea a
+  // dele, mas esta funcao nao pode confiar em quem a chama).
+  const totalOrigens = origensOrdenadas.length;
+  const paginaNum = Number(opcoes.pagina);
+  const pagina = Number.isInteger(paginaNum) && paginaNum > 0 ? paginaNum : 1;
+  const inicio = (pagina - 1) * ORIGENS_POR_PAGINA;
+  const origens = origensOrdenadas.slice(inicio, inicio + ORIGENS_POR_PAGINA);
+
+  return { origens, totais, totalOrigens };
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -3194,6 +3210,7 @@ module.exports = {
   definirVagaAtiva,
   // painel (Fase 5)
   CANDIDATOS_POR_PAGINA,
+  ORIGENS_POR_PAGINA,
   listarAplicacoesComContexto,
   contarAplicacoesComContexto,
   contarEntrevistasConcluidasComContexto,

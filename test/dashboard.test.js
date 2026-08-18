@@ -55,14 +55,15 @@ function acesso(jobId, criadoEm) {
   run('INSERT INTO vaga_acessos (job_id, criado_em) VALUES (?, ?)', jobId, criadoEm);
 }
 let seqApp = 0;
-function aplicacao(jobId, status, criadoEm) {
+function aplicacao(jobId, status, criadoEm, utm) {
   seqApp += 1;
   return run(
-    'INSERT INTO applications (job_id, status, token, criado_em) VALUES (?, ?, ?, ?)',
+    'INSERT INTO applications (job_id, status, token, criado_em, utm_source) VALUES (?, ?, ?, ?, ?)',
     jobId,
     status,
     `tok-app-${seqApp}`,
     criadoEm,
+    utm || null,
   );
 }
 function entrevista(appId, status, finalizadoEm) {
@@ -202,4 +203,30 @@ test('dashboard: data malformada -> aviso amigavel, sem crash (200)', async () =
   assert.match(html, /inválid/i);
   assert.match(html, /Corrija as datas/); // funil nao e renderizado com data ruim
   assert.ok(!/NaN|Infinity|undefined/.test(html));
+});
+
+test('dashboard: tabela "Origem dos leads" pagina de 5 em 5', async () => {
+  // Job C so para gerar origens novas, sem interferir nos totais do funil geral testados
+  // acima (esta vaga fica isolada por filtro de vaga la, mas aqui usamos o dashboard sem
+  // filtro de vaga mesmo — o teste olha e a paginacao, nao os totais do funil).
+  const jobD = criarVaga('vaga-d', 'Vaga D (origens da paginacao)', '2026-07-01 09:00:00');
+  ['origem1', 'origem2', 'origem3', 'origem4', 'origem5', 'origem6'].forEach((utm, i) => {
+    aplicacao(jobD, 'aplicado', `2026-07-0${i + 1} 10:00:00`, utm);
+  });
+
+  const p1 = await getDashboard('');
+  assert.equal(p1.status, 200);
+  assert.match(p1.html, /Página <b>1<\/b> de <b>2<\/b>/);
+  assert.match(p1.html, /btn--off">← Anterior/); // primeira pagina: sem "Anterior"
+  assert.match(p1.html, /rel="next"/); // tem "Próxima"
+
+  const p2 = await getDashboard('?pagina_origem=2');
+  assert.equal(p2.status, 200);
+  assert.match(p2.html, /Página <b>2<\/b> de <b>2<\/b>/);
+  assert.match(p2.html, /rel="prev"/); // segunda pagina: tem "Anterior"
+  assert.match(p2.html, /btn--off">Próxima/); // ultima pagina: sem "Próxima"
+
+  // Nenhuma das duas paginas mistura NaN/Infinity/undefined.
+  assert.ok(!/NaN|Infinity|undefined/.test(p1.html));
+  assert.ok(!/NaN|Infinity|undefined/.test(p2.html));
 });

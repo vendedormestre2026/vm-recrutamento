@@ -2280,6 +2280,10 @@ router.get('/api/funil', (req, res) => {
 router.get('/dashboard', (req, res) => {
   const desde = req.query.desde != null ? String(req.query.desde).trim() : '';
   const ate = req.query.ate != null ? String(req.query.ate).trim() : '';
+  // Pagina da tabela "Origem dos leads" (5 em 5, db.ORIGENS_POR_PAGINA). Nome distinto de
+  // qualquer outro parametro desta tela para nao colidir na querystring do dashboard.
+  const paginaOrigemNum = Number(req.query.pagina_origem);
+  const paginaOrigem = Number.isInteger(paginaOrigemNum) && paginaOrigemNum > 0 ? paginaOrigemNum : 1;
 
   const erros = [];
   if (desde && !dataIsoValida(desde)) erros.push('Data inicial inválida. Use o formato AAAA-MM-DD.');
@@ -2293,8 +2297,9 @@ router.get('/dashboard', (req, res) => {
 
   // Origem dos leads (B2): mesmo recorte de periodo do funil (reusa desde/ate validados).
   const origem = temErro
-    ? { origens: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 } }
-    : db.obterOrigemLeads({ desde: desde || undefined, ate: ate || undefined });
+    ? { origens: [], totais: { acessos: 0, aplicacoes: 0, entrevistas_realizadas: 0, pre_aprovados: 0 }, totalOrigens: 0 }
+    : db.obterOrigemLeads({ desde: desde || undefined, ate: ate || undefined, pagina: paginaOrigem });
+  const totalPaginasOrigem = Math.max(1, Math.ceil(origem.totalOrigens / db.ORIGENS_POR_PAGINA));
 
   const t = funil.totais;
 
@@ -2381,6 +2386,34 @@ router.get('/dashboard', (req, res) => {
       ? `Período: ${escapeHtml(desde || '…')} até ${escapeHtml(ate || '…')}`
       : 'Período: todo o histórico';
 
+  // ── Paginacao da tabela "Origem dos leads" ── mesmo padrao visual da lista de
+  // candidatos (admin.js, linkPagina/paginacao), so trocando o parametro de pagina e
+  // preservando desde/ate (os unicos filtros desta tela ate aqui).
+  const linkPaginaOrigem = (n) => {
+    const p = new URLSearchParams();
+    if (desde) p.set('desde', desde);
+    if (ate) p.set('ate', ate);
+    p.set('pagina_origem', String(n));
+    return `/admin/dashboard?${p.toString()}`;
+  };
+  const paginacaoOrigem =
+    totalPaginasOrigem > 1 || paginaOrigem > 1
+      ? `
+      <nav class="admin-paginacao" aria-label="Paginação da tabela Origem dos leads">
+        ${
+          paginaOrigem > 1
+            ? `<a class="btn btn--ghost" rel="prev" href="${linkPaginaOrigem(Math.min(paginaOrigem - 1, totalPaginasOrigem))}">← Anterior</a>`
+            : '<span class="btn btn--off">← Anterior</span>'
+        }
+        <span>Página <b>${paginaOrigem}</b> de <b>${totalPaginasOrigem}</b></span>
+        ${
+          paginaOrigem < totalPaginasOrigem
+            ? `<a class="btn btn--ghost" rel="next" href="${linkPaginaOrigem(paginaOrigem + 1)}">Próxima →</a>`
+            : '<span class="btn btn--off">Próxima →</span>'
+        }
+      </nav>`
+      : '';
+
   const conteudo = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
       <h1 style="margin:0;">Funil de Conversão</h1>
@@ -2461,6 +2494,7 @@ router.get('/dashboard', (req, res) => {
           </tbody>
         </table>
       </div>
+      ${paginacaoOrigem}
     </section>`;
 
   res.send(paginaAdmin({ titulo: 'Funil de Conversão', conteudo }));

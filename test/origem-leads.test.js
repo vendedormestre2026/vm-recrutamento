@@ -260,3 +260,31 @@ test('bucketizacao: grupo-whats, grupowhats e grup caem no MESMO balde "Grupo Wh
     'nenhuma grafia crua pode sobrar como chave propria',
   );
 });
+
+test('paginacao de 5 em 5: pagina 1 tem 5, pagina 2 tem o restante, totalOrigens correto', () => {
+  // Neste ponto do arquivo ja existem 6 origens distintas (ver testes acima): google,
+  // Grupo WhatsApp, instagram, linkedin, Sem origem, Direto.
+  const p1 = db.obterOrigemLeads({ pagina: 1 });
+  const p2 = db.obterOrigemLeads({ pagina: 2 });
+
+  assert.equal(p1.origens.length, 5);
+  assert.equal(p1.totalOrigens, 6);
+  assert.equal(p2.totalOrigens, 6);
+  assert.equal(p2.origens.length, 1);
+
+  const nomesP1 = p1.origens.map((o) => o.origem);
+  const nomesP2 = p2.origens.map((o) => o.origem);
+  assert.ok(!nomesP2.some((n) => nomesP1.includes(n)), 'as duas paginas nao podem repetir origem');
+
+  // Totais sao sobre TODAS as origens do recorte, nao so a pagina — nao mudam entre paginas.
+  assert.deepEqual(p1.totais, p2.totais);
+
+  // Pagina fora do alcance devolve lista vazia, sem lancar.
+  const p3 = db.obterOrigemLeads({ pagina: 3 });
+  assert.deepEqual(p3.origens, []);
+
+  // Sem `pagina` (nem outro filtro): default e pagina 1 (mesmo padrao de CANDIDATOS_POR_PAGINA).
+  const semPagina = db.obterOrigemLeads();
+  assert.equal(semPagina.origens.length, 5);
+  assert.equal(semPagina.totalOrigens, 6);
+});
