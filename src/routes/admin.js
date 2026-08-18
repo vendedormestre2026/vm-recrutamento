@@ -4227,6 +4227,15 @@ router.get('/config', (req, res) => {
     ? '<span class="badge badge--ativa">Ligada</span>'
     : '<span class="badge badge--encerrada">Desligada</span>';
 
+  // Abas de Configurações (Item 4 do ETAPA B "Ajustes no Admin", Commit 8) — primeira vez
+  // que abas aparecem no admin. Opcao A: NENHUMA rota muda; o form de notificacoes
+  // continua UM SO (/admin/config/notificacoes, os 8 campos), so o VISUAL e que espalha
+  // os campos pelas abas. Isso e possivel sem aninhar <form> dentro de <form> (invalido em
+  // HTML) porque os inputs desse form usam o atributo `form="form-notificacoes"` — apontam
+  // para um <form> vazio declarado uma vez, mesmo estando em divs de aba diferentes. Os
+  // demais formularios (whatsapp/email-teste/followup) ficam intactos, so mudam de lugar.
+  // Troca de aba e so display (JS abaixo troca `hidden`), nunca re-render — o Jean nao
+  // perde o que ja tinha editado em outra aba ao clicar.
   const conteudo = `
     <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
     <h1>Configurações gerais</h1>
@@ -4235,7 +4244,6 @@ router.get('/config', (req, res) => {
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem;">
       <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
       <a class="btn btn--ghost" href="/admin/perfis-curriculo">Perfis de currículo</a>
-      <a class="btn btn--ghost" href="/admin/whatsapp">WhatsApp (pareamento)</a>
       <a class="btn btn--ghost" href="/admin/uso">Custos / Uso API</a>
     </div>
 
@@ -4263,203 +4271,254 @@ router.get('/config', (req, res) => {
       </form>
     </section>
 
-    <section class="rel-sec">
-      <h2>Mensagem de WhatsApp</h2>
-      <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
-        Texto pré-preenchido ao clicar em <b>WhatsApp</b> na lista/detalhe do candidato.
-      </p>
-      <form method="POST" action="/admin/config/whatsapp">
-        <label class="campo" style="max-width:420px;">
-          <span>Nome do recrutador</span>
-          <input type="text" name="recrutador_nome" value="${escapeHtml(recrutadorNome)}" placeholder="${escapeHtml(RECRUTADOR_PADRAO)}">
-        </label>
-        <label class="campo">
-          <span>Template da mensagem</span>
-          <textarea name="whatsapp_template" rows="4">${escapeHtml(whatsappTemplate)}</textarea>
-        </label>
-        <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Placeholders disponíveis:
-          <b>{primeiro_nome}</b> · <b>{vaga}</b> · <b>{empresa}</b> · <b>{recrutador}</b>.
-          Deixe o template <b>vazio</b> para usar o padrão. Quando a vaga não tem empresa,
-          o trecho “ da empresa {empresa}” é removido automaticamente.
-        </p>
-        <button type="submit" class="btn">Salvar</button>
-      </form>
-    </section>
+    <div data-admin-config-tabs>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:1.5rem 0 1.25rem;">
+        <button type="button" class="btn" data-tab-btn="email">E-mail</button>
+        <button type="button" class="btn btn--ghost" data-tab-btn="whatsapp">WhatsApp</button>
+        <button type="button" class="btn btn--ghost" data-tab-btn="campanhas">Campanhas e Divulgação</button>
+        <button type="button" class="btn btn--ghost" data-tab-btn="manutencao">Manutenção</button>
+      </div>
 
-    <section class="rel-sec">
-      <h2>Notificações por e-mail e WhatsApp</h2>
-      <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
-        Avisos enviados para <b>${escapeHtml(config.recrutador.email || 'RECRUITER_EMAIL não configurado')}</b>.
-      </p>
-      <form method="POST" action="/admin/config/notificacoes">
-        <label class="campo-check">
-          <input type="checkbox" name="notificar_nova_candidatura" value="1"${notificarNovaCandidatura ? ' checked' : ''}>
-          <span style="color:var(--preto);text-transform:none;">
-            Avisar por e-mail a cada <b>nova candidatura</b>
-          </span>
-        </label>
-        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Desmarcado (padrão), nenhum e-mail é enviado quando alguém se candidata — as
-          candidaturas continuam aparecendo normalmente na lista do painel. O
-          <b>relatório da entrevista</b> é outro e-mail e não é afetado por este ajuste.
-        </p>
-        <label class="campo-check">
-          <input type="checkbox" name="lembrete_inicio_ativo" value="1"${lembreteInicioAtivo ? ' checked' : ''}>
-          <span style="color:var(--preto);text-transform:none;">
-            Enviar <b>lembrete de início</b> de entrevista
-          </span>
-        </label>
-        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Lembra, por e-mail, quem se candidatou e <b>nunca abriu a entrevista</b>, com o link
-          para fazê-la. Sai <b>${lembreteInicio.HORAS_ESPERA_LEMBRETE} h depois</b> da
-          candidatura, <b>uma única vez</b> por candidato. É outro público do follow-up
-          abaixo: aqui é quem <b>nunca começou</b>; lá, quem começou e parou no meio.
-          <b>Mantenha desligado até confirmar o funcionamento.</b>
-        </p>
-        <label class="campo-check">
-          <input type="checkbox" name="followup_ativo" value="1"${followupAtivo ? ' checked' : ''}>
-          <span style="color:var(--preto);text-transform:none;">
-            Enviar <b>follow-up</b> de entrevista não concluída
-          </span>
-        </label>
-        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Ativa os e-mails de follow-up para entrevistas não concluídas.
-          <b>Mantenha desligado até confirmar o funcionamento.</b> Os prazos ficam na seção
-          abaixo; com esta caixa desmarcada, nada é enviado, independentemente deles.
-        </p>
-        <label class="campo-check">
-          <input type="checkbox" name="email_recusa_ativo" value="1"${emailRecusaAtivo ? ' checked' : ''}>
-          <span style="color:var(--preto);text-transform:none;">
-            Enviar <b>e-mail de recusa</b> a quem não avançou
-          </span>
-        </label>
-        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Avisa automaticamente, por e-mail, o candidato cujo relatório recomendou
-          <b>não avançar</b>. A mensagem é padrão e discreta: agradece a participação e diz
-          que seguiremos com outros perfis — <b>não menciona a avaliação, nota ou o uso de
-          IA</b>. O envio só acontece <b>6 h depois</b> do relatório ficar pronto, e é
-          cancelado se você marcar o candidato como <b>Aprovado</b> ou <b>Em análise</b>
-          nesse intervalo. Cada candidato recebe no máximo <b>um</b> e-mail destes.
-          <b>Mantenha desligado até confirmar o funcionamento.</b>
-        </p>
-        <label class="campo-check">
-          <input type="checkbox" name="limpeza_audio_ativo" value="1"${limpezaAudioAtiva ? ' checked' : ''}>
-          <span style="color:var(--preto);text-transform:none;">
-            Apagar <b>áudio de entrevistas</b> quando o disco encher
-          </span>
-        </label>
-        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Libera espaço apagando os arquivos de áudio guardados no servidor. Só age
-          <b>quando o disco passa de ${limpezaAudio.limiarPct()}%</b> de uso, e só toca em
-          entrevistas <b>concluídas</b>, <b>com relatório pronto</b> e cujo <b>vídeo já
-          está salvo no Google Drive</b> — o vídeo continua lá, e a transcrição continua
-          no banco. No máximo ${limpezaAudio.remocoesPorCiclo()} entrevistas por vez, e
-          para assim que o disco volta ao normal. <b>A exclusão é definitiva.</b>
-        </p>
-        <label class="campo-check">
-          <input type="checkbox" name="promocao_ativa" value="1"${promocaoAtiva ? ' checked' : ''}>
-          <span style="color:var(--preto);text-transform:none;">
-            Enviar as <b>campanhas de Promoção de Vagas</b>
-          </span>
-        </label>
-        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Interruptor do envio em massa de <a href="/admin/promocao">Promoção de Vagas</a>.
-          Desmarcado (padrão), campanhas podem ser criadas e até disparadas — elas ficam
-          <b>enfileiradas</b> e <b>nenhum e-mail sai</b>. Marcado, a rotina envia até
-          ${dispararPromocao.ENVIOS_POR_CICLO} e-mails a cada 15 minutos até esvaziar a
-          fila. É o único e-mail do sistema que vai para <b>toda a base</b>, e não apenas
-          para quem está num processo em andamento. <b>Só ligue depois de confirmar
-          remetente, domínio verificado e descadastro funcionando.</b>
-        </p>
+      <!-- Vazio de proposito: so existe para os inputs com form="form-notificacoes"
+           (espalhados pelas 4 abas abaixo) apontarem para ele. -->
+      <form id="form-notificacoes" method="POST" action="/admin/config/notificacoes"></form>
 
-        <label class="campo-check">
-          <input type="checkbox" name="whatsapp_sequencia_ativa" value="1"${whatsappSeqAtiva ? ' checked' : ''}>
-          <span style="color:var(--preto);text-transform:none;">
-            Enviar a <b>sequência de WhatsApp</b> (WA1 e WA2) a cada nova candidatura
-          </span>
-        </label>
-        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Interruptor do <b>disparo</b>. Marcado, cada nova candidatura agenda duas
-          mensagens: <b>WA1</b> na hora (informativo, não pede nada) e <b>WA2</b> em
-          ${sequenciaWhatsapp.WA2_ATRASO_MINUTOS} minutos (pede o vídeo de apresentação).
-          Desmarcado (padrão), <b>nada é agendado</b> — não é "agenda e ignora", é não criar
-          a linha, para que ligar depois não dispare mensagens para quem se candidatou
-          semanas antes.
-          <br>
-          Este é <b>um dos dois</b> interruptores: a instância só conecta com
-          <code>WHATSAPP_BAILEYS_ATIVO=true</code> no ambiente, e o envio só sai de verdade
-          com <code>WHATSAPP_SEQUENCIA_MOCK=false</code>. Veja o estado da conexão em
-          <a href="/admin/whatsapp">WhatsApp</a>.
-        </p>
+      <div data-tab-painel="email">
+        <section class="rel-sec">
+          <h2>E-mail</h2>
+          <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+            Avisos enviados para <b>${escapeHtml(config.recrutador.email || 'RECRUITER_EMAIL não configurado')}</b>.
+          </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="notificar_nova_candidatura" value="1"${notificarNovaCandidatura ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Avisar por e-mail a cada <b>nova candidatura</b>
+            </span>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Desmarcado (padrão), nenhum e-mail é enviado quando alguém se candidata — as
+            candidaturas continuam aparecendo normalmente na lista do painel. O
+            <b>relatório da entrevista</b> é outro e-mail e não é afetado por este ajuste.
+          </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="lembrete_inicio_ativo" value="1"${lembreteInicioAtivo ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Enviar <b>lembrete de início</b> de entrevista
+            </span>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Lembra, por e-mail, quem se candidatou e <b>nunca abriu a entrevista</b>, com o link
+            para fazê-la. Sai <b>${lembreteInicio.HORAS_ESPERA_LEMBRETE} h depois</b> da
+            candidatura, <b>uma única vez</b> por candidato. É outro público do follow-up
+            abaixo: aqui é quem <b>nunca começou</b>; lá, quem começou e parou no meio.
+            <b>Mantenha desligado até confirmar o funcionamento.</b>
+          </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="followup_ativo" value="1"${followupAtivo ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Enviar <b>follow-up</b> de entrevista não concluída
+            </span>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Ativa os e-mails de follow-up para entrevistas não concluídas.
+            <b>Mantenha desligado até confirmar o funcionamento.</b> Os prazos ficam na seção
+            abaixo; com esta caixa desmarcada, nada é enviado, independentemente deles.
+          </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="email_recusa_ativo" value="1"${emailRecusaAtivo ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Enviar <b>e-mail de recusa</b> a quem não avançou
+            </span>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Avisa automaticamente, por e-mail, o candidato cujo relatório recomendou
+            <b>não avançar</b>. A mensagem é padrão e discreta: agradece a participação e diz
+            que seguiremos com outros perfis — <b>não menciona a avaliação, nota ou o uso de
+            IA</b>. O envio só acontece <b>6 h depois</b> do relatório ficar pronto, e é
+            cancelado se você marcar o candidato como <b>Aprovado</b> ou <b>Em análise</b>
+            nesse intervalo. Cada candidato recebe no máximo <b>um</b> e-mail destes.
+            <b>Mantenha desligado até confirmar o funcionamento.</b>
+          </p>
+          <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
+        </section>
 
-        <label class="campo-check">
-          <input type="checkbox" name="campanha_whatsapp_ativa" value="1"${campanhaWaAtiva ? ' checked' : ''}>
-          <span style="color:var(--preto);text-transform:none;">
-            Enviar as <b>campanhas por WhatsApp</b> (Meta Cloud API)
-          </span>
-        </label>
-        <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Interruptor do envio em massa pela API <b>oficial</b> da Meta — frente separada da
-          sequência WA1/WA2 acima. Desmarcado (padrão), campanhas podem ser criadas e
-          ativadas: os envios ficam <b>pendentes</b> e <b>nada sai</b>.
-          <br>
-          Mesmo marcado, nada sai enquanto <code>META_CAMPANHA_MOCK</code> não for
-          <code>false</code>. Cada mensagem tem <b>custo por conversa</b> e conta para a
-          <b>qualidade do número</b> — excesso de denúncia rebaixa o tier ou desabilita o
-          número na Meta. Configure as praças em
-          <a href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>.
-        </p>
-        <button type="submit" class="btn">Salvar</button>
-      </form>
-    </section>
+        <section class="rel-sec">
+          <h2>Follow-up de entrevista não concluída</h2>
+          <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+            E-mail automático para quem <b>começou</b> a entrevista e não terminou, com o link
+            para continuar de onde parou. Quem apenas se candidatou (e nunca iniciou) não recebe.
+          </p>
+          <form method="POST" action="/admin/config/followup-entrevista">
+            <label class="campo" style="max-width:320px;">
+              <span>Horas de espera antes do 1º e-mail</span>
+              <input type="number" name="followup_horas" min="1" step="1" value="${escapeHtml(String(followupHoras))}">
+            </label>
+            <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+              Contadas a partir da <b>última atividade</b> na entrevista (a última resposta
+              dada). O <b>2º e-mail</b> sai <b>24 h após o 1º</b> — prazo fixo, não configurável —
+              e só se a entrevista continuar em aberto. São no máximo <b>2 e-mails</b> por
+              candidato. Valor vazio ou inválido volta ao padrão de ${followup.HORAS_ESPERA_PADRAO} h.
+            </p>
+            <button type="submit" class="btn">Salvar</button>
+          </form>
+        </section>
+      </div>
 
-    <section class="rel-sec">
-      <h2>E-mail de teste da Promoção de Vagas</h2>
-      <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
-        Endereço fixo que recebe o botão <b>Enviar e-mail de teste para mim</b> da tela de
-        <a href="/admin/promocao">nova campanha</a>.
-      </p>
-      <form method="POST" action="/admin/config/email-teste-promocao">
-        <label class="campo" style="max-width:420px;">
-          <span>E-mail de teste</span>
-          <input type="email" name="email_teste_promocao" value="${escapeHtml(emailTeste)}"
-            placeholder="voce@suaempresa.com.br">
-        </label>
-        <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          O e-mail de teste sai pelo <b>mesmo</b> provedor e com os <b>mesmos</b> cabeçalhos
-          de descadastro da campanha real — é para isso que ele serve: conferir formatação,
-          assunto e o link de descadastro antes de disparar para a base. O assunto vai
-          prefixado com <b>${escapeHtml(emailTestePromocao.PREFIXO_ASSUNTO.trim())}</b>, ele
-          <b>não</b> cria campanha nem consome destinatário, e funciona mesmo com
-          <b>Promoção de vagas</b> desligada acima. Só depende de o servidor ter
-          <b>DESCADASTRO_SECRET</b> e as credenciais de SMTP de campanha configuradas.
-          <b>Vazio (padrão) desliga o botão.</b>
-        </p>
-        <button type="submit" class="btn">Salvar</button>
-      </form>
-    </section>
+      <div data-tab-painel="whatsapp" hidden>
+        <section class="rel-sec">
+          <h2>WhatsApp</h2>
+          <p style="margin:.2rem 0 1rem;">
+            <a class="btn btn--ghost" href="/admin/whatsapp">WhatsApp (pareamento)</a>
+          </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="whatsapp_sequencia_ativa" value="1"${whatsappSeqAtiva ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Enviar a <b>sequência de WhatsApp</b> (WA1 e WA2) a cada nova candidatura
+            </span>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Interruptor do <b>disparo</b>. Marcado, cada nova candidatura agenda duas
+            mensagens: <b>WA1</b> na hora (informativo, não pede nada) e <b>WA2</b> em
+            ${sequenciaWhatsapp.WA2_ATRASO_MINUTOS} minutos (pede o vídeo de apresentação).
+            Desmarcado (padrão), <b>nada é agendado</b> — não é "agenda e ignora", é não criar
+            a linha, para que ligar depois não dispare mensagens para quem se candidatou
+            semanas antes.
+            <br>
+            Este é <b>um dos dois</b> interruptores: a instância só conecta com
+            <code>WHATSAPP_BAILEYS_ATIVO=true</code> no ambiente, e o envio só sai de verdade
+            com <code>WHATSAPP_SEQUENCIA_MOCK=false</code>. Veja o estado da conexão em
+            <a href="/admin/whatsapp">WhatsApp</a>.
+          </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="campanha_whatsapp_ativa" value="1"${campanhaWaAtiva ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Enviar as <b>campanhas por WhatsApp</b> (Meta Cloud API)
+            </span>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Interruptor do envio em massa pela API <b>oficial</b> da Meta — frente separada da
+            sequência WA1/WA2 acima. Desmarcado (padrão), campanhas podem ser criadas e
+            ativadas: os envios ficam <b>pendentes</b> e <b>nada sai</b>.
+            <br>
+            Mesmo marcado, nada sai enquanto <code>META_CAMPANHA_MOCK</code> não for
+            <code>false</code>. Cada mensagem tem <b>custo por conversa</b> e conta para a
+            <b>qualidade do número</b> — excesso de denúncia rebaixa o tier ou desabilita o
+            número na Meta. Configure as praças em
+            <a href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>.
+          </p>
+          <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
+        </section>
 
-    <section class="rel-sec">
-      <h2>Follow-up de entrevista não concluída</h2>
-      <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
-        E-mail automático para quem <b>começou</b> a entrevista e não terminou, com o link
-        para continuar de onde parou. Quem apenas se candidatou (e nunca iniciou) não recebe.
-      </p>
-      <form method="POST" action="/admin/config/followup-entrevista">
-        <label class="campo" style="max-width:320px;">
-          <span>Horas de espera antes do 1º e-mail</span>
-          <input type="number" name="followup_horas" min="1" step="1" value="${escapeHtml(String(followupHoras))}">
-        </label>
-        <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
-          Contadas a partir da <b>última atividade</b> na entrevista (a última resposta
-          dada). O <b>2º e-mail</b> sai <b>24 h após o 1º</b> — prazo fixo, não configurável —
-          e só se a entrevista continuar em aberto. São no máximo <b>2 e-mails</b> por
-          candidato. Valor vazio ou inválido volta ao padrão de ${followup.HORAS_ESPERA_PADRAO} h.
-        </p>
-        <button type="submit" class="btn">Salvar</button>
-      </form>
-    </section>`;
+        <section class="rel-sec">
+          <h2>Mensagem de WhatsApp</h2>
+          <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+            Texto pré-preenchido ao clicar em <b>WhatsApp</b> na lista/detalhe do candidato.
+          </p>
+          <form method="POST" action="/admin/config/whatsapp">
+            <label class="campo" style="max-width:420px;">
+              <span>Nome do recrutador</span>
+              <input type="text" name="recrutador_nome" value="${escapeHtml(recrutadorNome)}" placeholder="${escapeHtml(RECRUTADOR_PADRAO)}">
+            </label>
+            <label class="campo">
+              <span>Template da mensagem</span>
+              <textarea name="whatsapp_template" rows="4">${escapeHtml(whatsappTemplate)}</textarea>
+            </label>
+            <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+              Placeholders disponíveis:
+              <b>{primeiro_nome}</b> · <b>{vaga}</b> · <b>{empresa}</b> · <b>{recrutador}</b>.
+              Deixe o template <b>vazio</b> para usar o padrão. Quando a vaga não tem empresa,
+              o trecho “ da empresa {empresa}” é removido automaticamente.
+            </p>
+            <button type="submit" class="btn">Salvar</button>
+          </form>
+        </section>
+      </div>
+
+      <div data-tab-painel="campanhas" hidden>
+        <section class="rel-sec">
+          <h2>Campanhas e Divulgação</h2>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="promocao_ativa" value="1"${promocaoAtiva ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Enviar as <b>campanhas de Promoção de Vagas</b>
+            </span>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Interruptor do envio em massa de <a href="/admin/promocao">Promoção de Vagas</a>.
+            Desmarcado (padrão), campanhas podem ser criadas e até disparadas — elas ficam
+            <b>enfileiradas</b> e <b>nenhum e-mail sai</b>. Marcado, a rotina envia até
+            ${dispararPromocao.ENVIOS_POR_CICLO} e-mails a cada 15 minutos até esvaziar a
+            fila. É o único e-mail do sistema que vai para <b>toda a base</b>, e não apenas
+            para quem está num processo em andamento. <b>Só ligue depois de confirmar
+            remetente, domínio verificado e descadastro funcionando.</b>
+          </p>
+          <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
+        </section>
+
+        <section class="rel-sec">
+          <h2>E-mail de teste da Promoção de Vagas</h2>
+          <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+            Endereço fixo que recebe o botão <b>Enviar e-mail de teste para mim</b> da tela de
+            <a href="/admin/promocao">nova campanha</a>.
+          </p>
+          <form method="POST" action="/admin/config/email-teste-promocao">
+            <label class="campo" style="max-width:420px;">
+              <span>E-mail de teste</span>
+              <input type="email" name="email_teste_promocao" value="${escapeHtml(emailTeste)}"
+                placeholder="voce@suaempresa.com.br">
+            </label>
+            <p style="margin:-.5rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+              O e-mail de teste sai pelo <b>mesmo</b> provedor e com os <b>mesmos</b> cabeçalhos
+              de descadastro da campanha real — é para isso que ele serve: conferir formatação,
+              assunto e o link de descadastro antes de disparar para a base. O assunto vai
+              prefixado com <b>${escapeHtml(emailTestePromocao.PREFIXO_ASSUNTO.trim())}</b>, ele
+              <b>não</b> cria campanha nem consome destinatário, e funciona mesmo com
+              <b>Promoção de vagas</b> desligada acima. Só depende de o servidor ter
+              <b>DESCADASTRO_SECRET</b> e as credenciais de SMTP de campanha configuradas.
+              <b>Vazio (padrão) desliga o botão.</b>
+            </p>
+            <button type="submit" class="btn">Salvar</button>
+          </form>
+        </section>
+      </div>
+
+      <div data-tab-painel="manutencao" hidden>
+        <section class="rel-sec">
+          <h2>Manutenção</h2>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="limpeza_audio_ativo" value="1"${limpezaAudioAtiva ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Apagar <b>áudio de entrevistas</b> quando o disco encher
+            </span>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Libera espaço apagando os arquivos de áudio guardados no servidor. Só age
+            <b>quando o disco passa de ${limpezaAudio.limiarPct()}%</b> de uso, e só toca em
+            entrevistas <b>concluídas</b>, <b>com relatório pronto</b> e cujo <b>vídeo já
+            está salvo no Google Drive</b> — o vídeo continua lá, e a transcrição continua
+            no banco. No máximo ${limpezaAudio.remocoesPorCiclo()} entrevistas por vez, e
+            para assim que o disco volta ao normal. <b>A exclusão é definitiva.</b>
+          </p>
+          <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
+        </section>
+      </div>
+    </div>
+
+    <script>
+    (function () {
+      var raiz = document.querySelector('[data-admin-config-tabs]');
+      if (!raiz) return;
+      var botoes = Array.prototype.slice.call(raiz.querySelectorAll('[data-tab-btn]'));
+      var paineis = Array.prototype.slice.call(raiz.querySelectorAll('[data-tab-painel]'));
+      botoes.forEach(function (botao) {
+        botao.addEventListener('click', function () {
+          var chave = botao.getAttribute('data-tab-btn');
+          botoes.forEach(function (b) { b.classList.toggle('btn--ghost', b !== botao); });
+          paineis.forEach(function (p) { p.hidden = p.getAttribute('data-tab-painel') !== chave; });
+        });
+      });
+    })();
+    </script>`;
 
   res.send(paginaAdmin({ titulo: 'Configurações gerais', conteudo }));
 });
