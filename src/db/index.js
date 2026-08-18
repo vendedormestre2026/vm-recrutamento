@@ -183,6 +183,8 @@ module.exports = {
   obterTemplateWhatsapp: driver.obterTemplateWhatsapp,
   listarCidades: driver.listarCidades,
   obterCidadePorChave: driver.obterCidadePorChave,
+  criarCidade: driver.criarCidade,
+  criarRegiaoGrupo: driver.criarRegiaoGrupo,
   listarRegioesGrupos: driver.listarRegioesGrupos,
   obterLinkGrupo: driver.obterLinkGrupo,
   definirLinkGrupo: driver.definirLinkGrupo,

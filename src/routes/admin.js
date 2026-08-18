@@ -25,7 +25,7 @@ const lembreteInicio = require('../lib/lembreteInicio');
 const limpezaAudio = require('../lib/limpezaAudio');
 const dispararPromocao = require('../lib/dispararPromocao');
 const emailTestePromocao = require('../lib/emailTestePromocao');
-const { listarCidadesValidas, normalizarCidade } = require('../lib/cidades');
+const { listarCidadesValidas, normalizarCidade, chave: chaveCidade } = require('../lib/cidades');
 const { mimetypePorExtensao } = require('../lib/curriculo');
 const {
   normalizarTelefoneWhatsapp,
@@ -3052,16 +3052,81 @@ function blocoImportBriefing(erroImport) {
 
 // Aviso (topo do form) listando os campos que a IA NAO conseguiu preencher, para o admin
 // completar na revisao. Nao impede o salvamento. Lista as chaves cruas dos campos.
-function avisoCamposAusentes(ausentes) {
-  if (!Array.isArray(ausentes) || !ausentes.length) return '';
+//
+// `cidade` sai desta lista de proposito quando ha sugestao (cidadeSugeridaBruta): ela ganha
+// um bloco proprio, acionavel (blocoSugestaoCidade), em vez de so aparecer como texto cru
+// numa lista — a diferenca entre "falta preencher" e "falta uma DECISAO" (cadastrar ou nao
+// a praca nova).
+function avisoCamposAusentes(ausentes, temSugestaoCidade) {
+  const lista = Array.isArray(ausentes) ? ausentes.filter((a) => a !== 'cidade' || !temSugestaoCidade) : [];
+  if (!lista.length) return '';
   return `<p class="aviso-alerta">A IA não encontrou estes campos no briefing — revise e
-    preencha antes de salvar: <b>${escapeHtml(ausentes.join(', '))}</b>.</p>`;
+    preencha antes de salvar: <b>${escapeHtml(lista.join(', '))}</b>.</p>`;
+}
+
+// Bloco acionavel: a IA leu uma cidade no briefing que NAO esta no vocabulario (Incremento
+// 5 de ETAPA B). NUNCA cadastra sozinho — so oferece o mini-form com o nome PRE-PREENCHIDO
+// (mas editavel: a sugestao da IA e so o ponto de partida, quem decide a grafia final e o
+// admin) e o campo de link do grupo de WhatsApp, para as duas tabelas (`cidades` e
+// `regioes_grupos_whatsapp`) nascerem sincronizadas — ver a nota de criarRegiaoGrupo em
+// sqlite.js sobre por que a praca sem link ainda precisa da linha.
+//
+// `retomar` carrega vaga+ausentes JA EXTRAIDOS pela IA (serializados) para o POST de
+// cadastro devolver a MESMA tela preenchida, com a cidade nova ja selecionada — sem isso,
+// cadastrar a praca faria o admin perder titulo/descricao/etc. que a IA ja tinha lido.
+function blocoSugestaoCidade({ vaga, ausentes, erroCidade }) {
+  const sugestao = vaga && vaga.cidadeSugeridaBruta;
+  if (!sugestao) return '';
+  const erro = erroCidade ? `<p class="aviso-alerta">${escapeHtml(erroCidade)}</p>` : '';
+  return `
+    <div class="aviso-alerta">
+      <p>A IA leu “${escapeHtml(sugestao)}” no briefing, mas essa praça ainda não está
+        cadastrada.</p>
+      ${erro}
+      <form method="POST" action="/admin/vagas/cidades" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;margin-top:.5rem;">
+        <input type="hidden" name="retomar_vaga" value="${escapeHtml(JSON.stringify(vaga))}">
+        <input type="hidden" name="retomar_ausentes" value="${escapeHtml(JSON.stringify(ausentes || []))}">
+        <label class="campo" style="margin:0;min-width:14rem;">
+          <span>Nome da cidade</span>
+          <input type="text" name="nome_cidade" value="${escapeHtml(sugestao)}">
+        </label>
+        <label class="campo" style="margin:0;flex:1;min-width:16rem;">
+          <span>Link do grupo de WhatsApp desta praça (opcional)</span>
+          <input type="text" name="link_grupo_whatsapp" placeholder="https://chat.whatsapp.com/...">
+        </label>
+        <button type="submit" class="btn btn--ghost">Cadastrar cidade</button>
+      </form>
+    </div>`;
+}
+
+// Confirmacao (topo do form) apos o cadastro da cidade dar certo — a cidade ja esta
+// selecionada no <select> logo abaixo (vaga.cidade foi atualizado pela rota). O aviso de
+// link ausente e PERMANENTE na tela (nao some sozinho): a praca sem link e um estado que
+// precisa de acao, nao so informação — mesmo padrao do aviso de roteiro faltando.
+function blocoCidadeCadastrada(info) {
+  if (!info) return '';
+  const avisoLink = info.semLink
+    ? `<p class="aviso-alerta">Sem link de grupo cadastrado — campanhas de convite para
+        esta praça vão falhar até isso ser preenchido. Complete em
+        <a href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>.</p>`
+    : '';
+  return `<p class="aviso-ok">Cidade “${escapeHtml(info.nome)}” cadastrada e selecionada
+    nesta vaga.</p>${avisoLink}`;
 }
 
 // Conteudo da tela de nova vaga (compartilhado entre GET /vagas/nova e o re-render do
-// POST /vagas/importar). `vaga` pre-preenche o form (default = vaga em branco); `erroImport`
-// e a mensagem do bloco de import; `ausentes` alimenta o aviso de campos nao preenchidos.
-function htmlNovaVaga({ vaga, erroTituloVazio = false, erroImport = '', ausentes = [] } = {}) {
+// POST /vagas/importar e do POST /vagas/cidades). `vaga` pre-preenche o form (default =
+// vaga em branco); `erroImport` e a mensagem do bloco de import; `ausentes` alimenta o
+// aviso de campos nao preenchidos; `erroCidade`/`cidadeCadastrada` vem do cadastro de
+// praca (Incremento 5).
+function htmlNovaVaga({
+  vaga,
+  erroTituloVazio = false,
+  erroImport = '',
+  ausentes = [],
+  erroCidade = '',
+  cidadeCadastrada = null,
+} = {}) {
   const vagaBase = vaga || { ativo: true, perfil: 'CLOSER' };
   const erroTitulo = erroTituloVazio
     ? '<p class="aviso-alerta">O título da vaga não pode ficar vazio.</p>'
@@ -3070,7 +3135,9 @@ function htmlNovaVaga({ vaga, erroTituloVazio = false, erroImport = '', ausentes
     <p><a class="btn btn--ghost" href="/admin/vagas">← Voltar às vagas</a></p>
     <h1>Nova vaga</h1>
     ${blocoImportBriefing(erroImport)}
-    ${avisoCamposAusentes(ausentes)}
+    ${blocoCidadeCadastrada(cidadeCadastrada)}
+    ${blocoSugestaoCidade({ vaga: vagaBase, ausentes, erroCidade })}
+    ${avisoCamposAusentes(ausentes, Boolean(vagaBase.cidadeSugeridaBruta))}
     ${erroTitulo}
     <form method="POST" action="/admin/vagas">
       ${camposVagaHtml(vagaBase, { perfilEditavel: true })}
@@ -3113,6 +3180,76 @@ router.post('/vagas/importar', async (req, res) => {
     paginaAdmin({
       titulo: 'Nova vaga',
       conteudo: htmlNovaVaga({ vaga: resultado.vaga, ausentes: resultado.ausentes }),
+    }),
+  );
+});
+
+// ── POST /admin/vagas/cidades ── cadastra uma praca nova (Incremento 5), a partir da
+// sugestao do import de briefing — NUNCA automatico: e sempre esta submissao explicita do
+// admin (o nome vem PRE-PREENCHIDO pela sugestao, mas o campo e editavel; quem confirma a
+// grafia final e o admin, o mesmo papel que antes era "editar o codigo com revisao").
+// Registrada ANTES de /vagas/:id para não casar como :id.
+//
+// Re-renderiza a MESMA tela de nova vaga (nunca redirect): `retomar_vaga`/`retomar_ausentes`
+// carregam o que a IA ja tinha extraido (serializado pelos hidden inputs de
+// blocoSugestaoCidade), para o admin nao perder titulo/descricao/etc. so por cadastrar a
+// praca. Cria SEMPRE as duas linhas juntas (cidades + regioes_grupos_whatsapp, mesmo sem
+// link) — ver a nota de criarRegiaoGrupo em sqlite.js.
+router.post('/vagas/cidades', (req, res) => {
+  const b = req.body || {};
+  let vaga = {};
+  let ausentes = [];
+  try {
+    vaga = JSON.parse(b.retomar_vaga || '{}');
+  } catch {
+    vaga = {};
+  }
+  try {
+    ausentes = JSON.parse(b.retomar_ausentes || '[]');
+  } catch {
+    ausentes = [];
+  }
+
+  const nome = String(b.nome_cidade || '').trim();
+  const rerenderComErro = (erroCidade) =>
+    res.send(paginaAdmin({ titulo: 'Nova vaga', conteudo: htmlNovaVaga({ vaga, ausentes, erroCidade }) }));
+
+  if (!nome) {
+    return rerenderComErro('O nome da cidade não pode ficar vazio.');
+  }
+  // Duplicata: mesmo guard de sempre (normalizarCidade tolera caixa/acento) — erro amigavel
+  // em vez do erro cru de UNIQUE(chave)/UNIQUE(nome) do SQLite (mesmo padrao do slug,
+  // Incremento 1).
+  if (normalizarCidade(nome)) {
+    return rerenderComErro(`“${nome}” já está cadastrada (ou é muito parecida com uma cidade existente).`);
+  }
+
+  try {
+    db.criarCidade(nome, chaveCidade(nome));
+  } catch (e) {
+    // Cinto de seguranca contra corrida entre duas submissoes simultaneas com o mesmo nome
+    // (o guard normalizarCidade acima ja cobre o caso comum, sem corrida).
+    console.error('[admin/vagas/cidades] falha ao cadastrar:', e && e.message);
+    return rerenderComErro(`Não foi possível cadastrar “${nome}” — tente novamente.`);
+  }
+
+  const link = String(b.link_grupo_whatsapp || '').trim();
+  db.criarRegiaoGrupo(nome, link);
+
+  console.log(`[admin] cidade cadastrada: '${nome}'${link ? ' (com link de grupo)' : ' (sem link de grupo)'}`);
+
+  vaga.cidade = nome;
+  delete vaga.cidadeSugeridaBruta;
+  const ausentesSemCidade = Array.isArray(ausentes) ? ausentes.filter((a) => a !== 'cidade') : [];
+
+  return res.send(
+    paginaAdmin({
+      titulo: 'Nova vaga',
+      conteudo: htmlNovaVaga({
+        vaga,
+        ausentes: ausentesSemCidade,
+        cidadeCadastrada: { nome, semLink: !link },
+      }),
     }),
   );
 });

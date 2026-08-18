@@ -2966,6 +2966,30 @@ function obterCidadePorChave(chave) {
   return getDb().prepare('SELECT * FROM cidades WHERE chave = ?').get(chave);
 }
 
+// Cadastra uma praca nova (ETAPA B, Incremento 5 — admin, a partir da sugestao do import
+// de briefing ou digitada direto). `nome` e o valor CANONICO tal como o admin confirmou —
+// esta funcao nao normaliza nem valida nada, so insere; a checagem de duplicata (por
+// `chave`, tolerando caixa/acento) e responsabilidade do chamador (mesmo padrao de
+// atualizarSlugVaga: erro amigavel fica na rota, nao aqui). LANCA em UNIQUE(chave)/
+// UNIQUE(nome) se o chamador nao tiver checado antes — cinto de seguranca contra corrida
+// entre duas submissoes simultaneas, nao a trava principal.
+function criarCidade(nome, chaveNorm) {
+  const info = getDb().prepare('INSERT INTO cidades (nome, chave) VALUES (?, ?)').run(nome, chaveNorm);
+  return Number(info.lastInsertRowid);
+}
+
+// Cria a linha de grupo de WhatsApp da praca nova, SEMPRE (mesmo com link vazio/NULL) —
+// mesmo padrao do seed original (scripts/seed-campanha-whatsapp.js): e a linha existir,
+// e nao o link estar preenchido, que faz a praca aparecer em /admin/campanhas-whatsapp
+// como pendente. Sem esta linha, uma campanha de convite para a praca nova falharia com
+// "sem link de grupo" sem que o admin tivesse onde ver ou preencher isso.
+function criarRegiaoGrupo(cidade, link) {
+  const info = getDb()
+    .prepare('INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, ativo) VALUES (?, ?, 1)')
+    .run(cidade, String(link || '').trim() || null);
+  return Number(info.lastInsertRowid);
+}
+
 function listarRegioesGrupos() {
   return getDb().prepare('SELECT * FROM regioes_grupos_whatsapp ORDER BY cidade').all();
 }
@@ -3262,6 +3286,8 @@ module.exports = {
   obterTemplateWhatsapp,
   listarCidades,
   obterCidadePorChave,
+  criarCidade,
+  criarRegiaoGrupo,
   listarRegioesGrupos,
   obterLinkGrupo,
   definirLinkGrupo,
