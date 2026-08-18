@@ -48,44 +48,44 @@ const BASES_ALVO = [
   ['talentos', 'Somente base legada'],
 ];
 
-function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
-  const router = express.Router();
+// Contagem por status, agregada de UMA vez para todas as campanhas. A tela lista varias, e
+// uma consulta por linha seria N+1 no mesmo painel onde ele ja e divida conhecida.
+function contagensPorCampanha() {
+  const mapa = new Map();
+  for (const r of db.contarEnviosCampanhaWhatsapp()) {
+    if (!mapa.has(r.campanha_id)) mapa.set(r.campanha_id, {});
+    mapa.get(r.campanha_id)[r.status] = r.n;
+  }
+  return mapa;
+}
 
+// HTML interno da tela (/admin/campanhas-whatsapp), SEM o paginaAdmin(...) em volta —
+// extraida para uma funcao pura (Item 3 do ETAPA B "Ajustes no Admin", Commit 6)
+// reaproveitada tanto pela rota standalone abaixo (comportamento inalterado) quanto pela
+// nova pagina /admin/divulgacao-vagas (Commit 7), que a embute como uma das abas.
+function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
   const inteiro = (v) => (fmtInt ? fmtInt(v) : String(v));
 
-  // Contagem por status, agregada de UMA vez para todas as campanhas. A tela lista varias, e
-  // uma consulta por linha seria N+1 no mesmo painel onde ele ja e divida conhecida.
-  function contagensPorCampanha() {
-    const mapa = new Map();
-    for (const r of db.contarEnviosCampanhaWhatsapp()) {
-      if (!mapa.has(r.campanha_id)) mapa.set(r.campanha_id, {});
-      mapa.get(r.campanha_id)[r.status] = r.n;
-    }
-    return mapa;
-  }
+  const templates = db.listarTemplatesWhatsapp();
+  const regioes = db.listarRegioesGrupos();
+  const campanhas = db.listarCampanhasWhatsapp();
+  const contagens = contagensPorCampanha();
+  const ativo = campanha.ativo();
+  const emMock = transporte.modoMock();
+  // Agora sao as CENTRALWHATS_*: quem fala com a Meta e o Central Whats, com o token dele.
+  const faltando = transporte.credenciaisFaltando();
+  const semLink = regioes.filter((r) => !r.link_convite_grupo).length;
 
-  // ── GET / ── a tela ──
-  router.get('/', (req, res) => {
-    const templates = db.listarTemplatesWhatsapp();
-    const regioes = db.listarRegioesGrupos();
-    const campanhas = db.listarCampanhasWhatsapp();
-    const contagens = contagensPorCampanha();
-    const ativo = campanha.ativo();
-    const emMock = transporte.modoMock();
-    // Agora sao as CENTRALWHATS_*: quem fala com a Meta e o Central Whats, com o token dele.
-    const faltando = transporte.credenciaisFaltando();
-    const semLink = regioes.filter((r) => !r.link_convite_grupo).length;
+  // Diagnostico do que impede um disparo real. Ordem deliberada: da barreira mais externa
+  // (o interruptor) para a mais interna (link faltando), que e a que o operador resolve
+  // nesta mesma tela.
+  const pendencias = [];
+  if (!ativo) pendencias.push('O interruptor <b>Campanha por WhatsApp</b> está desligado em <a href="/admin/config">Configurações</a>.');
+  if (emMock) pendencias.push('<code>META_CAMPANHA_MOCK</code> está ligado: o ciclo registra no log e <b>não envia nada</b>.');
+  if (faltando.length) pendencias.push(`Credenciais ausentes no ambiente: <code>${faltando.join('</code>, <code>')}</code>.`);
+  if (semLink) pendencias.push(`<b>${semLink}</b> praça(s) ainda sem link de grupo — preencha abaixo.`);
 
-    // Diagnostico do que impede um disparo real. Ordem deliberada: da barreira mais externa
-    // (o interruptor) para a mais interna (link faltando), que e a que o operador resolve
-    // nesta mesma tela.
-    const pendencias = [];
-    if (!ativo) pendencias.push('O interruptor <b>Campanha por WhatsApp</b> está desligado em <a href="/admin/config">Configurações</a>.');
-    if (emMock) pendencias.push('<code>META_CAMPANHA_MOCK</code> está ligado: o ciclo registra no log e <b>não envia nada</b>.');
-    if (faltando.length) pendencias.push(`Credenciais ausentes no ambiente: <code>${faltando.join('</code>, <code>')}</code>.`);
-    if (semLink) pendencias.push(`<b>${semLink}</b> praça(s) ainda sem link de grupo — preencha abaixo.`);
-
-    const linhaRegiao = (r) => `
+  const linhaRegiao = (r) => `
       <tr>
         <td>${escapeHtml(r.cidade)}</td>
         <td>
@@ -99,10 +99,10 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
         <td>${r.link_convite_grupo ? '<span class="badge badge--ativa">ok</span>' : '<span class="badge badge--aplicado">vazio</span>'}</td>
       </tr>`;
 
-    const linhaCampanha = (c) => {
-      const n = contagens.get(c.id) || {};
-      const total = Object.values(n).reduce((a, b) => a + b, 0);
-      return `
+  const linhaCampanha = (c) => {
+    const n = contagens.get(c.id) || {};
+    const total = Object.values(n).reduce((a, b) => a + b, 0);
+    return `
       <tr>
         <td>${c.id}</td>
         <td>${escapeHtml(c.nome)}</td>
@@ -122,9 +122,9 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
             : `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/status"><input type="hidden" name="status" value="pausada"><button class="btn btn--ghost">Pausar</button></form>`}
         </td>
       </tr>`;
-    };
+  };
 
-    const conteudo = `
+  return `
     <h1>Campanha por WhatsApp</h1>
     <p class="admin-sub" style="margin-bottom:1.25rem">
       Envio em massa pela API oficial da Meta. Frente separada da sequência WA1/WA2 —
@@ -202,7 +202,14 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
         </table>
       </div>
     </section>`;
+}
 
+function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
+  const router = express.Router();
+
+  // ── GET / ── a tela ──
+  router.get('/', (req, res) => {
+    const conteudo = montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt });
     res.send(paginaAdmin({ titulo: 'Campanha por WhatsApp', conteudo }));
   });
 
@@ -323,4 +330,4 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
   return router;
 }
 
-module.exports = { criarRouterCampanhaWhatsapp, BASES_ALVO };
+module.exports = { criarRouterCampanhaWhatsapp, BASES_ALVO, montarConteudoCampanhaWhatsapp };

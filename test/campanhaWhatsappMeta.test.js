@@ -40,6 +40,8 @@ const transporte = require('../src/providers/centralWhats/centralWhats');
 const job = require('../src/lib/campanhaWhatsapp');
 const webhook = require('../src/routes/webhook_meta');
 const { CIDADES_VALIDAS } = require('../src/lib/cidades');
+const { montarConteudoCampanhaWhatsapp } = require('../src/routes/admin_campanha_whatsapp');
+const { escapeHtml } = require('../src/views');
 
 migrar();
 
@@ -829,6 +831,21 @@ test('admin: a tela lista pracas, templates e diz o que falta', async () => {
     assert.match(html, /interruptor <b>Campanha por WhatsApp<\/b> está desligado/);
     assert.match(html, /META_CAMPANHA_MOCK/);
   });
+});
+
+test('montarConteudoCampanhaWhatsapp: fragmento puro (Item 3 do ETAPA B, Commit 6) sem o paginaAdmin em volta', () => {
+  // Extraida para ser reaproveitada pela futura pagina /admin/divulgacao-vagas (Commit 7)
+  // sem duplicar a logica desta tela. Aqui so confirma que e uma funcao pura chamavel
+  // fora da rota, devolvendo o MESMO fragmento que a rota standalone envia hoje (ja
+  // coberto ponta-a-ponta pelo teste 'admin: a tela lista pracas...' acima).
+  zerar();
+  montarCenario();
+  const conteudo = montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt: (v) => String(v) });
+  assert.match(conteudo, /Campanha por WhatsApp/);
+  assert.match(conteudo, /Links dos grupos por praça/);
+  // E so o fragmento — nao a pagina inteira (isso e responsabilidade do paginaAdmin).
+  assert.ok(!conteudo.includes('<html'));
+  assert.ok(!conteudo.includes('<title>'));
 });
 
 test('admin: salvar link da praca persiste; cidade forjada e recusada', async () => {
