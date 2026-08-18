@@ -15,7 +15,7 @@ const multer = require('multer');
 
 const { config } = require('../config');
 const db = require('../db');
-const { extrairTextoPdf } = require('../lib/curriculo');
+const { extrairTextoPdf, extensaoDoArquivo } = require('../lib/curriculo');
 const { analisarCurriculo } = require('../lib/analise_curriculo');
 const emailProvider = require('../providers/email');
 const { renderizarResultadoTalentoHtml } = require('./banco_curriculos');
@@ -148,9 +148,11 @@ router.post('/banco-curriculos', (req, res) => {
       // do banco para salvar o arquivo — espirito do token de applications).
       const uuid = crypto.randomUUID();
 
-      // Salva o PDF na pasta do banco de talentos (SEPARADA da do funil; cria se faltar).
+      // Salva o curriculo na pasta do banco de talentos (SEPARADA da do funil; cria se
+      // faltar). Extensao real do arquivo, nao mais fixa em .pdf — mesmo motivo do funil
+      // (routes/api.js).
       fs.mkdirSync(config.caminhoCurriculosTalentos, { recursive: true });
-      const caminhoPdf = path.join(config.caminhoCurriculosTalentos, `${uuid}.pdf`);
+      const caminhoPdf = path.join(config.caminhoCurriculosTalentos, `${uuid}.${extensaoDoArquivo(req.file)}`);
       fs.writeFileSync(caminhoPdf, req.file.buffer);
 
       // Extrai o texto do PDF (truncado em ~20.000 caracteres no helper; PDF ilegivel

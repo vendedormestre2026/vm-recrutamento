@@ -15,7 +15,7 @@ const db = require('../db');
 const session = require('../lib/session');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
 const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
-const { extrairTextoPdf } = require('../lib/curriculo');
+const { extrairTextoPdf, extensaoDoArquivo } = require('../lib/curriculo');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const { lerUtmDoCookie } = require('../lib/utm');
@@ -218,9 +218,11 @@ router.post('/aplicacao', (req, res) => {
 
       const token = session.gerarToken();
 
-      // Salva o PDF no volume persistente (cria a pasta se nao existir)
+      // Salva o curriculo no volume persistente (cria a pasta se nao existir). Extensao real
+      // do arquivo, nao mais fixa em .pdf — hoje so PDF passa pelo fileFilter, mas gravar a
+      // extensao certa desde ja evita divergencia no dia em que outros tipos forem aceitos.
       fs.mkdirSync(config.caminhoCurriculos, { recursive: true });
-      const caminhoPdf = path.join(config.caminhoCurriculos, `${token}.pdf`);
+      const caminhoPdf = path.join(config.caminhoCurriculos, `${token}.${extensaoDoArquivo(req.file)}`);
       fs.writeFileSync(caminhoPdf, req.file.buffer);
 
       // Extrai o texto do PDF (truncado em ~20.000 caracteres no helper)
