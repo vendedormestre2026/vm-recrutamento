@@ -78,6 +78,13 @@ function montarMensagensExtracao(briefingTexto) {
     // canonica para recorte de base. Pedir os dois separadamente e o que evita ter que
     // adivinhar um a partir do outro depois — e adivinhar erraria "Campinas, Sao Paulo-SP".
     '  // `endereco` e o texto completo; `cidade` e so a praca da lista acima.',
+    // Campo IRMAO de `cidade`, sem restricao de lista — existe so para o caso em que o
+    // briefing menciona uma praca fora do vocabulario fechado. `cidade` continua "" nesse
+    // caso (o enum fechado nao muda aqui, isso e decisao de outro incremento), mas sem este
+    // campo o texto que a IA leu se perde e o admin fica sem pista do que preencher na
+    // revisao. Sempre preenchido quando ha alguma cidade/praca no texto, MESMO quando
+    // `cidade` bateu com a lista (redundante nesse caso, e inofensivo).
+    '  "cidade_bruta": "string",  // cidade/praca como aparece no briefing, SEM filtrar pela lista acima; "" se o briefing nao mencionar nenhuma',
     '  "modalidade": "presencial" | "híbrido" | "remoto" | "",  // so esses; se nao achar, ""',
     '  "regime": "CLT" | "PJ" | "",           // so esses; se nao achar, ""',
     '  "horario": "string",',
@@ -152,7 +159,20 @@ function parseExtracaoVaga(textoLLM) {
   // `|| ''` porque normalizarCidade devolve null (o valor da coluna) e o form espera ''
   // para "vazio", igual aos outros dois enums. A conversao mora aqui, no ponto de uso.
   vaga.cidade = normalizarCidade(obj.cidade) || '';
-  if (!vaga.cidade) ausentes.push('cidade');
+  if (!vaga.cidade) {
+    ausentes.push('cidade');
+    // Preserva o texto BRUTO que a IA leu (cidade_bruta, ou o proprio `cidade` no caso
+    // raro do modelo ignorar a restricao da lista e devolver texto livre ali) — hoje esse
+    // dado se perdia no `|| ''` acima. Nao valida nem tenta casar com nada aqui: e so
+    // insumo para o admin decidir, na revisao, se cadastra a praca nova (ver Incremento 5).
+    // Ausente (nao "") quando a IA nao leu cidade nenhuma, para o consumidor distinguir
+    // "sem sugestao" de "sugestao vazia" sem precisar de um sentinela por string.
+    const bruta =
+      (typeof obj.cidade_bruta === 'string' && obj.cidade_bruta.trim()) ||
+      (typeof obj.cidade === 'string' && obj.cidade.trim()) ||
+      '';
+    if (bruta) vaga.cidadeSugeridaBruta = bruta;
+  }
   vaga.modalidade = normalizarModalidade(obj.modalidade);
   if (!vaga.modalidade) ausentes.push('modalidade');
   vaga.regime = normalizarRegime(obj.regime);
