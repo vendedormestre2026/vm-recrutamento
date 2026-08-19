@@ -234,6 +234,18 @@ function atualizarSlugVaga(id, novoSlug) {
   return info.changes;
 }
 
+// Troca so a cidade da vaga. MESMO padrao de atualizarSlugVaga: acao isolada, coluna
+// isolada, fora do form geral — aqui e o cadastro de praca nova a partir da tela de edicao
+// (ETAPA B, Incremento 2) que aplica a cidade recem-criada sem passar pelo POST /vagas/:id
+// grande. Sem validacao de formato/duplicata aqui: isso e responsabilidade de quem chama
+// (cadastrarCidadeSeNova, em admin.js, ja fez essa checagem antes de chegar aqui).
+function definirCidadeVaga(id, cidade) {
+  const info = getDb()
+    .prepare('UPDATE jobs SET cidade = ? WHERE id = ?')
+    .run(cidade, id);
+  return info.changes;
+}
+
 // Roteiros
 function obterRoteiro(id) {
   return roteiroDeLinha(getDb().prepare('SELECT * FROM roteiros WHERE id = ?').get(id));
@@ -3268,6 +3280,7 @@ module.exports = {
   criarVaga,
   atualizarVaga,
   atualizarSlugVaga,
+  definirCidadeVaga,
   definirVagaAtiva,
   // painel (Fase 5)
   CANDIDATOS_POR_PAGINA,

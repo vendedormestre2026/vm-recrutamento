@@ -23,6 +23,7 @@ module.exports = {
   criarVaga: driver.criarVaga,
   atualizarVaga: driver.atualizarVaga,
   atualizarSlugVaga: driver.atualizarSlugVaga,
+  definirCidadeVaga: driver.definirCidadeVaga,
   definirVagaAtiva: driver.definirVagaAtiva,
 
   // roteiros

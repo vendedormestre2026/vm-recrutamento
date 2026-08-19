@@ -3430,6 +3430,33 @@ router.post('/vagas/:id/slug', (req, res) => {
   res.redirect(`/admin/vagas/${id}?salvoSlug=1`);
 });
 
+// ── POST /admin/vagas/:id/cidades ── cadastra uma praca nova a partir da tela de EDICAO
+// (ETAPA B, Incremento 2) e JA APLICA em jobs.cidade — diferente do fluxo de criacao
+// (POST /vagas/cidades), que so pre-seleciona num rascunho ainda nao salvo. Aqui a vaga ja
+// existe com id estavel, entao "cadastrar e aplicar" num UPDATE estreito
+// (definirCidadeVaga) e seguro e poupa o admin de reselecionar no form grande depois —
+// mesmo padrao de acao isolada + redirect com querystring do slug, logo acima.
+//
+// Reusa cadastrarCidadeSeNova (extraida no Incremento 1) para a MESMA validacao de
+// duplicata/nome vazio do fluxo de criacao — sem duplicar a logica.
+router.post('/vagas/:id/cidades', (req, res) => {
+  const id = Number(req.params.id);
+  const vaga = Number.isInteger(id) ? db.obterVaga(id) : null;
+  if (!vaga) {
+    return res.status(404).send(paginaErroAdmin('Vaga não encontrada.'));
+  }
+
+  const b = req.body || {};
+  const resultado = cadastrarCidadeSeNova(b.nome_cidade, b.link_grupo_whatsapp);
+  if (!resultado.ok) {
+    return res.redirect(`/admin/vagas/${id}?erroCidade=${encodeURIComponent(resultado.erro)}`);
+  }
+
+  db.definirCidadeVaga(id, resultado.nome);
+  const avisoSemLink = resultado.semLink ? '&semLinkCidade=1' : '';
+  res.redirect(`/admin/vagas/${id}?salvoCidade=1${avisoSemLink}`);
+});
+
 // ── GET /admin/vaga ── compatibilidade: redireciona p/ a edicao da vaga ativa ──
 router.get('/vaga', (req, res) => {
   const vaga = db.obterVagaAtiva() || db.obterVaga(1);
