@@ -3184,6 +3184,46 @@ router.post('/vagas/importar', async (req, res) => {
   );
 });
 
+// Cadastra uma praca nova — logica PURA, sem side-effect de resposta HTTP (nem redirect,
+// nem res.send): a ETAPA A identificou que POST /admin/vagas/cidades tinha essa checagem
+// (duplicata + criarCidade + criarRegiaoGrupo) acoplada ao "o que fazer depois" do fluxo de
+// criacao (re-renderizar htmlNovaVaga). Extraida aqui para o Incremento 2 (edicao) poder
+// reusar a MESMA validacao sem herdar esse acoplamento — cada rota chamadora decide sozinha
+// como responder ao admin (re-render, redirect, o que for).
+//
+// Cria SEMPRE as duas linhas juntas quando da certo (cidades + regioes_grupos_whatsapp,
+// mesmo sem link) — ver a nota de criarRegiaoGrupo em sqlite.js sobre o porque.
+//
+// Retorna `{ ok: true, nome, semLink }` ou `{ ok: false, erro }`. NUNCA lanca.
+function cadastrarCidadeSeNova(nomeBruto, linkGrupoBruto) {
+  const nome = String(nomeBruto || '').trim();
+  if (!nome) {
+    return { ok: false, erro: 'O nome da cidade não pode ficar vazio.' };
+  }
+  // Duplicata: mesmo guard de sempre (normalizarCidade tolera caixa/acento) — erro amigavel
+  // em vez do erro cru de UNIQUE(chave)/UNIQUE(nome) do SQLite (mesmo padrao do slug,
+  // Incremento 1).
+  if (normalizarCidade(nome)) {
+    return { ok: false, erro: `“${nome}” já está cadastrada (ou é muito parecida com uma cidade existente).` };
+  }
+
+  try {
+    db.criarCidade(nome, chaveCidade(nome));
+  } catch (e) {
+    // Cinto de seguranca contra corrida entre duas submissoes simultaneas com o mesmo nome
+    // (o guard normalizarCidade acima ja cobre o caso comum, sem corrida).
+    console.error('[admin/cidades] falha ao cadastrar:', e && e.message);
+    return { ok: false, erro: `Não foi possível cadastrar “${nome}” — tente novamente.` };
+  }
+
+  const link = String(linkGrupoBruto || '').trim();
+  db.criarRegiaoGrupo(nome, link);
+
+  console.log(`[admin] cidade cadastrada: '${nome}'${link ? ' (com link de grupo)' : ' (sem link de grupo)'}`);
+
+  return { ok: true, nome, semLink: !link };
+}
+
 // ── POST /admin/vagas/cidades ── cadastra uma praca nova (Incremento 5), a partir da
 // sugestao do import de briefing — NUNCA automatico: e sempre esta submissao explicita do
 // admin (o nome vem PRE-PREENCHIDO pela sugestao, mas o campo e editavel; quem confirma a
@@ -3193,8 +3233,8 @@ router.post('/vagas/importar', async (req, res) => {
 // Re-renderiza a MESMA tela de nova vaga (nunca redirect): `retomar_vaga`/`retomar_ausentes`
 // carregam o que a IA ja tinha extraido (serializado pelos hidden inputs de
 // blocoSugestaoCidade), para o admin nao perder titulo/descricao/etc. so por cadastrar a
-// praca. Cria SEMPRE as duas linhas juntas (cidades + regioes_grupos_whatsapp, mesmo sem
-// link) — ver a nota de criarRegiaoGrupo em sqlite.js.
+// praca — esse re-render (em vez de redirect) e o que ainda diferencia esta rota da versao
+// de edicao (POST /vagas/:id/cidades, Incremento 2): a vaga aqui ainda nao foi salva.
 router.post('/vagas/cidades', (req, res) => {
   const b = req.body || {};
   let vaga = {};
@@ -3210,35 +3250,14 @@ router.post('/vagas/cidades', (req, res) => {
     ausentes = [];
   }
 
-  const nome = String(b.nome_cidade || '').trim();
-  const rerenderComErro = (erroCidade) =>
-    res.send(paginaAdmin({ titulo: 'Nova vaga', conteudo: htmlNovaVaga({ vaga, ausentes, erroCidade }) }));
-
-  if (!nome) {
-    return rerenderComErro('O nome da cidade não pode ficar vazio.');
-  }
-  // Duplicata: mesmo guard de sempre (normalizarCidade tolera caixa/acento) — erro amigavel
-  // em vez do erro cru de UNIQUE(chave)/UNIQUE(nome) do SQLite (mesmo padrao do slug,
-  // Incremento 1).
-  if (normalizarCidade(nome)) {
-    return rerenderComErro(`“${nome}” já está cadastrada (ou é muito parecida com uma cidade existente).`);
+  const resultado = cadastrarCidadeSeNova(b.nome_cidade, b.link_grupo_whatsapp);
+  if (!resultado.ok) {
+    return res.send(
+      paginaAdmin({ titulo: 'Nova vaga', conteudo: htmlNovaVaga({ vaga, ausentes, erroCidade: resultado.erro }) }),
+    );
   }
 
-  try {
-    db.criarCidade(nome, chaveCidade(nome));
-  } catch (e) {
-    // Cinto de seguranca contra corrida entre duas submissoes simultaneas com o mesmo nome
-    // (o guard normalizarCidade acima ja cobre o caso comum, sem corrida).
-    console.error('[admin/vagas/cidades] falha ao cadastrar:', e && e.message);
-    return rerenderComErro(`Não foi possível cadastrar “${nome}” — tente novamente.`);
-  }
-
-  const link = String(b.link_grupo_whatsapp || '').trim();
-  db.criarRegiaoGrupo(nome, link);
-
-  console.log(`[admin] cidade cadastrada: '${nome}'${link ? ' (com link de grupo)' : ' (sem link de grupo)'}`);
-
-  vaga.cidade = nome;
+  vaga.cidade = resultado.nome;
   delete vaga.cidadeSugeridaBruta;
   const ausentesSemCidade = Array.isArray(ausentes) ? ausentes.filter((a) => a !== 'cidade') : [];
 
@@ -3248,7 +3267,7 @@ router.post('/vagas/cidades', (req, res) => {
       conteudo: htmlNovaVaga({
         vaga,
         ausentes: ausentesSemCidade,
-        cidadeCadastrada: { nome, semLink: !link },
+        cidadeCadastrada: { nome: resultado.nome, semLink: resultado.semLink },
       }),
     }),
   );
