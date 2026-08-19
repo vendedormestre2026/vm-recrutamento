@@ -2701,7 +2701,15 @@ function opcoesSelect(atual, pares) {
 // Campos do formulario de vaga (compartilhados entre criar e editar). No modo "novo"
 // o perfil e um <select> (define o roteiro vinculado); no modo "editar" o perfil e
 // apenas exibido (atualizarVaga nao mexe em perfil/roteiro_id/slug).
-function camposVagaHtml(vaga, { perfilEditavel }) {
+// `cidadeCadastroAction`/`cidadeCadastroHidden`: para onde o mini-form do `<details>` de
+// "cadastrar cidade nova" (ETAPA B, Incremento 3) submete, e os hidden inputs que ele leva
+// junto. NAO reusamos `perfilEditavel` para decidir isso (ETAPA A apontou o risco: e um
+// flag que significa outra coisa — se um dia existir edicao com perfil editavel, os dois
+// se descolam e um vira bug silencioso do outro). Cada CHAMADOR (htmlNovaVaga / GET
+// /vagas/:id) monta esses dois valores porque so ele sabe o contexto real: criacao aponta
+// para /admin/vagas/cidades com os hidden de retomar_vaga; edicao aponta para
+// /admin/vagas/:id/cidades sem hidden nenhum (a vaga ja tem id estavel).
+function camposVagaHtml(vaga, { perfilEditavel, cidadeCadastroAction, cidadeCadastroHidden = '' }) {
   const perfilCampo = perfilEditavel
     ? `<label class="campo">
         <span>Perfil</span>
@@ -2754,6 +2762,24 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
         o endereço acima continua sendo o texto exibido na página da vaga.
       </small>
     </label>
+    <details style="margin:-.6rem 0 1.2rem;">
+      <summary style="cursor:pointer;color:var(--cinza);font-size:.85rem;">+ Cadastrar cidade nova</summary>
+      <form method="POST" action="${cidadeCadastroAction}" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;margin-top:.6rem;">
+        ${cidadeCadastroHidden}
+        <label class="campo" style="margin:0;min-width:14rem;">
+          <span>Nome da cidade</span>
+          <input type="text" name="nome_cidade" placeholder="Ex.: Belo Horizonte">
+        </label>
+        <label class="campo" style="margin:0;flex:1;min-width:16rem;">
+          <span>Link do grupo de WhatsApp desta praça (opcional)</span>
+          <input type="text" name="link_grupo_whatsapp" placeholder="https://chat.whatsapp.com/...">
+        </label>
+        <button type="submit" class="btn btn--ghost">Cadastrar cidade</button>
+      </form>
+      <p style="color:var(--cinza);font-size:.78rem;margin:.35rem 0 0;">
+        Sem link, campanhas de convite de grupo para essa praça vão falhar até isso ser
+        cadastrado depois.</p>
+    </details>
 
     <label class="campo">
       <span>Modalidade</span>
@@ -3064,6 +3090,17 @@ function avisoCamposAusentes(ausentes, temSugestaoCidade) {
     preencha antes de salvar: <b>${escapeHtml(lista.join(', '))}</b>.</p>`;
 }
 
+// Hidden inputs que carregam vaga+ausentes JA EXTRAIDOS (serializados em JSON) para o POST
+// de cadastro de cidade devolver a MESMA tela preenchida — sem isso, cadastrar a praca a
+// partir da tela de NOVA vaga (ainda nao salva) faria o admin perder titulo/descricao/etc.
+// que a IA ja tinha lido (ou que ele mesmo ja tinha digitado). So faz sentido no fluxo de
+// CRIACAO: na edicao a vaga ja tem id estavel, entao a rota (POST /vagas/:id/cidades) nao
+// precisa disso — ver camposVagaHtml/htmlNovaVaga logo abaixo.
+function hiddenRetomarVaga(vaga, ausentes) {
+  return `<input type="hidden" name="retomar_vaga" value="${escapeHtml(JSON.stringify(vaga || {}))}">
+        <input type="hidden" name="retomar_ausentes" value="${escapeHtml(JSON.stringify(ausentes || []))}">`;
+}
+
 // Bloco acionavel: a IA leu uma cidade no briefing que NAO esta no vocabulario (Incremento
 // 5 de ETAPA B). NUNCA cadastra sozinho — so oferece o mini-form com o nome PRE-PREENCHIDO
 // (mas editavel: a sugestao da IA e so o ponto de partida, quem decide a grafia final e o
@@ -3071,9 +3108,10 @@ function avisoCamposAusentes(ausentes, temSugestaoCidade) {
 // `regioes_grupos_whatsapp`) nascerem sincronizadas — ver a nota de criarRegiaoGrupo em
 // sqlite.js sobre por que a praca sem link ainda precisa da linha.
 //
-// `retomar` carrega vaga+ausentes JA EXTRAIDOS pela IA (serializados) para o POST de
-// cadastro devolver a MESMA tela preenchida, com a cidade nova ja selecionada — sem isso,
-// cadastrar a praca faria o admin perder titulo/descricao/etc. que a IA ja tinha lido.
+// So aparece no fluxo de CRIACAO (a partir do import de briefing). Ficou intocado no
+// Incremento 3 (ETAPA B) de proposito: e o caso especifico "a IA ja leu o nome" — o
+// `<details>` generico dentro de camposVagaHtml cobre o caso geral (criacao em branco OU
+// edicao, sem nome pre-preenchido), e os dois convivem sem se substituir.
 function blocoSugestaoCidade({ vaga, ausentes, erroCidade }) {
   const sugestao = vaga && vaga.cidadeSugeridaBruta;
   if (!sugestao) return '';
@@ -3084,8 +3122,7 @@ function blocoSugestaoCidade({ vaga, ausentes, erroCidade }) {
         cadastrada.</p>
       ${erro}
       <form method="POST" action="/admin/vagas/cidades" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;margin-top:.5rem;">
-        <input type="hidden" name="retomar_vaga" value="${escapeHtml(JSON.stringify(vaga))}">
-        <input type="hidden" name="retomar_ausentes" value="${escapeHtml(JSON.stringify(ausentes || []))}">
+        ${hiddenRetomarVaga(vaga, ausentes)}
         <label class="campo" style="margin:0;min-width:14rem;">
           <span>Nome da cidade</span>
           <input type="text" name="nome_cidade" value="${escapeHtml(sugestao)}">
@@ -3140,7 +3177,11 @@ function htmlNovaVaga({
     ${avisoCamposAusentes(ausentes, Boolean(vagaBase.cidadeSugeridaBruta))}
     ${erroTitulo}
     <form method="POST" action="/admin/vagas">
-      ${camposVagaHtml(vagaBase, { perfilEditavel: true })}
+      ${camposVagaHtml(vagaBase, {
+        perfilEditavel: true,
+        cidadeCadastroAction: '/admin/vagas/cidades',
+        cidadeCadastroHidden: hiddenRetomarVaga(vagaBase, ausentes),
+      })}
       <p style="color:var(--cinza);font-size:.85rem;margin-top:-.5rem;">
         O roteiro de entrevista é vinculado automaticamente pelo perfil escolhido.</p>
       <button type="submit" class="btn">Criar vaga</button>
@@ -3323,6 +3364,21 @@ router.get('/vagas/:id', (req, res) => {
   // Slug (Incremento 1/2): erroSlug='vazio'|'duplicado' renderiza dentro do proprio bloco
   // (blocoEditarSlug); salvoSlug=1 usa a mesma mensagem de sucesso do form geral.
   const salvoSlug = req.query.salvoSlug === '1' ? '<p class="aviso-ok">Link salvo.</p>' : '';
+  // Cidade (Incremento 2/3): mesmo padrao de mensageria do slug — salvoCidade=1 e sucesso;
+  // erroCidade=<msg> (URL-encoded pela rota) e erro; semLinkCidade=1 acompanha o sucesso
+  // quando a praca nasceu sem link de grupo — aviso PERMANENTE (nao some sozinho, mesmo
+  // padrao de blocoCidadeCadastrada no fluxo de criacao), com atalho pra completar depois.
+  const salvoCidade =
+    req.query.salvoCidade === '1' ? '<p class="aviso-ok">Cidade cadastrada e aplicada a esta vaga.</p>' : '';
+  const erroCidade = req.query.erroCidade
+    ? `<p class="aviso-alerta">${escapeHtml(String(req.query.erroCidade))}</p>`
+    : '';
+  const semLinkCidade =
+    req.query.semLinkCidade === '1'
+      ? `<p class="aviso-alerta">Sem link de grupo cadastrado — campanhas de convite para
+          essa praça vão falhar até isso ser preenchido. Complete em
+          <a href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>.</p>`
+      : '';
 
   const conteudo = `
     <p><a class="btn btn--ghost" href="/admin/vagas">← Voltar às vagas</a></p>
@@ -3333,8 +3389,14 @@ router.get('/vagas/:id', (req, res) => {
     ${blocoLinksEtapa(vaga)}
     ${salvoSlug}
     ${blocoEditarSlug(vaga, { erroSlug: req.query.erroSlug })}
+    ${salvoCidade}
+    ${erroCidade}
+    ${semLinkCidade}
     <form method="POST" action="/admin/vagas/${vaga.id}">
-      ${camposVagaHtml(vaga, { perfilEditavel: false })}
+      ${camposVagaHtml(vaga, {
+        perfilEditavel: false,
+        cidadeCadastroAction: `/admin/vagas/${vaga.id}/cidades`,
+      })}
       <button type="submit" class="btn">Salvar alterações</button>
     </form>`;
 
