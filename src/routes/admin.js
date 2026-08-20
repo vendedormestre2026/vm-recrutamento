@@ -4692,6 +4692,13 @@ router.get('/config', (req, res) => {
   // Limpeza automatica de audio no volume (default desligada).
   const limpezaAudioAtiva = db.obterConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, false);
 
+  // Sugestao de data pro backup manual de curriculos (GET /admin/curriculos-backup):
+  // so preenche o campo, o Rafael pode trocar antes de clicar. 90 dias e um piso
+  // razoavel — nao apaga nada sozinho, entao nao ha risco em sugerir um valor.
+  const sugestaoAntesCurriculos = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
   // Disparo das campanhas de Promocao de Vagas (default desligado).
   const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
   const whatsappSeqAtiva = db.obterConfigBool(CHAVE_WHATSAPP_SEQ, false);
@@ -4895,6 +4902,24 @@ router.get('/config', (req, res) => {
             </span>
           </label>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
+        </section>
+
+        <section class="rel-sec">
+          <h2>Backup de currículos</h2>
+          <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+            <code>/data/curriculos</code> não tem limpeza automática (ao contrário do áudio
+            de entrevista, acima) — baixe periodicamente os currículos mais antigos que uma
+            data e arquive no Google Drive por conta própria. O pacote <code>.tar.gz</code>
+            inclui um <code>manifesto.csv</code> com os dados de cada candidato, já que os
+            arquivos em disco têm nome opaco. Nada é apagado do servidor por este botão.
+          </p>
+          <form method="GET" action="/admin/curriculos-backup" class="admin-filtros">
+            <label class="filtro">
+              <span>Currículos anteriores a</span>
+              <input type="date" name="antes" value="${escapeHtml(sugestaoAntesCurriculos)}" required>
+            </label>
+            <button type="submit" class="btn">Baixar currículos antigos (.tar.gz)</button>
+          </form>
         </section>
       </div>
     </div>
