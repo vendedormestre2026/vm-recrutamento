@@ -460,6 +460,16 @@ test('o texto enviado e o da ETAPA certa', async () => {
 
 // ══════════════════ onWhatsApp — checagem de existencia real (Incremento 4) ══════════════════
 
+// `criarApplication()` usa '+55 (47) 99958-2500' — celular BR de 9 digitos, DDD 47 (o mesmo
+// da investigacao). Isso faz esses 3 testes entrarem no caminho NOVO (onWhatsAppLote em
+// lote, para as duas variantes), e nao mais no `verificarExiste` single de antes. O dublê
+// abaixo responde IGUAL para as duas variantes, de proposito: estes testes cobrem a
+// semantica existe/nao-existe/indisponivel, nao a troca de variante (isso tem secao propria
+// mais abaixo).
+function onWhatsAppLoteDuble(existeParaTodos) {
+  return async (telefones) => new Map(telefones.map((t) => [t, existeParaTodos]));
+}
+
 test('onWhatsApp diz que EXISTE: segue o fluxo normal, envia', async () => {
   zerar();
   ligarTudo();
@@ -467,9 +477,9 @@ test('onWhatsApp diz que EXISTE: segue o fluxo normal, envia', async () => {
   await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
 
   const envio = envioDuble();
-  const verificarExiste = async () => ({ existe: true });
+  const onWhatsAppLote = onWhatsAppLoteDuble(true);
   const { r } = await comLogs(() =>
-    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, verificarExiste })),
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, onWhatsAppLote })),
   );
 
   assert.equal(r.enviados, 2);
@@ -484,9 +494,9 @@ test('onWhatsApp diz que NAO EXISTE: marca falha com mensagem clara, NAO tenta e
   await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
 
   const envio = envioDuble();
-  const verificarExiste = async () => ({ existe: false });
+  const onWhatsAppLote = onWhatsAppLoteDuble(false);
   const { r } = await comLogs(() =>
-    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, verificarExiste })),
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, onWhatsAppLote })),
   );
 
   assert.equal(r.falhas, 2, 'as duas etapas devem falhar — nenhuma tem WhatsApp de verdade');
@@ -505,14 +515,109 @@ test('onWhatsApp INDISPONIVEL (socket ausente/erro -> existe:null): NAO bloqueia
   await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
 
   const envio = envioDuble();
-  const verificarExiste = async () => ({ existe: null });
+  const onWhatsAppLote = onWhatsAppLoteDuble(null);
   const { r } = await comLogs(() =>
-    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, verificarExiste })),
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, onWhatsAppLote })),
   );
 
   assert.equal(r.enviados, 2, 'nao verificado tem que tentar enviar, igual antes desta feature existir');
   assert.equal(r.falhas, 0);
   assert.equal(envio.chamadas.length, 2);
+});
+
+// ══════════════════ variante SEM o nono digito (investigacao DDD 47/31, 2026-08-20) ══════════════════
+//
+// Causa raiz confirmada em producao: normalizarTelefoneWhatsapp sempre monta o celular com 9
+// digitos, mas em DDDs onde a operadora nao adota esse formato (47, 31 confirmados) a conta
+// real do WhatsApp esta cadastrada SEM o 9. sendMessage aceita e nunca chega. A correcao
+// consulta as duas variantes numa unica chamada a onWhatsAppLote e so troca quando a variante
+// sem 9 vem confirmada e a original nao.
+
+test('celular com 9: SO a variante sem 9 e confirmada -> usa a variante sem 9', async () => {
+  zerar();
+  ligarTudo();
+  const app = criarApplication(); // +55 (47) 99958-2500 -> 5547999582500
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+
+  const envio = envioDuble();
+  const onWhatsAppLote = async (telefones) =>
+    new Map(telefones.map((t) => [t, t === '554799582500']));
+  const { r } = await comLogs(() =>
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, onWhatsAppLote })),
+  );
+
+  assert.equal(r.enviados, 2);
+  assert.equal(r.falhas, 0);
+  assert.equal(envio.chamadas.length, 2);
+  assert.ok(
+    envio.chamadas.every((c) => c.telefone === '554799582500'),
+    'tem que enviar para a variante SEM o 9, nao para a original',
+  );
+});
+
+test('celular com 9: as duas variantes null (sem verificacao possivel) -> usa a variante original', async () => {
+  zerar();
+  ligarTudo();
+  const app = criarApplication();
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+
+  const envio = envioDuble();
+  const onWhatsAppLote = onWhatsAppLoteDuble(null);
+  const { r } = await comLogs(() =>
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, onWhatsAppLote })),
+  );
+
+  assert.equal(r.enviados, 2);
+  assert.ok(
+    envio.chamadas.every((c) => c.telefone === '5547999582500'),
+    'sem verificacao possivel, mantem a variante ORIGINAL — comportamento de hoje',
+  );
+});
+
+test('celular com 9: a propria variante com 9 ja e confirmada -> usa a original, nao troca a toa', async () => {
+  zerar();
+  ligarTudo();
+  const app = criarApplication();
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+
+  const envio = envioDuble();
+  // As DUAS variantes vem confirmadas — a condicao de troca exige que a original NAO
+  // esteja confirmada, entao aqui nao deve trocar.
+  const onWhatsAppLote = onWhatsAppLoteDuble(true);
+  const { r } = await comLogs(() =>
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, onWhatsAppLote })),
+  );
+
+  assert.equal(r.enviados, 2);
+  assert.ok(
+    envio.chamadas.every((c) => c.telefone === '5547999582500'),
+    'a original ja confirmada nao deve ser trocada',
+  );
+});
+
+test('numero que nao e celular de 9 digitos (fixo): nao entra na logica nova, comportamento identico ao atual', async () => {
+  zerar();
+  ligarTudo();
+  const app = criarApplication('+55 (47) 3222-1000'); // fixo, 8 digitos locais
+  await outbox.agendarSequencia({ ...app, criado_em: '2020-01-01 00:00:00' });
+
+  const envio = envioDuble();
+  let onWhatsAppLoteChamado = false;
+  const onWhatsAppLote = async () => {
+    onWhatsAppLoteChamado = true;
+    return new Map();
+  };
+  const verificarExiste = async () => ({ existe: true });
+  const { r } = await comLogs(() =>
+    outbox.processarCicloSequencia(deps({ mock: false, enviarTexto: envio.fn, onWhatsAppLote, verificarExiste })),
+  );
+
+  assert.equal(r.enviados, 2);
+  assert.equal(onWhatsAppLoteChamado, false, 'fixo nao aciona a checagem em lote de variantes');
+  assert.ok(
+    envio.chamadas.every((c) => c.telefone === '554732221000'),
+    'usa o telefone original, sem nenhuma variante',
+  );
 });
 
 test('fila vazia nao faz barulho nem escreve nada', async () => {

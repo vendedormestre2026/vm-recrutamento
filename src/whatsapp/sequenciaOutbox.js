@@ -193,6 +193,27 @@ function dormirPadrao(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ── Variante SEM o nono digito (investigacao DDD 47/31, 2026-08-20) ──
+//
+// normalizarTelefoneWhatsapp SEMPRE monta o celular com 9 digitos apos o DDD — nao ha
+// excecao regional. Em DDDs onde a operadora local nao adota esse formato (confirmado em
+// producao para 47 e 31, via onWhatsAppLote testando as duas variantes), a conta real no
+// WhatsApp esta registrada SEM o 9: o Baileys aceita o envio (JID sintaticamente valido,
+// sendMessage resolve sem erro) e a mensagem nunca chega.
+//
+// A regex exige a ESTRUTURA COMPLETA (13 digitos: DDI 55 + DDD 2 + '9' + local 8), nao so o
+// prefixo — por isso e inofensiva para qualquer numero que nao seja um celular BR com nono
+// digito, incluindo numero internacional que tenha acidentalmente ganho um '55' na frente
+// (o tamanho final nao bate com 13 digitos nesse caso). '55' e exclusivo do Brasil como
+// codigo de pais, entao a combinacao "comeca com 55, 13 digitos, 9 logo apos o DDD" so
+// acontece em celular brasileiro de verdade.
+const RE_CELULAR_BR_COM_NOVE = /^55(\d{2})9(\d{8})$/;
+
+function varianteSemNono(telefone) {
+  const m = RE_CELULAR_BR_COM_NOVE.exec(String(telefone || ''));
+  return m ? `55${m[1]}${m[2]}` : null;
+}
+
 // Uma passada completa. Sequencial de proposito — paralelizar envio de WhatsApp e como se
 // perde um numero.
 //
@@ -226,6 +247,10 @@ async function processarCicloSequencia(deps = {}) {
   const mock = deps.mock === undefined ? modoMock() : deps.mock;
   const enviar = deps.enviarTexto || conexao.enviarTexto;
   const verificarExiste = deps.verificarExiste || conexao.verificarExisteWhatsapp;
+  // So usado para celular BR de 9 digitos (varianteSemNono) — mesmo padrao de injecao de
+  // lib/publicoDisparoWhatsapp.js. UMA chamada com as duas variantes, nao duas chamadas
+  // separadas (onWhatsAppLote monta uma USyncQuery so; ver connection.js).
+  const onWhatsAppLote = deps.onWhatsAppLote || conexao.onWhatsAppLote;
   const dormir = deps.dormir || dormirPadrao;
   const intervalo = deps.intervaloMs === undefined ? intervaloMs() : deps.intervaloMs;
   const teto = deps.maxTentativas || maxTentativas();
@@ -279,17 +304,44 @@ async function processarCicloSequencia(deps = {}) {
       // Baileys responde explicitamente "nao existe" — silencio/erro/sem socket mantem o
       // comportamento de sempre (tenta enviar), porque instabilidade de conexao nao pode
       // virar motivo pra marcar candidato legitimo como falha. Ver connection.js.
-      const { existe } = await verificarExiste(telefone);
+      //
+      // ── VARIANTE SEM O NONO DIGITO (investigacao DDD 47/31) ──
+      // So entra aqui um celular BR de 9 digitos. As DUAS variantes (com e sem o 9) vao
+      // numa UNICA chamada a onWhatsAppLote. So troca para a variante sem o 9 quando ela
+      // vier confirmada (true) E a original NAO vier confirmada (null ou false) — qualquer
+      // outro caso (as duas true, as duas null/false) mantem a variante original, sem
+      // regressao no criterio existente de "nao verificado = tenta mesmo assim".
+      let telefoneEnvio = telefone;
+      let existe;
+      const semNono = varianteSemNono(telefone);
+      if (semNono) {
+        const mapa = await onWhatsAppLote([telefone, semNono]);
+        const existeComNove = mapa.get(telefone);
+        const existeSemNove = mapa.get(semNono);
+        if (existeSemNove === true && existeComNove !== true) {
+          telefoneEnvio = semNono;
+          existe = true;
+          console.warn(
+            `[wa-seq] ${linha.etapa} da application ${linha.application_id}: numero sem o nono digito ` +
+              `confirmado no WhatsApp (a variante com 9 nao foi confirmada); usando ${mascarar(semNono)}.`,
+          );
+        } else {
+          existe = existeComNove;
+        }
+      } else {
+        ({ existe } = await verificarExiste(telefone));
+      }
+
       if (existe === false) {
         db.marcarSequenciaWhatsappFalha(linha.id, 'numero nao possui WhatsApp ativo');
         resumo.falhas += 1;
         console.warn(`[wa-seq] ${linha.etapa} da application ${linha.application_id}: numero sem WhatsApp (onWhatsApp); marcado como falha.`);
       } else {
         try {
-          await enviar(telefone, texto);
+          await enviar(telefoneEnvio, texto);
           db.marcarSequenciaWhatsappEnviada(linha.id, deps.agora || null);
           resumo.enviados += 1;
-          console.log(`[wa-seq] ${linha.etapa} enviado para ${mascarar(telefone)} (application ${linha.application_id}).`);
+          console.log(`[wa-seq] ${linha.etapa} enviado para ${mascarar(telefoneEnvio)} (application ${linha.application_id}).`);
         } catch (err) {
           const tentativaAtual = (Number(linha.tentativas) || 0) + 1;
           if (tentativaAtual >= teto) {
