@@ -1602,6 +1602,39 @@ function contarEntrevistasConcluidasComContexto(filtros = {}) {
     .get(...params).n;
 }
 
+// Candidaturas com curriculo em disco, criadas ANTES de uma data de corte — usado pelo
+// backup manual de curriculos (GET /admin/curriculos-backup): o Rafael baixa
+// periodicamente os curriculos mais antigos que uma data, de tempos em tempos, para
+// arquivar no Drive por conta propria (ver lib/limpezaAudio.js para o precedente de
+// "so listar, quem decide QUANDO agir e o chamador" — aqui quem decide e uma pessoa
+// clicando um botao, nao um ciclo automatico).
+//
+// `curriculo_path IS NOT NULL AND TRIM(curriculo_path) <> ''` cobre tanto NULL quanto
+// string vazia — candidaturas antigas do legado podem ter uma das duas formas de "sem
+// curriculo". Sem filtro de `deleted_at`: um lead arquivado no painel continua tendo um
+// PDF de verdade no disco, e e exatamente o tipo de candidatura antiga que faz sentido
+// entrar no backup.
+//
+// JOIN com jobs e LEFT (nao INNER): um job_id orfao (vaga apagada, se algum dia isso
+// existir) nao pode fazer a candidatura sumir do backup por causa de um titulo que falta.
+//
+// ORDER BY criado_em ASC: mais antigas primeiro, para o manifesto.csv ficar em ordem
+// cronologica natural (mesmo padrao de listarElegiveisLimpezaAudio, "drena o backlog
+// do mais antigo pro mais novo").
+function listarAplicacoesComCurriculoAntes(dataCorteIso) {
+  return getDb()
+    .prepare(
+      `SELECT a.id, a.nome, a.sobrenome, a.email, a.telefone, a.curriculo_path, a.criado_em,
+              a.job_id, j.titulo AS vaga_titulo
+         FROM applications a
+         LEFT JOIN jobs j ON j.id = a.job_id
+        WHERE a.curriculo_path IS NOT NULL AND TRIM(a.curriculo_path) <> ''
+          AND a.criado_em < ?
+        ORDER BY a.criado_em ASC`,
+    )
+    .all(dataCorteIso);
+}
+
 // Ultimo relatorio de uma entrevista, em QUALQUER status (o painel mostra mesmo
 // 'gerado'/'erro'; difere de obterReportEnviadoPorInterview, que so pega 'enviado').
 function obterReportPorInterview(interviewId) {
@@ -3341,6 +3374,7 @@ module.exports = {
   listarLegadoPorCidade,
   listarTelefonesDisparados,
   registrarDisparoWhatsapp,
+  listarAplicacoesComCurriculoAntes,
   obterReportPorInterview,
   registrarAcessoVaga,
   registrarEventoFunil,

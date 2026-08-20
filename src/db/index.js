@@ -108,6 +108,7 @@ module.exports = {
   contarEntrevistasConcluidasComContexto: driver.contarEntrevistasConcluidasComContexto,
   listarOrigensDistintas: driver.listarOrigensDistintas,
   listarCidadesDistintas: driver.listarCidadesDistintas,
+  listarAplicacoesComCurriculoAntes: driver.listarAplicacoesComCurriculoAntes,
   obterReportPorInterview: driver.obterReportPorInterview,
   registrarAcessoVaga: driver.registrarAcessoVaga,
   registrarEventoFunil: driver.registrarEventoFunil,
