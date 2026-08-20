@@ -324,6 +324,20 @@ html.tema-escuro .vm-funil__etapa--concluida .vm-funil__rotulo{ color:var(--vm-w
 
 .vm-campo{ display:flex; flex-direction:column; gap:.4rem; font-weight:500; font-size:.95rem; }
 .vm-opcional{ color:var(--vm-gray-mid); font-weight:400; font-size:.85rem; }
+.vm-obrigatorio{ color:var(--vm-orange); margin-left:.15rem; }
+.vm-form-legenda{ color:var(--vm-gray-mid); font-size:.85rem; margin:0; }
+
+/* Visualmente oculto, mas ainda lido por leitor de tela — util para reforcar em texto
+   ("obrigatorio") o que o asterisco so comunica visualmente. */
+.vm-sr-only{
+  position:absolute;
+  width:1px; height:1px;
+  padding:0; margin:-1px;
+  overflow:hidden;
+  clip:rect(0,0,0,0);
+  white-space:nowrap;
+  border:0;
+}
 
 .vm-campo input,
 .vm-campo select,

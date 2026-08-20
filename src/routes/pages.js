@@ -349,32 +349,33 @@ function formularioAplicacao(vaga) {
     <section class="vm-passo">
       <h1 class="vm-title">Candidate-se agora</h1>
       <p class="vm-lead">Vaga: ${escapeHtml(vaga.titulo)}</p>
+      <p class="vm-form-legenda"><span class="vm-obrigatorio" aria-hidden="true">*</span> campos obrigatórios</p>
 
       <div class="vm-grid2">
-        <label class="vm-campo">Nome
+        <label class="vm-campo">Nome<span class="vm-obrigatorio" aria-hidden="true">*</span><span class="vm-sr-only"> (obrigatório)</span>
           <input type="text" name="nome" autocomplete="given-name" required>
         </label>
-        <label class="vm-campo">Sobrenome
+        <label class="vm-campo">Sobrenome<span class="vm-obrigatorio" aria-hidden="true">*</span><span class="vm-sr-only"> (obrigatório)</span>
           <input type="text" name="sobrenome" autocomplete="family-name" required>
         </label>
       </div>
 
-      <label class="vm-campo">E-mail
+      <label class="vm-campo">E-mail<span class="vm-obrigatorio" aria-hidden="true">*</span><span class="vm-sr-only"> (obrigatório)</span>
         <input type="email" name="email" autocomplete="email" required>
       </label>
 
-      <div class="vm-campo">Telefone
+      <div class="vm-campo">Telefone<span class="vm-obrigatorio" aria-hidden="true">*</span><span class="vm-sr-only"> (obrigatório)</span>
         <div class="vm-tel">
           <select name="ddi" aria-label="Código do país">${opcoesDdi}</select>
           <input type="tel" name="telefone" inputmode="tel" placeholder="(11) 90000-0000" required>
         </div>
       </div>
 
-      <label class="vm-campo">URL do LinkedIn
+      <label class="vm-campo">URL do LinkedIn <span class="vm-opcional">(opcional)</span>
         <input type="url" name="linkedin_url" placeholder="https://linkedin.com/in/...">
       </label>
 
-      <div class="vm-campo">Currículo
+      <div class="vm-campo">Currículo<span class="vm-obrigatorio" aria-hidden="true">*</span><span class="vm-sr-only"> (obrigatório)</span>
         <label class="vm-upload" data-upload>
           <input type="file" name="curriculo" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" hidden>
           <span class="vm-upload__icone" aria-hidden="true">⬆</span>
@@ -384,13 +385,13 @@ function formularioAplicacao(vaga) {
       </div>
 
       <label class="vm-aceite">
-        <input type="checkbox" name="consentimento" value="1" required data-consentimento>
+        <input type="checkbox" name="consentimento" value="1" data-consentimento>
         <span>Concordo com a coleta e uso dos meus dados (nome, e-mail, telefone, LinkedIn e
         currículo) para este processo seletivo e futuras oportunidades de vendas na Vendedor
         Mestre. Posso solicitar a remoção a qualquer momento.</span>
       </label>
 
-      <button type="submit" class="vm-btn vm-btn--primario" data-enviar disabled>Candidatar-me</button>
+      <button type="submit" class="vm-btn vm-btn--primario" data-enviar>Candidatar-me</button>
     </section>
   </form>`;
 }
