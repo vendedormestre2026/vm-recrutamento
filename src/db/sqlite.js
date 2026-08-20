@@ -1621,7 +1621,15 @@ function contarEntrevistasConcluidasComContexto(filtros = {}) {
 // ORDER BY criado_em ASC: mais antigas primeiro, para o manifesto.csv ficar em ordem
 // cronologica natural (mesmo padrao de listarElegiveisLimpezaAudio, "drena o backlog
 // do mais antigo pro mais novo").
+//
+// Data de corte SANEADA aqui tambem, mesmo a rota ja validando com dataIsoValida antes de
+// chamar (mesmo principio de paginaSaneada: a funcao nao pode confiar em quem chama). Sem
+// isso, um valor fora do formato YYYY-MM-DD faria a comparacao de string virar lixo — ex.:
+// "criado_em < 'not-a-date'" e VERDADEIRO pra toda data real (digito ASCII < letra ASCII),
+// devolvendo a base inteira em vez de nada.
 function listarAplicacoesComCurriculoAntes(dataCorteIso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dataCorteIso || ''))) return [];
+
   return getDb()
     .prepare(
       `SELECT a.id, a.nome, a.sobrenome, a.email, a.telefone, a.curriculo_path, a.criado_em,
