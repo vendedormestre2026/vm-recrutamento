@@ -208,11 +208,17 @@ router.post('/aplicacao', (req, res) => {
       }
       const telefone = `+${telefoneNormalizado}`;
 
-      // Origem do lead (first-touch): le o cookie vm_utm com o helper (JSON dos cinco
+      // Origem do lead (first-touch): le o cookie vm_utm_job_{jobId} DESTA vaga (a mesma
+      // chave gravada em GET /vaga/:slug — routes/pages.js) com o helper (JSON dos cinco
       // parametros UTM; retrocompativel com o formato legado de string simples). Ausente
-      // (acesso direto, sem UTM) -> source 'direto'; os demais UTM ficam null. cookie-parser
-      // ja roda no app (server.js).
-      const utm = lerUtmDoCookie((req.cookies && req.cookies.vm_utm) || '');
+      // (acesso direto, sem UTM, ou cookie de OUTRA vaga) -> source 'direto'; os demais UTM
+      // ficam null. cookie-parser ja roda no app (server.js).
+      //
+      // Chave por vaga, e nao mais o cookie global `vm_utm`: ate 2026-08-20 esta linha lia
+      // um unico cookie valido para o dominio inteiro, entao quem via a campanha da vaga A
+      // e se candidatava na vaga B semanas depois herdava a origem de A. `vaga` ja foi
+      // resolvida acima (linha 188) — mesma vaga usada pra job_id da candidatura.
+      const utm = lerUtmDoCookie((req.cookies && req.cookies[`vm_utm_job_${vaga.id}`]) || '');
       const utmSource = (utm && utm.source) || 'direto';
 
       const token = session.gerarToken();

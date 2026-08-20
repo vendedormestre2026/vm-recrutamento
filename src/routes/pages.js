@@ -244,19 +244,30 @@ router.get('/vaga/:slug', (req, res) => {
   if (!vaga) return;
 
   // Origem do lead (first-touch): captura os cinco parametros UTM da query da campanha
-  // num cookie proprio (vm_utm, JSON). NAO ha sessao de servidor nesta etapa; o cookie
-  // sobrevive ao hop /vaga -> /aplicar e e lido no POST /api/aplicacao.
-  // First-touch: se o cookie vm_utm JA EXISTE, ele prevalece — nunca sobrescreve a
+  // num cookie proprio POR VAGA (vm_utm_job_{jobId}, JSON). NAO ha sessao de servidor
+  // nesta etapa; o cookie sobrevive ao hop /vaga -> /aplicar e e lido no POST
+  // /api/aplicacao.
+  //
+  // ── POR QUE POR VAGA, e nao um unico cookie global ──
+  // Ate 2026-08-20 havia UM cookie `vm_utm` para o dominio inteiro: a primeira vaga que a
+  // pessoa abria "vencia" por 30 dias, e uma candidatura numa vaga B semanas depois
+  // herdava a origem da vaga A — vazamento real em producao (6 candidaturas de teste com
+  // job_id variado e utm_source='deandhela' herdado de uma vaga completamente diferente).
+  // Chavear por vaga.id resolve isso sem abrir mao do first-touch DENTRO da mesma vaga.
+  //
+  // First-touch: se o cookie DESTA vaga JA EXISTE, ele prevalece — nunca sobrescreve a
   // primeira origem, independentemente da query atual. So gravamos quando ainda nao ha
-  // cookie E ha UTM na query. Sem UTM na query e sem cookie: nada a fazer (o literal
-  // 'direto' e decidido so no momento da aplicacao, nao aqui).
-  const cookieBruto = (req.cookies && req.cookies.vm_utm) || '';
+  // cookie desta vaga E ha UTM na query. Sem UTM na query e sem cookie: nada a fazer (o
+  // literal 'direto' e decidido so no momento da aplicacao, nao aqui).
+  const nomeCookieUtm = `vm_utm_job_${vaga.id}`;
+  const cookieBruto = (req.cookies && req.cookies[nomeCookieUtm]) || '';
   const utmQuery = extrairUtmDaQuery(req.query);
-  // UTM efetiva desta visita: com cookie, vale o cookie (first-touch); senao, a query.
+  // UTM efetiva desta visita: com cookie (desta vaga), vale o cookie (first-touch); senao,
+  // a query.
   const utmEfetiva = cookieBruto ? lerUtmDoCookie(cookieBruto) : utmQuery;
 
   if (!cookieBruto && utmQuery) {
-    res.cookie('vm_utm', serializarUtmParaCookie(utmQuery), {
+    res.cookie(nomeCookieUtm, serializarUtmParaCookie(utmQuery), {
       httpOnly: true,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000,
