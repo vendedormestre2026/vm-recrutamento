@@ -45,6 +45,7 @@ const { gerarRelatorioPdf, slugNome } = require('../lib/relatorioPdf');
 const { criarRouterPromocao, montarConteudoListagemPromocao } = require('./admin_promocao');
 const { criarRouterWhatsapp } = require('./admin_whatsapp');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
+const conexaoWhatsapp = require('../whatsapp/connection');
 const campanhaWhatsapp = require('../lib/campanhaWhatsapp');
 const { criarRouterCampanhaWhatsapp, montarConteudoCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const fichaWa = require('../lib/whatsappFicha');
@@ -4839,6 +4840,45 @@ router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmt
 // cima, igual as demais telas do painel.
 router.use('/whatsapp', criarRouterWhatsapp({ paginaAdmin, escapeHtml }));
 router.use('/campanhas-whatsapp', criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }));
+
+// ── GET /admin/debug/whatsapp-existe ── DIAGNOSTICO TEMPORARIO, remover depois ──
+//
+// Investigacao em producao: suspeita de que telefones com "nono digito" em DDDs onde a
+// operadora nao adota esse formato estao sendo montados de um jeito que o Baileys aceita
+// no envio (sendMessage resolve sem erro) mas o WhatsApp real nao reconhece. Esta rota so
+// LE — chama onWhatsAppLote (mesma funcao que a campanha em massa usa) e devolve o
+// resultado bruto por telefone. Nao envia mensagem nenhuma, nao grava nada no banco.
+//
+// Herda a mesma protecao das demais telas do painel (router.use(adminAuth) la em cima).
+//
+// Query: ?telefones=5547984001471,554784001471 (digitos, com DDI, separados por virgula —
+// ja normalizados por quem chama; esta rota nao tenta adivinhar/corrigir formato, so
+// pergunta ao WhatsApp o que ELE acha que existe).
+router.get('/debug/whatsapp-existe', async (req, res) => {
+  const lista = String(req.query.telefones || '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  if (!lista.length) {
+    return res.status(400).json({ erro: 'Informe ?telefones=numero1,numero2,...' });
+  }
+
+  // onWhatsAppLote() e best-effort: sem socket conectado ela devolve tudo "null" (nao
+  // verificado) em vez de lancar erro — comportamento correto para nao travar envio, mas
+  // enganoso aqui, onde o proposito da rota E confirmar se o socket esta de fato consultando
+  // o WhatsApp real. Por isso o status e checado antes, a parte.
+  if (conexaoWhatsapp.status().status !== 'conectado') {
+    return res.status(503).json({ erro: 'socket Baileys nao conectado' });
+  }
+
+  const mapa = await conexaoWhatsapp.onWhatsAppLote(lista);
+  const resultado = {};
+  for (const [telefone, existe] of mapa) {
+    resultado[telefone] = existe;
+  }
+  res.json(resultado);
+});
 
 // ── GET /divulgacao-vagas ── Promoção de Vagas + Campanha por WhatsApp em abas ──
 // (Item 3 do ETAPA B "Ajustes no Admin", Commit 7). NAO substitui as rotas standalone
