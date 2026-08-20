@@ -649,9 +649,19 @@ function atualizarStatusTalento(id, status) {
 }
 
 // Aplicacoes
-// Cria a aplicacao. consent_at recebe datetime('now') direto no INSERT: a rota so
-// chega aqui apos validar o checkbox de consentimento (LGPD), entao criar a linha ja
-// significa que o candidato consentiu — o momento da criacao e o momento do aceite.
+// Cria a aplicacao. consent_at reflete o que o candidato de fato marcou
+// (aplicacao.consentiu), e NAO mais "chegar ate aqui" — ate 2026-08-20 o checkbox de
+// consentimento era barreira obrigatoria do formulario, entao criar a linha e o aceite
+// eram o mesmo evento e `datetime('now')` incondicional no INSERT era correto. O
+// consentimento deixou de ser obrigatorio (rota nao bloqueia mais o envio sem ele — ver
+// routes/api.js), e gravar a data sempre passaria a REGISTRAR UM ACEITE QUE NAO ACONTECEU
+// para quem so nao marcou o checkbox. Por isso `consent_at` agora e parametro: com o
+// timestamp so quando `consentiu` for true, NULL caso contrario.
+//
+// Formato manual "YYYY-MM-DD HH:MM:SS" (e nao toISOString() cru): e o mesmo formato de
+// datetime('now') que todo o resto do schema usa (criado_em etc.) — ver iso() em
+// whatsapp/sequenciaOutbox.js para o mesmo padrao. Consistente com o que
+// formatarDataHora() (admin.js/relatorioPdf.js) ja le desta coluna.
 function criarAplicacao(aplicacao) {
   const info = getDb().prepare(`
     INSERT INTO applications
@@ -661,7 +671,7 @@ function criarAplicacao(aplicacao) {
     VALUES
       (@job_id, @nome, @sobrenome, @email, @telefone, @linkedin_url,
        @curriculo_path, @curriculo_texto, @campos_extras, @token,
-       @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term, @status, datetime('now'))
+       @utm_source, @utm_medium, @utm_campaign, @utm_content, @utm_term, @status, @consent_at)
   `).run({
     job_id: aplicacao.job_id,
     nome: aplicacao.nome || null,
@@ -681,6 +691,7 @@ function criarAplicacao(aplicacao) {
     utm_content: aplicacao.utm_content || null,
     utm_term: aplicacao.utm_term || null,
     status: aplicacao.status || 'aplicado',
+    consent_at: aplicacao.consentiu ? new Date().toISOString().replace('T', ' ').slice(0, 19) : null,
   });
   return Number(info.lastInsertRowid);
 }

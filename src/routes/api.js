@@ -173,15 +173,11 @@ router.post('/aplicacao', (req, res) => {
       if (!req.file) {
         return res.status(400).json({ ok: false, erro: 'Anexe seu currículo (PDF, JPG, PNG ou DOCX).' });
       }
-      // Consentimento LGPD (obrigatorio): o checkbox da tela de aplicacao. A validacao
-      // do front e so conveniencia; aqui e a barreira de verdade.
+      // Consentimento LGPD (OPCIONAL): checkbox da tela de aplicacao. Nao bloqueia mais o
+      // envio (era barreira 400 ate 2026-08-20) — decisao de produto: o checkbox continua
+      // oferecido, e se marcado continua registrado (db.criarAplicacao grava consent_at),
+      // mas nao marcar nao pode mais travar quem so quer se candidatar.
       const consentiu = ['on', '1', 'true'].includes(String(b.consentimento || '').toLowerCase());
-      if (!consentiu) {
-        return res.status(400).json({
-          ok: false,
-          erro: 'É necessário aceitar a coleta e uso dos seus dados para se candidatar.',
-        });
-      }
 
       // Resolve a vaga (pelo slug enviado; senao, a vaga ativa)
       const slug = String(b.slug || '').trim();
@@ -253,6 +249,7 @@ router.post('/aplicacao', (req, res) => {
         utm_content: utm ? utm.content : null,
         utm_term: utm ? utm.term : null,
         status: 'aplicado',
+        consentiu,
       });
 
       // ── Sequencia de WhatsApp (WA1 agora, WA2 em +4h) — fire-and-forget ──
