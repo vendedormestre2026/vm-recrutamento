@@ -180,21 +180,8 @@ function tipoCurriculoAceito(file) {
       return false;
     }
     if (!validarArquivo(inputArquivo.files[0])) return false;
-    if (chkConsentimento && !chkConsentimento.checked) {
-      mostrarErro('É necessário aceitar a coleta e uso dos seus dados para se candidatar.');
-      return false;
-    }
     return true;
   }
-
-  // Consentimento LGPD: o botao "Candidatar-me" so habilita com o checkbox marcado.
-  const chkConsentimento = form.querySelector('[data-consentimento]');
-  const btnEnviar = form.querySelector('[data-enviar]');
-  function sincronizarConsentimento() {
-    if (btnEnviar && chkConsentimento) btnEnviar.disabled = !chkConsentimento.checked;
-  }
-  if (chkConsentimento) chkConsentimento.addEventListener('change', sincronizarConsentimento);
-  sincronizarConsentimento();
 
   // Envio
   form.addEventListener('submit', async (e) => {
@@ -212,7 +199,17 @@ function tipoCurriculoAceito(file) {
       }
       mostrarErro(dados.erro || 'Não foi possível enviar sua candidatura.');
     } catch (err) {
-      mostrarErro('Falha de conexão. Verifique sua internet e tente novamente.');
+      // `fetch` so lanca TypeError quando a REQUISICAO em si falha (sem rede, DNS, CORS,
+      // conexao recusada) — e o unico caso em que "problema de internet" e diagnostico
+      // honesto. Qualquer outro erro aqui (ex.: resp.json() em resposta que nao e JSON)
+      // nao tem nada a ver com a conexao do candidato, e dizer isso so confunde quem ja
+      // esta tentando resolver um problema que nao e o dele.
+      const falhaDeRede = err instanceof TypeError;
+      mostrarErro(
+        falhaDeRede
+          ? 'Falha de conexão. Verifique sua internet e tente novamente.'
+          : 'Não foi possível enviar sua candidatura. Tente novamente em instantes.',
+      );
     }
     btn.disabled = false;
     btn.textContent = 'Candidatar-me';
