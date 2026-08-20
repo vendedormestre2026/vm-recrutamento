@@ -11,7 +11,9 @@
 
 const express = require('express');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { config } = require('../config');
 const db = require('../db');
 const drive = require('../providers/drive');
@@ -1647,6 +1649,159 @@ router.get('/candidato/:id/curriculo', (req, res) => {
   res.type(mimetypePorExtensao(extensao));
   res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
   return res.sendFile(caminho);
+});
+
+// Escapa um valor para uma celula CSV: aspas duplas quando o valor contem virgula, aspas
+// ou quebra de linha (dobra as aspas internas, regra padrao do formato). nome/vaga vindos
+// do candidato podem legitimamente ter virgula ("Sobrenome, Jr."), entao nao dá pra confiar
+// em join simples.
+function celulaCsv(valor) {
+  const s = String(valor == null ? '' : valor);
+  return /["\n,]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function montarCsv(linhas) {
+  return linhas.map((linha) => linha.map(celulaCsv).join(',')).join('\r\n') + '\r\n';
+}
+
+// ── GET /admin/curriculos-backup ── baixa em .tar.gz os curriculos anteriores a uma data ──
+//
+// /data/curriculos nao tem NENHUMA rotina de limpeza (diferente de /data/entrevistas, que
+// ja tem lib/limpezaAudio.js) e cresce sem teto — 342M/647M do volume, 53%, na investigacao
+// de 2026-08-20. Decisao de produto: em vez de apagar automaticamente, o Rafael baixa
+// periodicamente os mais antigos que uma data e arquiva no Google Drive por conta propria,
+// FORA deste sistema. Esta rota so EXPORTA — nunca apaga nada do disco.
+//
+// Os arquivos em /data/curriculos sao salvos como <token>.<extensao> (nome opaco, ver
+// POST /api/aplicacao) — um .tar.gz cheio de tokens seria inutil pra organizar no Drive
+// depois. Por isso o pacote SEMPRE inclui manifesto.csv (mapa arquivo -> candidato) e cada
+// PDF entra com um nome legivel (<id>_<nome>_<sobrenome>.<extensao>), nao o token original.
+router.get('/curriculos-backup', (req, res) => {
+  const antes = String(req.query.antes || '').trim();
+  if (!antes || !dataIsoValida(antes)) {
+    return avisoAdmin(res, 400, {
+      titulo: 'Data inválida',
+      descricao:
+        'Informe uma data no formato AAAA-MM-DD (?antes=AAAA-MM-DD) para baixar os currículos anteriores a ela.',
+    });
+  }
+
+  const elegiveis = db.listarAplicacoesComCurriculoAntes(antes);
+  if (!elegiveis.length) {
+    return avisoAdmin(res, 200, {
+      titulo: 'Nenhum currículo para exportar',
+      descricao: `Não há candidaturas com currículo anteriores a ${antes}.`,
+    });
+  }
+
+  let pastaTemp;
+  try {
+    pastaTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'vm-curriculos-backup-'));
+  } catch (err) {
+    console.error(`[curriculos-backup] falha ao criar pasta temporaria: ${err.message}`);
+    return avisoAdmin(res, 500, {
+      titulo: 'Falha ao preparar o backup',
+      descricao: 'Não foi possível preparar os arquivos para download. Tente novamente.',
+    });
+  }
+  // Apagada em QUALQUER desfecho (sucesso, erro de tar, ou o "sem arquivo nenhum" abaixo) —
+  // nunca deixa lixo acumulando em /tmp a cada uso desta rota.
+  const limparPastaTemp = () => {
+    try {
+      fs.rmSync(pastaTemp, { recursive: true, force: true });
+    } catch (err) {
+      console.warn(`[curriculos-backup] falha ao remover pasta temporaria ${pastaTemp}: ${err.message}`);
+    }
+  };
+
+  // Copia (nao symlink): um symlink dentro do tar so archivaria o link em si, nao o
+  // conteudo do PDF — o pacote chegaria quebrado no Drive/na outra maquina do Rafael.
+  const manifesto = [
+    ['id', 'nome', 'sobrenome', 'email', 'telefone', 'vaga', 'data_candidatura', 'nome_arquivo_no_pacote'],
+  ];
+  for (const app of elegiveis) {
+    if (!fs.existsSync(app.curriculo_path)) {
+      // So warning: um arquivo faltando no disco nao pode derrubar o backup inteiro dos
+      // outros — mesmo espirito defensivo de removerAudioDaEntrevista.
+      console.warn(`[curriculos-backup] application ${app.id}: curriculo_path ausente no disco (${app.curriculo_path}); pulado.`);
+      continue;
+    }
+    const extensao = path.extname(app.curriculo_path).slice(1) || 'bin';
+    const nomeNoPacote = `${sanitizarNomeArquivo(`${app.id}_${app.nome || ''}_${app.sobrenome || ''}`)}.${extensao}`;
+    try {
+      fs.copyFileSync(app.curriculo_path, path.join(pastaTemp, nomeNoPacote));
+    } catch (err) {
+      console.warn(`[curriculos-backup] application ${app.id}: falha ao copiar currículo (${err.message}); pulado.`);
+      continue;
+    }
+    manifesto.push([
+      app.id,
+      app.nome || '',
+      app.sobrenome || '',
+      app.email || '',
+      app.telefone || '',
+      app.vaga_titulo || '',
+      app.criado_em || '',
+      nomeNoPacote,
+    ]);
+  }
+
+  if (manifesto.length === 1) {
+    // So o cabecalho: nenhum dos elegiveis tinha arquivo de verdade no disco.
+    limparPastaTemp();
+    return avisoAdmin(res, 200, {
+      titulo: 'Nenhum currículo para exportar',
+      descricao: `Nenhum dos arquivos de currículo anteriores a ${antes} foi encontrado no disco (registro no banco sem arquivo correspondente).`,
+    });
+  }
+
+  fs.writeFileSync(path.join(pastaTemp, 'manifesto.csv'), montarCsv(manifesto));
+
+  // tar do sistema (sem dependencia nova de compressao). `-C pastaTemp .` empacota o
+  // CONTEUDO da pasta (PDFs com nome legivel + manifesto.csv), nao a pasta em si.
+  const tar = spawn('tar', ['-czf', '-', '-C', pastaTemp, '.'], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  let stderrTar = '';
+  tar.stderr.on('data', (chunk) => {
+    stderrTar += chunk.toString();
+  });
+
+  // Guarda contra responder duas vezes (ex.: 'error' e depois 'close' do mesmo processo).
+  let jaRespondeuErro = false;
+
+  tar.on('error', (err) => {
+    console.error(`[curriculos-backup] falha ao iniciar o tar: ${err.message}`);
+    limparPastaTemp();
+    if (!res.headersSent) {
+      jaRespondeuErro = true;
+      avisoAdmin(res, 500, {
+        titulo: 'Falha ao gerar o backup',
+        descricao: 'Não foi possível gerar o pacote de currículos (compactador indisponível no servidor).',
+      });
+    } else {
+      res.destroy();
+    }
+  });
+
+  tar.on('close', (code) => {
+    limparPastaTemp();
+    if (code === 0 || jaRespondeuErro) return;
+    console.error(`[curriculos-backup] tar terminou com código ${code}: ${stderrTar}`);
+    if (!res.headersSent) {
+      avisoAdmin(res, 500, {
+        titulo: 'Falha ao gerar o backup',
+        descricao: 'Houve um erro ao compactar os currículos. Tente novamente.',
+      });
+    } else {
+      // Streaming ja comecou (Content-Type/parte do gzip ja foram pro cliente) — nao da
+      // pra mandar uma pagina de erro depois disso. So encerra a conexao.
+      res.destroy();
+    }
+  });
+
+  const nomeArquivo = `curriculos-backup-ate-${antes}.tar.gz`;
+  res.setHeader('Content-Type', 'application/gzip');
+  res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
+  tar.stdout.pipe(res);
 });
 
 // Validacao simples de e-mail (formato basico local@dominio.tld). Vazio e tratado
