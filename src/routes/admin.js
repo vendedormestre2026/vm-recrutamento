@@ -4961,6 +4961,12 @@ router.get('/config', (req, res) => {
       })()
     : '';
 
+  // Resumo do POST /audio-entrevistas/apagar (redirect com ?audio_apagado=N&audio_mb=X.X).
+  const audioApagadoQtd = Number(req.query.audio_apagado);
+  const resumoAudioApagado = Number.isInteger(audioApagadoQtd)
+    ? `<p class="aviso-ok">${escapeHtml(`Áudio de ${audioApagadoQtd} entrevista(s) removido (~${req.query.audio_mb || '0'} MB liberados).`)}</p>`
+    : '';
+
   // Config da mensagem de WhatsApp (B4): nome do recrutador + template editavel.
   const recrutadorNome = db.obterConfig('recrutador_nome', RECRUTADOR_PADRAO);
   const whatsappTemplate = db.obterConfig('whatsapp_template', TEMPLATE_PADRAO);
@@ -5017,6 +5023,7 @@ router.get('/config', (req, res) => {
     <h1>Configurações gerais</h1>
     ${salvo}
     ${resumoCurriculosApagados}
+    ${resumoAudioApagado}
 
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem;">
       <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
@@ -5188,6 +5195,16 @@ router.get('/config', (req, res) => {
             </span>
           </label>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
+          <p style="margin:.8rem 0 0;color:var(--cinza);font-size:.85rem;">
+            O toggle acima só apaga áudio de entrevista com <b>vídeo já confirmado</b> no
+            Drive (a limpeza automática nunca apaga sem esse backup). Para o áudio de
+            entrevistas concluídas que <b>nunca</b> tiveram vídeo confirmado, use a
+            exclusão manual abaixo — decisão consciente, sem vídeo em lugar nenhum para
+            valer como backup.
+          </p>
+          <p style="margin:.5rem 0 0;">
+            <a class="btn btn--ghost" href="/admin/audio-entrevistas/apagar">Apagar áudio de entrevistas sem vídeo…</a>
+          </p>
         </section>
 
         <section class="rel-sec">
