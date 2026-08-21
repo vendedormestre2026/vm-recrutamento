@@ -92,6 +92,7 @@ module.exports = {
   definirVideoUrl: driver.definirVideoUrl,
   listarElegiveisLimpezaAudio: driver.listarElegiveisLimpezaAudio,
   listarEntrevistasConcluidasSemVideo: driver.listarEntrevistasConcluidasSemVideo,
+  marcarAudioRemovido: driver.marcarAudioRemovido,
   criarTurno: driver.criarTurno,
   listarTurnos: driver.listarTurnos,
   contarTurnos: driver.contarTurnos,

@@ -374,6 +374,14 @@ function migrar() {
   // passa a mostrar uma mensagem especifica em vez do 404 generico.
   adicionarColunaSeFaltar('applications', 'curriculo_removido_em', 'TEXT');
 
+  // Exclusao manual de audio de entrevistas CONCLUIDAS sem video confirmado (GET/POST
+  // /admin/audio-entrevistas/apagar): momento em que o audio foi apagado do disco. NULL =
+  // ainda no disco (comportamento de sempre). Sem esta coluna, listarEntrevistasConcluidasSemVideo
+  // mostraria a MESMA entrevista como "elegivel" pra sempre apos a exclusao — video_url
+  // continua NULL indefinidamente (nao ha video pra confirmar), entao so o estado do banco
+  // nao basta pra saber "ja processada". Mesmo padrao de applications.curriculo_removido_em.
+  adicionarColunaSeFaltar('interviews', 'audio_removido_em', 'TEXT');
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

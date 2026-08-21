@@ -1219,9 +1219,20 @@ function listarEntrevistasConcluidasSemVideo() {
          LEFT JOIN jobs j ON j.id = a.job_id
         WHERE i.status = 'concluido'
           AND (i.video_url IS NULL OR TRIM(i.video_url) = '')
+          AND i.audio_removido_em IS NULL
         ORDER BY i.finalizado_em ASC`,
     )
     .all();
+}
+
+// Marca o audio desta entrevista como removido do disco (exclusao manual, POST
+// /admin/audio-entrevistas/apagar). NAO apaga a linha nem video_url — so o momento da
+// remocao. Necessario porque video_url continua NULL para sempre (nao ha video a
+// confirmar), entao sem esta marca a entrevista reapareceria como "elegivel" em toda
+// pre-visualizacao futura, mesmo com o audio ja apagado. Mesmo padrao de
+// marcarCurriculoRemovido (datetime('now') direto: so chamada quando ja aconteceu).
+function marcarAudioRemovido(interviewId) {
+  getDb().prepare("UPDATE interviews SET audio_removido_em = datetime('now') WHERE id = ?").run(interviewId);
 }
 
 // Turnos da conversa
@@ -3530,6 +3541,7 @@ module.exports = {
   definirVideoUrl,
   listarElegiveisLimpezaAudio,
   listarEntrevistasConcluidasSemVideo,
+  marcarAudioRemovido,
   criarTurno,
   listarTurnos,
   contarTurnos,
