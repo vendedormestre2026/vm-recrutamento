@@ -1663,6 +1663,29 @@ function montarCsv(linhas) {
   return linhas.map((linha) => linha.map(celulaCsv).join(',')).join('\r\n') + '\r\n';
 }
 
+// Valida a data de corte (?antes=/body.antes, AAAA-MM-DD) compartilhada pelas 3 rotas de
+// backup de curriculos (download, pre-visualizacao de exclusao, exclusao de fato) — mesma
+// regra, um so lugar. Ja responde o aviso amigavel e devolve null quando invalida; quem
+// chama so segue adiante quando o retorno NAO for null.
+function antesValidoOuAviso(valorBruto, res) {
+  const antes = String(valorBruto || '').trim();
+  if (!antes || !dataIsoValida(antes)) {
+    avisoAdmin(res, 400, {
+      titulo: 'Data inválida',
+      descricao: 'Informe uma data no formato AAAA-MM-DD (?antes=AAAA-MM-DD) para esta ação.',
+    });
+    return null;
+  }
+  return antes;
+}
+
+// Bytes -> "312.4 MB", mesmo padrao ja usado em lib/limpezaAudio.js (uma casa decimal,
+// sem tentar virar GB/KB — os tamanhos deste dominio, curriculos individuais, sempre
+// cabem confortavelmente na casa dos MB).
+function formatarMb(bytes) {
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
 // ── GET /admin/curriculos-backup ── baixa em .tar.gz os curriculos anteriores a uma data ──
 //
 // /data/curriculos nao tem NENHUMA rotina de limpeza (diferente de /data/entrevistas, que
@@ -1676,14 +1699,8 @@ function montarCsv(linhas) {
 // depois. Por isso o pacote SEMPRE inclui manifesto.csv (mapa arquivo -> candidato) e cada
 // PDF entra com um nome legivel (<id>_<nome>_<sobrenome>.<extensao>), nao o token original.
 router.get('/curriculos-backup', (req, res) => {
-  const antes = String(req.query.antes || '').trim();
-  if (!antes || !dataIsoValida(antes)) {
-    return avisoAdmin(res, 400, {
-      titulo: 'Data inválida',
-      descricao:
-        'Informe uma data no formato AAAA-MM-DD (?antes=AAAA-MM-DD) para baixar os currículos anteriores a ela.',
-    });
-  }
+  const antes = antesValidoOuAviso(req.query.antes, res);
+  if (!antes) return;
 
   const elegiveis = db.listarAplicacoesComCurriculoAntes(antes);
   if (!elegiveis.length) {
@@ -1802,6 +1819,124 @@ router.get('/curriculos-backup', (req, res) => {
   res.setHeader('Content-Type', 'application/gzip');
   res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
   tar.stdout.pipe(res);
+});
+
+// ── GET /admin/curriculos-backup/apagar ── pre-visualizacao, NAO apaga nada ──
+//
+// So LEITURA: fs.existsSync + fs.statSync pra somar quantidade e tamanho. Mesma
+// db.listarAplicacoesComCurriculoAntes da rota de download, de proposito — "o que apareceria
+// num novo backup" e "o que esta prestes a ser apagado" tem que ser exatamente a mesma
+// lista, ou o Rafael apagaria algo que nunca chegou a ver no .tar.gz.
+router.get('/curriculos-backup/apagar', (req, res) => {
+  const antes = antesValidoOuAviso(req.query.antes, res);
+  if (!antes) return;
+
+  const elegiveis = db.listarAplicacoesComCurriculoAntes(antes);
+  if (!elegiveis.length) {
+    return avisoAdmin(res, 200, {
+      titulo: 'Nada para apagar',
+      descricao: `Não há currículos anteriores a ${antes} para remover.`,
+    });
+  }
+
+  let totalBytes = 0;
+  let comArquivoNoDisco = 0;
+  for (const app of elegiveis) {
+    if (fs.existsSync(app.curriculo_path)) {
+      comArquivoNoDisco += 1;
+      try {
+        totalBytes += fs.statSync(app.curriculo_path).size;
+      } catch {
+        // Arquivo sumiu entre o existsSync e o statSync (raro) — nao impede a
+        // pre-visualizacao, so nao soma no tamanho.
+      }
+    }
+  }
+  const semArquivo = elegiveis.length - comArquivoNoDisco;
+  const mensagemConfirm = `Apagar ${elegiveis.length} arquivo(s) (~${formatarMb(totalBytes)}) permanentemente do servidor? Essa ação não pode ser desfeita.`;
+
+  const conteudo = `
+    <p><a class="btn btn--ghost" href="/admin/config">← Voltar às configurações</a></p>
+    <h1>Apagar currículos já baixados</h1>
+    <p class="aviso-alerta">
+      <b>Esta ação é IRREVERSÍVEL.</b> Os arquivos serão apagados do servidor — só prossiga
+      se já baixou e confirmou o backup (<code>.tar.gz</code>) desta mesma data no Google
+      Drive.
+    </p>
+    <section class="rel-sec">
+      <dl class="rel-id">
+        <div><dt>Currículos anteriores a</dt><dd>${escapeHtml(antes)}</dd></div>
+        <div><dt>Candidaturas afetadas</dt><dd>${fmtInt(elegiveis.length)}</dd></div>
+        <div><dt>Arquivos de verdade no disco</dt><dd>${fmtInt(comArquivoNoDisco)} (~${formatarMb(totalBytes)})</dd></div>
+        ${semArquivo ? `<div><dt>Já sem arquivo no disco</dt><dd>${fmtInt(semArquivo)} (só serão marcadas)</dd></div>` : ''}
+      </dl>
+    </section>
+    <form method="POST" action="/admin/curriculos-backup/apagar" onsubmit="return confirm(${JSON.stringify(mensagemConfirm)})">
+      <input type="hidden" name="antes" value="${escapeHtml(antes)}">
+      <label class="campo-check">
+        <input type="checkbox" name="confirmo_backup" value="1" required>
+        <span style="color:var(--preto);text-transform:none;">
+          Confirmo que já salvei esse backup no Google Drive
+        </span>
+      </label>
+      <button type="submit" class="btn">Apagar ${fmtInt(elegiveis.length)} currículo(s) permanentemente</button>
+      <a class="btn btn--ghost" href="/admin/config">Cancelar</a>
+    </form>`;
+
+  res.send(paginaAdmin({ titulo: 'Apagar currículos já baixados', conteudo }));
+});
+
+// ── POST /admin/curriculos-backup/apagar ── apaga de fato os arquivos elegiveis ──
+//
+// Duas checagens de servidor, nenhuma delegada ao client:
+//   1. antes valido (mesma validacao das outras duas rotas).
+//   2. confirmo_backup === '1' — HTML/JS podem ser burlados; sem isto no servidor, um
+//      POST direto (curl, replay) apagaria sem confirmacao nenhuma.
+// A lista de elegiveis e CONSULTADA DE NOVO aqui, nunca aceita do corpo do POST — um
+// array de ids vindo do formulario seria dado do client, e usa-lo permitiria apagar
+// qualquer candidatura (manipulando o POST) ou divergir do que a pre-visualizacao mostrou.
+router.post('/curriculos-backup/apagar', (req, res) => {
+  const b = req.body || {};
+  const antes = antesValidoOuAviso(b.antes, res);
+  if (!antes) return;
+
+  if (b.confirmo_backup !== '1') {
+    return avisoAdmin(res, 400, {
+      titulo: 'Confirmação obrigatória',
+      descricao: 'Marque a confirmação de que o backup já foi salvo antes de apagar os currículos.',
+    });
+  }
+
+  const elegiveis = db.listarAplicacoesComCurriculoAntes(antes);
+  if (!elegiveis.length) {
+    return avisoAdmin(res, 200, {
+      titulo: 'Nada para apagar',
+      descricao: `Não há currículos anteriores a ${antes} para remover.`,
+    });
+  }
+
+  let apagados = 0;
+  let falhas = 0;
+  for (const app of elegiveis) {
+    // Falha em UM arquivo (ex. permissao) nao pode interromper os demais — cada remocao e
+    // isolada, mesmo espirito defensivo de removerAudioDaEntrevista.
+    try {
+      if (fs.existsSync(app.curriculo_path)) {
+        fs.unlinkSync(app.curriculo_path);
+      }
+      // Marca MESMO quando o arquivo ja estava ausente (orfao de banco) — e exatamente o
+      // que impede esse registro de reaparecer num backup/exclusao futura.
+      db.marcarCurriculoRemovido(app.id);
+      apagados += 1;
+    } catch (err) {
+      falhas += 1;
+      console.error(`[curriculos-backup-apagar] application ${app.id}: falha ao apagar (${err.message}).`);
+    }
+  }
+
+  const params = new URLSearchParams({ curriculos_apagados: String(apagados) });
+  if (falhas) params.set('falhas', String(falhas));
+  res.redirect(`/admin/config?${params.toString()}`);
 });
 
 // Validacao simples de e-mail (formato basico local@dominio.tld). Vazio e tratado
