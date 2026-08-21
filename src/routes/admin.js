@@ -1633,6 +1633,17 @@ router.get('/candidato/:id/curriculo', (req, res) => {
     });
   }
 
+  // Removido DE PROPOSITO pelo backup manual (routes/admin.js, POST /curriculos-backup/
+  // apagar) — nao e "nao encontrado" (404, o caso de baixo, que continua valendo pra
+  // orfao de verdade). 410 Gone e o codigo HTTP que existe exatamente pra isso: o recurso
+  // existiu aqui e foi removido de forma deliberada e permanente.
+  if (cand.curriculo_removido_em) {
+    return avisoAdmin(res, 410, {
+      titulo: 'Currículo removido',
+      descricao: `Este currículo foi removido do servidor em ${formatarDataHora(cand.curriculo_removido_em)} como parte do backup periódico. O arquivo está salvo no Google Drive.`,
+    });
+  }
+
   const caminho = cand.curriculo_path; // caminho absoluto do banco (nao montado de req)
   if (!fs.existsSync(caminho)) {
     return avisoAdmin(res, 404, {
