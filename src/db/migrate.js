@@ -365,6 +365,15 @@ function migrar() {
   // coluna faria o clique de uma campanha de WhatsApp #7 casar com a campanha de e-mail #7.
   adicionarColunaSeFaltar('vaga_acessos', 'campanha_whatsapp_id', 'INTEGER REFERENCES campanhas_whatsapp(id)');
 
+  // Backup manual de curriculos (GET /admin/curriculos-backup + .../apagar): momento em
+  // que o PDF em disco foi apagado depois de confirmado no backup. NULL = arquivo ainda
+  // no disco (comportamento de sempre). NAO apaga a linha nem curriculo_path — o registro
+  // e a referencia ao arquivo original continuam existindo, so o arquivo fisico some.
+  // listarAplicacoesComCurriculoAntes exclui quem ja tem esta coluna preenchida, o que
+  // evita reaparecer num backup ou numa exclusao futura; GET /candidato/:id/curriculo
+  // passa a mostrar uma mensagem especifica em vez do 404 generico.
+  adicionarColunaSeFaltar('applications', 'curriculo_removido_em', 'TEXT');
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

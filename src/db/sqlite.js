@@ -1638,9 +1638,20 @@ function listarAplicacoesComCurriculoAntes(dataCorteIso) {
          LEFT JOIN jobs j ON j.id = a.job_id
         WHERE a.curriculo_path IS NOT NULL AND TRIM(a.curriculo_path) <> ''
           AND a.criado_em < ?
+          AND a.curriculo_removido_em IS NULL
         ORDER BY a.criado_em ASC`,
     )
     .all(dataCorteIso);
+}
+
+// Marca o PDF de curriculo desta candidatura como removido do disco (backup manual, POST
+// /admin/curriculos-backup/apagar). NAO apaga a linha nem curriculo_path — o registro e a
+// referencia ao arquivo original ficam intactos, so o momento da remocao e gravado.
+// datetime('now') direto (sem branch em JS): ao contrario de consent_at, esta funcao so e
+// chamada quando o arquivo DE FATO acabou de ser removido — nunca "talvez agora, talvez
+// null" — entao nao ha motivo pra computar a data em JS como aquele caso exige.
+function marcarCurriculoRemovido(id) {
+  getDb().prepare("UPDATE applications SET curriculo_removido_em = datetime('now') WHERE id = ?").run(id);
 }
 
 // Ultimo relatorio de uma entrevista, em QUALQUER status (o painel mostra mesmo
@@ -3383,6 +3394,7 @@ module.exports = {
   listarTelefonesDisparados,
   registrarDisparoWhatsapp,
   listarAplicacoesComCurriculoAntes,
+  marcarCurriculoRemovido,
   obterReportPorInterview,
   registrarAcessoVaga,
   registrarEventoFunil,

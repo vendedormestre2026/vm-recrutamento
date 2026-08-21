@@ -109,6 +109,7 @@ module.exports = {
   listarOrigensDistintas: driver.listarOrigensDistintas,
   listarCidadesDistintas: driver.listarCidadesDistintas,
   listarAplicacoesComCurriculoAntes: driver.listarAplicacoesComCurriculoAntes,
+  marcarCurriculoRemovido: driver.marcarCurriculoRemovido,
   obterReportPorInterview: driver.obterReportPorInterview,
   registrarAcessoVaga: driver.registrarAcessoVaga,
   registrarEventoFunil: driver.registrarEventoFunil,
