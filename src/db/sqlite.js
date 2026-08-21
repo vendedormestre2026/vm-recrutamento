@@ -1193,6 +1193,37 @@ function listarElegiveisLimpezaAudio({ limite } = {}) {
     .map((linha) => linha.id);
 }
 
+// Entrevistas CONCLUIDAS que nunca tiveram video confirmado no Drive — o backlog que
+// listarElegiveisLimpezaAudio nunca alcanca (o criterio triplo dela exige video_url,
+// de proposito: "nunca apaga audio de entrevista sem backup em video"). Usado pela
+// exclusao MANUAL de audio (GET/POST /admin/audio-entrevistas/apagar): decisao consciente
+// do Rafael de que esse audio, sem vídeo em lugar nenhum, deixou de ser util — a
+// transcricao (interview_turns.texto) e o relatorio ja extraido dela continuam intactos,
+// so o audio bruto (mp3 da Vera + webm do candidato) e apagado.
+//
+// SO 'concluido' — NUNCA 'iniciada'. Uma entrevista em andamento ainda esta servindo o
+// mp3 da Vera ativamente pro candidato (ver audioEntrevista.js); apagar isso quebraria
+// uma sessao real em curso, nao so um arquivo esquecido.
+//
+// Sem exigir report gerado (diferente de listarElegiveisLimpezaAudio): o audio nunca e
+// lido pelo pipeline de relatorio (so a transcricao em texto), entao o status do report
+// nao muda a "utilidade" do audio pra decisao de apagar.
+function listarEntrevistasConcluidasSemVideo() {
+  return getDb()
+    .prepare(
+      `SELECT i.id AS interview_id, i.finalizado_em,
+              a.id AS application_id, a.nome, a.sobrenome,
+              j.titulo AS vaga_titulo
+         FROM interviews i
+         JOIN applications a ON a.id = i.application_id
+         LEFT JOIN jobs j ON j.id = a.job_id
+        WHERE i.status = 'concluido'
+          AND (i.video_url IS NULL OR TRIM(i.video_url) = '')
+        ORDER BY i.finalizado_em ASC`,
+    )
+    .all();
+}
+
 // Turnos da conversa
 function criarTurno(turno) {
   const info = getDb().prepare(`
@@ -3498,6 +3529,7 @@ module.exports = {
   finalizarInterview,
   definirVideoUrl,
   listarElegiveisLimpezaAudio,
+  listarEntrevistasConcluidasSemVideo,
   criarTurno,
   listarTurnos,
   contarTurnos,

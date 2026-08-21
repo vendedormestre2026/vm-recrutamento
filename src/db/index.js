@@ -91,6 +91,7 @@ module.exports = {
   finalizarInterview: driver.finalizarInterview,
   definirVideoUrl: driver.definirVideoUrl,
   listarElegiveisLimpezaAudio: driver.listarElegiveisLimpezaAudio,
+  listarEntrevistasConcluidasSemVideo: driver.listarEntrevistasConcluidasSemVideo,
   criarTurno: driver.criarTurno,
   listarTurnos: driver.listarTurnos,
   contarTurnos: driver.contarTurnos,
