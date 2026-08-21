@@ -25,6 +25,7 @@ const followup = require('../lib/followupEntrevista');
 const emailRecusa = require('../lib/emailRecusa');
 const lembreteInicio = require('../lib/lembreteInicio');
 const limpezaAudio = require('../lib/limpezaAudio');
+const { removerAudioDaEntrevista } = require('../lib/audioEntrevista');
 const dispararPromocao = require('../lib/dispararPromocao');
 const emailTestePromocao = require('../lib/emailTestePromocao');
 const { listarCidadesValidas, normalizarCidade, chave: chaveCidade } = require('../lib/cidades');
@@ -1947,6 +1948,132 @@ router.post('/curriculos-backup/apagar', (req, res) => {
 
   const params = new URLSearchParams({ curriculos_apagados: String(apagados) });
   if (falhas) params.set('falhas', String(falhas));
+  res.redirect(`/admin/config?${params.toString()}`);
+});
+
+// ── GET /admin/audio-entrevistas/apagar ── pre-visualizacao, NAO apaga nada ──
+//
+// Backlog que a limpeza automatica (lib/limpezaAudio.js) nunca alcanca: entrevistas
+// CONCLUIDAS sem video confirmado no Drive (o criterio triplo daquela varredura exige
+// video_url de proposito). Decisao consciente do Rafael (2026-08-21): sem video em lugar
+// nenhum, esse audio deixou de ser util — a transcricao e o relatorio ja gerado a partir
+// dela continuam intactos no banco; so o audio bruto (mp3 da Vera + webm do candidato)
+// seria apagado. So LEITURA aqui.
+router.get('/audio-entrevistas/apagar', (req, res) => {
+  const elegiveis = db.listarEntrevistasConcluidasSemVideo();
+  if (!elegiveis.length) {
+    return avisoAdmin(res, 200, {
+      titulo: 'Nada para apagar',
+      descricao: 'Não há entrevistas concluídas sem vídeo confirmado no momento.',
+    });
+  }
+
+  let totalBytes = 0;
+  let comAudioNoDisco = 0;
+  for (const entrevista of elegiveis) {
+    const dir = path.join(config.caminhoEntrevistas, String(entrevista.interview_id));
+    if (!fs.existsSync(dir)) continue;
+    let temArquivo = false;
+    for (const arquivo of fs.readdirSync(dir)) {
+      try {
+        totalBytes += fs.statSync(path.join(dir, arquivo)).size;
+        temArquivo = true;
+      } catch {
+        // Arquivo sumiu entre o readdir e o stat (raro) — nao impede a pre-visualizacao.
+      }
+    }
+    if (temArquivo) comAudioNoDisco += 1;
+  }
+  const semAudio = elegiveis.length - comAudioNoDisco;
+  const mensagemConfirm = `Apagar o áudio de ${elegiveis.length} entrevista(s) (~${formatarMb(totalBytes)}) permanentemente do servidor? Essa ação não pode ser desfeita.`;
+
+  const linhas = elegiveis
+    .slice(0, 50)
+    .map((e) => {
+      const nome = `${e.nome || ''} ${e.sobrenome || ''}`.trim() || '—';
+      return `<tr><td>${escapeHtml(nome)}</td><td>${escapeHtml(e.vaga_titulo || '—')}</td><td>${escapeHtml(formatarDataHora(e.finalizado_em))}</td></tr>`;
+    })
+    .join('');
+
+  const conteudo = `
+    <p><a class="btn btn--ghost" href="/admin/config">← Voltar às configurações</a></p>
+    <h1>Apagar áudio de entrevistas sem vídeo</h1>
+    <p class="aviso-alerta">
+      <b>Esta ação é IRREVERSÍVEL.</b> O áudio bruto (fala da Vera + respostas do
+      candidato) será apagado do servidor. A transcrição e o relatório já gerado a
+      partir dela continuam intactos — só o áudio some.
+    </p>
+    <section class="rel-sec">
+      <dl class="rel-id">
+        <div><dt>Entrevistas afetadas</dt><dd>${fmtInt(elegiveis.length)}</dd></div>
+        <div><dt>Com áudio de verdade no disco</dt><dd>${fmtInt(comAudioNoDisco)} (~${formatarMb(totalBytes)})</dd></div>
+        ${semAudio ? `<div><dt>Já sem áudio no disco</dt><dd>${fmtInt(semAudio)}</dd></div>` : ''}
+      </dl>
+      <div class="admin-tab-scroll">
+        <table class="admin-tab">
+          <thead><tr><th>Candidato</th><th>Vaga</th><th>Concluída em</th></tr></thead>
+          <tbody>${linhas}</tbody>
+        </table>
+      </div>
+      ${elegiveis.length > 50 ? `<p style="color:var(--cinza);font-size:.85rem;">Mostrando as 50 primeiras de ${fmtInt(elegiveis.length)}.</p>` : ''}
+    </section>
+    <form method="POST" action="/admin/audio-entrevistas/apagar" onsubmit="return confirm(${JSON.stringify(mensagemConfirm)})">
+      <label class="campo-check">
+        <input type="checkbox" name="confirmo_exclusao" value="1" required>
+        <span style="color:var(--preto);text-transform:none;">
+          Confirmo que quero apagar esse áudio permanentemente
+        </span>
+      </label>
+      <button type="submit" class="btn">Apagar áudio de ${fmtInt(elegiveis.length)} entrevista(s)</button>
+      <a class="btn btn--ghost" href="/admin/config">Cancelar</a>
+    </form>`;
+
+  res.send(paginaAdmin({ titulo: 'Apagar áudio de entrevistas sem vídeo', conteudo }));
+});
+
+// ── POST /admin/audio-entrevistas/apagar ── apaga de fato o audio elegivel ──
+//
+// confirmo_exclusao='1' checado no SERVIDOR (HTML/JS podem ser burlados, um POST direto
+// nao pode apagar sem isso). A lista e CONSULTADA DE NOVO aqui, nunca aceita do corpo do
+// POST. Reusa removerAudioDaEntrevista (lib/audioEntrevista.js) — a MESMA funcao usada
+// pela limpeza automatica; nenhuma segunda implementacao de exclusao que possa divergir.
+// Idempotente por natureza: rodar de novo sobre uma entrevista ja limpa so devolve 0
+// bytes (a propria funcao ja trata isso), sem precisar de coluna de marcacao.
+router.post('/audio-entrevistas/apagar', (req, res) => {
+  const b = req.body || {};
+  if (b.confirmo_exclusao !== '1') {
+    return avisoAdmin(res, 400, {
+      titulo: 'Confirmação obrigatória',
+      descricao: 'Marque a confirmação antes de apagar o áudio das entrevistas.',
+    });
+  }
+
+  const elegiveis = db.listarEntrevistasConcluidasSemVideo();
+  if (!elegiveis.length) {
+    return avisoAdmin(res, 200, {
+      titulo: 'Nada para apagar',
+      descricao: 'Não há entrevistas concluídas sem vídeo confirmado no momento.',
+    });
+  }
+
+  let removidas = 0;
+  let totalBytes = 0;
+  for (const entrevista of elegiveis) {
+    const bytes = removerAudioDaEntrevista(entrevista.interview_id);
+    // Marca MESMO quando bytes=0 (pasta ja ausente) — e o que impede esta entrevista de
+    // reaparecer como "elegivel" em toda pre-visualizacao futura (video_url continua NULL
+    // para sempre, entao so o audio_removido_em distingue "ja processada").
+    db.marcarAudioRemovido(entrevista.interview_id);
+    if (bytes > 0) {
+      removidas += 1;
+      totalBytes += bytes;
+    }
+  }
+
+  const params = new URLSearchParams({
+    audio_apagado: String(removidas),
+    audio_mb: (totalBytes / 1048576).toFixed(1),
+  });
   res.redirect(`/admin/config?${params.toString()}`);
 });
 
