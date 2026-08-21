@@ -4822,6 +4822,18 @@ router.get('/config', (req, res) => {
   const ativo = db.obterConfigBool(CHAVE_ENTREVISTA_AUTO, true);
   const salvo = req.query.salvo === '1' ? '<p class="aviso-ok">Configuração salva.</p>' : '';
 
+  // Resumo do POST /curriculos-backup/apagar (redirect com ?curriculos_apagados=N&falhas=M).
+  const curriculosApagadosQtd = Number(req.query.curriculos_apagados);
+  const resumoCurriculosApagados = Number.isInteger(curriculosApagadosQtd)
+    ? (() => {
+        const falhasQtd = Number(req.query.falhas) || 0;
+        const texto = falhasQtd
+          ? `${fmtInt(curriculosApagadosQtd)} currículo(s) removido(s) do servidor. ${fmtInt(falhasQtd)} falha(s) — ver logs do servidor.`
+          : `${fmtInt(curriculosApagadosQtd)} currículo(s) removido(s) do servidor.`;
+        return `<p class="${falhasQtd ? 'aviso-alerta' : 'aviso-ok'}">${escapeHtml(texto)}</p>`;
+      })()
+    : '';
+
   // Config da mensagem de WhatsApp (B4): nome do recrutador + template editavel.
   const recrutadorNome = db.obterConfig('recrutador_nome', RECRUTADOR_PADRAO);
   const whatsappTemplate = db.obterConfig('whatsapp_template', TEMPLATE_PADRAO);
@@ -4877,6 +4889,7 @@ router.get('/config', (req, res) => {
     <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
     <h1>Configurações gerais</h1>
     ${salvo}
+    ${resumoCurriculosApagados}
 
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem;">
       <a class="btn btn--ghost" href="/admin/roteiro">Editar roteiro</a>
@@ -5065,6 +5078,22 @@ router.get('/config', (req, res) => {
               <input type="date" name="antes" value="${escapeHtml(sugestaoAntesCurriculos)}" required>
             </label>
             <button type="submit" class="btn">Baixar currículos antigos (.tar.gz)</button>
+          </form>
+        </section>
+
+        <section class="rel-sec">
+          <h2>Apagar PDFs já baixados</h2>
+          <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+            Depois de confirmar o backup no Google Drive, use isto para liberar espaço em
+            disco. A próxima tela mostra quantos arquivos e quantos MB seriam apagados
+            antes de pedir confirmação — nada é apagado até você confirmar duas vezes.
+          </p>
+          <form method="GET" action="/admin/curriculos-backup/apagar" class="admin-filtros">
+            <label class="filtro">
+              <span>Apagar currículos anteriores a</span>
+              <input type="date" name="antes" value="${escapeHtml(sugestaoAntesCurriculos)}" required>
+            </label>
+            <button type="submit" class="btn btn--ghost">Ver o que seria apagado…</button>
           </form>
         </section>
       </div>
