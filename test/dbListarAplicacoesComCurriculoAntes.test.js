@@ -77,3 +77,26 @@ test('traz o titulo da vaga via JOIN e vem ordenado do mais antigo pro mais novo
   assert.deepEqual(lista.map((l) => l.id), [idAntigo, idMeio, idRecente]);
   assert.ok(lista.every((l) => l.vaga_titulo === 'Vaga Teste'));
 });
+
+// ══════════════════ marcarCurriculoRemovido + exclusao da listagem ══════════════════
+// (backup manual, Etapa B: GET/POST /admin/curriculos-backup/apagar)
+
+test('marcarCurriculoRemovido grava curriculo_removido_em com timestamp nao-nulo', () => {
+  const id = criarApplication({ criado_em: '2025-01-01 10:00:00', nome: 'ParaMarcar' });
+  const antes = db.getDb().prepare('SELECT curriculo_removido_em FROM applications WHERE id = ?').get(id);
+  assert.equal(antes.curriculo_removido_em, null);
+
+  db.marcarCurriculoRemovido(id);
+
+  const depois = db.getDb().prepare('SELECT curriculo_removido_em FROM applications WHERE id = ?').get(id);
+  assert.ok(depois.curriculo_removido_em, 'tem que gravar um timestamp');
+  assert.match(depois.curriculo_removido_em, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+});
+
+test('candidatura com curriculo_removido_em preenchido NAO aparece na lista, mesmo antes do corte', () => {
+  const id = criarApplication({ criado_em: '2025-01-01 10:00:00', nome: 'JaRemovido' });
+  db.marcarCurriculoRemovido(id);
+
+  const lista = db.listarAplicacoesComCurriculoAntes('2025-06-01');
+  assert.ok(!lista.some((l) => l.id === id), 'ja removido nao pode reaparecer num novo backup/exclusao');
+});
