@@ -3129,15 +3129,11 @@ function opcoesSelect(atual, pares) {
 // Campos do formulario de vaga (compartilhados entre criar e editar). No modo "novo"
 // o perfil e um <select> (define o roteiro vinculado); no modo "editar" o perfil e
 // apenas exibido (atualizarVaga nao mexe em perfil/roteiro_id/slug).
-// `cidadeCadastroAction`/`cidadeCadastroHidden`: para onde o mini-form do `<details>` de
-// "cadastrar cidade nova" (ETAPA B, Incremento 3) submete, e os hidden inputs que ele leva
-// junto. NAO reusamos `perfilEditavel` para decidir isso (ETAPA A apontou o risco: e um
-// flag que significa outra coisa — se um dia existir edicao com perfil editavel, os dois
-// se descolam e um vira bug silencioso do outro). Cada CHAMADOR (htmlNovaVaga / GET
-// /vagas/:id) monta esses dois valores porque so ele sabe o contexto real: criacao aponta
-// para /admin/vagas/cidades com os hidden de retomar_vaga; edicao aponta para
-// /admin/vagas/:id/cidades sem hidden nenhum (a vaga ja tem id estavel).
-function camposVagaHtml(vaga, { perfilEditavel, cidadeCadastroAction, cidadeCadastroHidden = '' }) {
+// O mini-form de "cadastrar cidade nova" NAO mora mais aqui dentro — ver
+// blocoFormCadastroCidade logo abaixo, chamado pelos templates ANTES do <form> principal
+// abrir (um <form> aninhado dentro do form de vaga quebrava o botao "Criar vaga"/
+// "Salvar alterações"; ver o comentario de blocoFormCadastroCidade).
+function camposVagaHtml(vaga, { perfilEditavel }) {
   const perfilCampo = perfilEditavel
     ? `<label class="campo">
         <span>Perfil</span>
@@ -3190,24 +3186,6 @@ function camposVagaHtml(vaga, { perfilEditavel, cidadeCadastroAction, cidadeCada
         o endereço acima continua sendo o texto exibido na página da vaga.
       </small>
     </label>
-    <details style="margin:-.6rem 0 1.2rem;">
-      <summary style="cursor:pointer;color:var(--cinza);font-size:.85rem;">+ Cadastrar cidade nova</summary>
-      <form method="POST" action="${cidadeCadastroAction}" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;margin-top:.6rem;">
-        ${cidadeCadastroHidden}
-        <label class="campo" style="margin:0;min-width:14rem;">
-          <span>Nome da cidade</span>
-          <input type="text" name="nome_cidade" placeholder="Ex.: Belo Horizonte">
-        </label>
-        <label class="campo" style="margin:0;flex:1;min-width:16rem;">
-          <span>Link do grupo de WhatsApp desta praça (opcional)</span>
-          <input type="text" name="link_grupo_whatsapp" placeholder="https://chat.whatsapp.com/...">
-        </label>
-        <button type="submit" class="btn btn--ghost">Cadastrar cidade</button>
-      </form>
-      <p style="color:var(--cinza);font-size:.78rem;margin:.35rem 0 0;">
-        Sem link, campanhas de convite de grupo para essa praça vão falhar até isso ser
-        cadastrado depois.</p>
-    </details>
 
     <label class="campo">
       <span>Modalidade</span>
@@ -3303,6 +3281,38 @@ function camposVagaHtml(vaga, { perfilEditavel, cidadeCadastroAction, cidadeCada
       Marcada: o candidato passa pela entrevista com a Vera (fluxo completo). Desmarcada:
       modo Simples — só confirmação + botão de WhatsApp, sem entrevista. Só tem efeito
       quando a <b>Entrevista automática (geral)</b> está ligada em Configurações.</p>`;
+}
+
+// Mini-form "Cadastrar cidade nova": precisa ser um <form> de verdade (POST tradicional,
+// recarrega a pagina inteira), mas NAO pode ficar aninhado dentro do form principal da
+// vaga (camposVagaHtml ficava dentro do <form> de "Criar vaga"/"Salvar alteracoes"). HTML
+// nao permite <form> dentro de <form>: o navegador ignora a tag <form> interna e fecha o
+// form EXTERNO no primeiro </form> que encontrar — o que deixava tudo que vinha depois do
+// mini-form de cidade, inclusive o botao "Criar vaga"/"Salvar alteracoes", fora de
+// QUALQUER form (bug real, achado na investigacao de "cadastro de vaga nao salva e nao
+// mostra erro": o botao ficava sem <form> associado e o clique nao fazia nada — nem
+// requisicao, nem erro). Por isso este bloco e chamado pelos templates ANTES do <form>
+// principal abrir (nunca de dentro de camposVagaHtml).
+function blocoFormCadastroCidade({ cidadeCadastroAction, cidadeCadastroHidden = '' }) {
+  return `
+    <details style="margin:-.6rem 0 1.2rem;">
+      <summary style="cursor:pointer;color:var(--cinza);font-size:.85rem;">+ Cadastrar cidade nova</summary>
+      <form method="POST" action="${cidadeCadastroAction}" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;margin-top:.6rem;">
+        ${cidadeCadastroHidden}
+        <label class="campo" style="margin:0;min-width:14rem;">
+          <span>Nome da cidade</span>
+          <input type="text" name="nome_cidade" placeholder="Ex.: Belo Horizonte">
+        </label>
+        <label class="campo" style="margin:0;flex:1;min-width:16rem;">
+          <span>Link do grupo de WhatsApp desta praça (opcional)</span>
+          <input type="text" name="link_grupo_whatsapp" placeholder="https://chat.whatsapp.com/...">
+        </label>
+        <button type="submit" class="btn btn--ghost">Cadastrar cidade</button>
+      </form>
+      <p style="color:var(--cinza);font-size:.78rem;margin:.35rem 0 0;">
+        Sem link, campanhas de convite de grupo para essa praça vão falhar até isso ser
+        cadastrado depois.</p>
+    </details>`;
 }
 
 // Mini-formulario para corrigir o slug de uma vaga ja criada (POST /vagas/:id/slug,
@@ -3602,14 +3612,14 @@ function htmlNovaVaga({
     ${blocoImportBriefing(erroImport)}
     ${blocoCidadeCadastrada(cidadeCadastrada)}
     ${blocoSugestaoCidade({ vaga: vagaBase, ausentes, erroCidade })}
+    ${blocoFormCadastroCidade({
+      cidadeCadastroAction: '/admin/vagas/cidades',
+      cidadeCadastroHidden: hiddenRetomarVaga(vagaBase, ausentes),
+    })}
     ${avisoCamposAusentes(ausentes, Boolean(vagaBase.cidadeSugeridaBruta))}
     ${erroTitulo}
     <form method="POST" action="/admin/vagas">
-      ${camposVagaHtml(vagaBase, {
-        perfilEditavel: true,
-        cidadeCadastroAction: '/admin/vagas/cidades',
-        cidadeCadastroHidden: hiddenRetomarVaga(vagaBase, ausentes),
-      })}
+      ${camposVagaHtml(vagaBase, { perfilEditavel: true })}
       <p style="color:var(--cinza);font-size:.85rem;margin-top:-.5rem;">
         O roteiro de entrevista é vinculado automaticamente pelo perfil escolhido.</p>
       <button type="submit" class="btn">Criar vaga</button>
@@ -3820,11 +3830,9 @@ router.get('/vagas/:id', (req, res) => {
     ${salvoCidade}
     ${erroCidade}
     ${semLinkCidade}
+    ${blocoFormCadastroCidade({ cidadeCadastroAction: `/admin/vagas/${vaga.id}/cidades` })}
     <form method="POST" action="/admin/vagas/${vaga.id}">
-      ${camposVagaHtml(vaga, {
-        perfilEditavel: false,
-        cidadeCadastroAction: `/admin/vagas/${vaga.id}/cidades`,
-      })}
+      ${camposVagaHtml(vaga, { perfilEditavel: false })}
       <button type="submit" class="btn">Salvar alterações</button>
     </form>`;
 
