@@ -57,13 +57,6 @@ function lerCriterios(b = {}) {
     cidades: [].concat(b.cidade || []).map(String).filter((c) => listarCidadesValidas().includes(c)),
     perfil: PERFIS_VALIDOS.includes(b.perfil) ? b.perfil : undefined,
     perfilIncluirSemAtributo: b.perfil_incluir_sem === '1' || b.perfil_incluir_sem === 'on',
-    // ETAPA B, Incremento 6 — mesmo [].concat de cidade acima, e mesmo saneamento: so
-    // numero inteiro positivo sobrevive, o resto (lixo, string vazia do "nenhuma marcada")
-    // cai fora silenciosamente, exatamente como listarCidadesValidas().includes(c) faz para
-    // cidade.
-    vagas: [].concat(b.vaga || [])
-      .map(Number)
-      .filter((n) => Number.isInteger(n) && n > 0),
     dataDe: dataIsoValida(b.de) ? b.de : undefined,
     dataAte: dataIsoValida(b.ate) ? b.ate : undefined,
   };
@@ -108,13 +101,6 @@ function checkboxes(escapeHtml, nome, pares, marcados) {
     .join('');
 }
 
-// Rotulo legivel de uma vaga para o checkbox de segmentacao por candidatura: "titulo ·
-// perfil · cidade" (cidade omitida quando a vaga e remota/sem cidade cadastrada).
-function rotuloVaga(v) {
-  const base = `${v.titulo || `Vaga ${v.id}`} · ${v.perfil}`;
-  return v.cidade ? `${base} · ${v.cidade}` : base;
-}
-
 function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
   const inteiro = (v) => (fmtInt ? fmtInt(v) : String(v));
 
@@ -125,13 +111,10 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
   // justamente para mostrar o espelho completo.
   const templatesAtivos = db.listarTemplatesWhatsapp({ apenasAtivos: true });
   const regioes = db.listarRegioesGrupos();
-  const vagas = db.listarVagas();
   // Vaga sendo DIVULGADA (Incremento 7): so ativas, mesmo recorte de admin_promocao.js
-  // (vagasAtivas). Distinto de `vagas` acima — aquele alimenta o filtro de SEGMENTACAO
-  // "ja se candidataram a" (Incremento 6), que faz sentido para vaga inativa tambem (gente
-  // se candidatou no passado a uma vaga que fechou depois). Divulgar uma vaga inativa,
-  // porem, nao faz sentido nenhum: seria convidar gente para se candidatar a algo fechado.
-  const vagasAtivas = vagas.filter((v) => v.ativo);
+  // (vagasAtivas). Divulgar uma vaga inativa nao faz sentido — seria convidar gente para se
+  // candidatar a algo fechado.
+  const vagasAtivas = db.listarVagas().filter((v) => v.ativo);
   const campanhas = db.listarCampanhasWhatsapp();
   const contagens = contagensPorCampanha();
   const ativo = campanha.ativo();
@@ -265,18 +248,6 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
         </label>
 
         <div class="admin-filtros" style="align-items:flex-start;">
-          <div class="filtro">
-            <span>Já se candidataram a (opcional)</span>
-            ${vagas.length
-              ? checkboxes(escapeHtml, 'vaga', vagas.map((v) => [String(v.id), rotuloVaga(v)]), [])
-                + `<span style="display:block;color:var(--cinza);font-size:.78rem;margin-top:.35rem;text-transform:none;max-width:18rem">
-                     Nenhuma marcada = todas. Marcando uma ou mais, só quem se candidatou a
-                     alguma delas entra — a Base legada fica de fora (ela não tem vaga).
-                   </span>`
-              : `<span style="color:var(--cinza);font-size:.8rem;text-transform:none;">
-                   Nenhuma vaga cadastrada.
-                 </span>`}
-          </div>
           <label class="filtro">
             <span>Candidatura/cadastro de</span>
             <input type="date" name="de">

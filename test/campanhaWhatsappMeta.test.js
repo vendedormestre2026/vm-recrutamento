@@ -1038,41 +1038,23 @@ test('admin: o checkbox do kill-switch liga e persiste', async () => {
 
 // ══════════════════ ETAPA B, Incremento 6: UI (filtros + envio avulso) ══════════════════
 
-test('admin: form "Nova campanha" renderiza checkboxes de Vaga (titulo · perfil · cidade) e periodo', async () => {
-  zerarSeg();
-  const j = vagaCom('Joinville', 'SDR');
+test('admin: form "Nova campanha" renderiza os inputs de periodo', async () => {
+  // O checkbox "Ja se candidataram a" (filtro de vagas, multi-selecao) que vivia junto
+  // deste teste foi REMOVIDO no Incremento 10 — ver a nota na secao "filtro de Periodo"
+  // mais abaixo no arquivo.
+  zerar();
   montarCenario();
-  const tituloVaga = uma('SELECT titulo FROM jobs WHERE id = ?', j).titulo;
-
   await comAdmin(async (base, h) => {
     const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
-    // Rotulo renomeado no Incremento 7 para nao ser confundido com a vaga-ALVO da
-    // divulgacao ("Vaga sendo divulgada").
-    assert.match(html, /Já se candidataram a \(opcional\)/);
-    // Checkbox de multi-selecao com name="vaga", MESMO padrao de name="cidade" ja usado.
-    const reCheckbox = new RegExp(`<input type="checkbox" name="vaga" value="${j}">`);
-    assert.match(html, reCheckbox);
-    assert.match(html, new RegExp(escapeHtml(`${tituloVaga} · SDR · Joinville`)));
-    // Periodo: dois <input type="date">, de/ate.
     assert.match(html, /<input type="date" name="de">/);
     assert.match(html, /<input type="date" name="ate">/);
-  });
-});
-
-test('admin: sem vaga cadastrada, o bloco de Vaga avisa em vez de renderizar checkbox vazio', async () => {
-  zerarSeg();
-  montarCenario();
-  await comAdmin(async (base, h) => {
-    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
-    assert.match(html, /Nenhuma vaga cadastrada\./);
+    // O checkbox de segmentacao por vaga nao existe mais em lugar nenhum da tela.
     assert.doesNotMatch(html, /<input type="checkbox" name="vaga"/);
   });
 });
 
-test('admin: POST / grava vagas[] e periodo em criterios_json', async () => {
-  zerarSeg();
-  const j1 = vagaCom('Joinville');
-  const j2 = vagaCom('Curitiba');
+test('admin: POST / grava periodo em criterios_json (sem vagas[] — removido no Incremento 10)', async () => {
+  zerar();
   const { tid } = montarCenario();
 
   await comAdmin(async (base, h) => {
@@ -1080,11 +1062,9 @@ test('admin: POST / grava vagas[] e periodo em criterios_json', async () => {
       method: 'POST',
       headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams([
-        ['nome', 'Campanha com filtro de vaga'],
+        ['nome', 'Campanha com periodo'],
         ['template_id', String(tid)],
         ['base_alvo', 'ambos'],
-        ['vaga', String(j1)],
-        ['vaga', String(j2)],
         ['de', '2026-01-01'],
         ['ate', '2026-12-31'],
       ]),
@@ -1093,34 +1073,11 @@ test('admin: POST / grava vagas[] e periodo em criterios_json', async () => {
     assert.equal(res.status, 302);
   });
 
-  const linha = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Campanha com filtro de vaga'");
+  const linha = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Campanha com periodo'");
   const criterios = JSON.parse(linha.criterios_json);
-  assert.deepEqual(criterios.vagas.sort(), [j1, j2].sort());
+  assert.equal(criterios.vagas, undefined);
   assert.equal(criterios.dataDe, '2026-01-01');
   assert.equal(criterios.dataAte, '2026-12-31');
-});
-
-test('admin: POST /previa repassa o filtro de vaga para o motor de publico (o total muda)', async () => {
-  zerarSeg();
-  const jA = vagaCom('Joinville');
-  const jB = vagaCom('Joinville');
-  candidatura(jA, 'Candidatou A', '+55 47 90000-0400');
-  candidatura(jB, 'Candidatou B', '+55 47 90000-0401');
-
-  await comAdmin(async (base, h) => {
-    const previa = (extra) =>
-      fetch(`${base}/admin/campanhas-whatsapp/previa`, {
-        method: 'POST',
-        headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ tipo_mensagem: 'convite_grupo', ...extra }),
-      }).then((r) => r.json());
-
-    const semFiltro = await previa({});
-    assert.equal(semFiltro.total, 2);
-
-    const comFiltro = await previa({ vaga: String(jA) });
-    assert.equal(comFiltro.total, 1);
-  });
 });
 
 test('admin: a tela tem a secao "Testar envio avulso" com busca, telefone, template e botao', async () => {
@@ -1167,7 +1124,7 @@ test('admin: form "Nova campanha" renderiza o select de tipo e o campo de vaga-a
   });
 });
 
-test('admin: vaga INATIVA nao aparece no select da vaga-alvo, mas continua no checkbox de segmentacao', async () => {
+test('admin: vaga INATIVA nao aparece no select da vaga-alvo', async () => {
   zerarSeg();
   const jInativa = vagaCom('Curitiba');
   exec('UPDATE jobs SET ativo = 0 WHERE id = ?', jInativa);
@@ -1176,11 +1133,8 @@ test('admin: vaga INATIVA nao aparece no select da vaga-alvo, mas continua no ch
 
   await comAdmin(async (base, h) => {
     const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
-    // Nao esta entre as <option> do select de vaga-alvo...
+    // Nao esta entre as <option> do select de vaga-alvo.
     assert.doesNotMatch(html, new RegExp(`<option value="${jInativa}">${escapeHtml(tituloInativa)}`));
-    // ...mas continua disponivel no checkbox de segmentacao (Incremento 6 nao mudou: quem
-    // se candidatou no passado a uma vaga que fechou depois continua um alvo valido).
-    assert.match(html, new RegExp(`<input type="checkbox" name="vaga" value="${jInativa}">`));
   });
 });
 
@@ -1632,60 +1586,19 @@ test('materializacao grava telefone normalizado e cidade resolvida', () => {
   assert.equal(db.materializarCampanhaWhatsapp(cid, r.itens), 0);
 });
 
-// ══════════════════ ETAPA B: filtro de Vagas (candidatura) e Periodo ══════════════════
+// ══════════════════ ETAPA B: filtro de Periodo ══════════════════
+//
+// O filtro "vagas" (candidatou-se a esta vaga especifica, multi-selecao) que vivia aqui foi
+// REMOVIDO no Incremento 10 — superado pelo redesenho de segmentacao em 3 objetivos de
+// campanha (ver Incremento 11/12: o novo tipo status_candidatura substitui essa necessidade
+// com um recorte mais preciso, por vaga + status_recrutador). Periodo continua valendo para
+// os dois tipos que restaram (convite_grupo/divulgacao_vaga).
 
 // Sobrescreve criado_em DEPOIS do insert (candidatura/legado gravam com o default now()).
 // `dataIso` no formato YYYY-MM-DD; a hora fixa em meio-dia so evita ambiguidade de fuso.
 function comCriadoEm(tabela, id, dataIso) {
   exec(`UPDATE ${tabela} SET criado_em = ? WHERE id = ?`, `${dataIso} 12:00:00`, id);
 }
-
-test('vagas: filtro vazio preserva o comportamento atual (sem recorte)', () => {
-  zerarSeg();
-  const j1 = vagaCom('Joinville');
-  const j2 = vagaCom('Curitiba');
-  candidatura(j1, 'Ana', '+55 47 90000-0100');
-  candidatura(j2, 'Bia', '+55 41 90000-0101');
-  legado('Legado', '+55 47 90000-0102', 'Joinville');
-
-  const semFiltro = publico.listarPublicoConviteGrupo({});
-  assert.deepEqual(tels(publico.listarPublicoConviteGrupo({ vagas: [] })), tels(semFiltro));
-  assert.equal(semFiltro.total, 3);
-});
-
-test('vagas: recorta so quem se candidatou a uma das vagas marcadas, e EXCLUI toda a Base legada', () => {
-  zerarSeg();
-  const alvo = vagaCom('Joinville');
-  const outra = vagaCom('Joinville');
-  candidatura(alvo, 'Candidatou Alvo', '+55 47 90000-0103');
-  candidatura(outra, 'Candidatou Outra', '+55 47 90000-0104');
-  legado('So Legado', '+55 47 90000-0105', 'Joinville');
-
-  const r = publico.listarPublicoConviteGrupo({ vagas: [alvo] });
-  assert.deepEqual(tels(r), ['5547900000103']);
-
-  // Mesmo recorte em divulgacao_vaga (vaga divulgada e uma TERCEIRA, sem relacao com o
-  // filtro). Legado nunca tem job_id: mesmo com cidade batendo, sai sozinho — sem checkbox
-  // de "incluir sem vaga".
-  const rDivulgacao = publico.listarPublicoDivulgacaoVaga(vagaCom('Curitiba'), { vagas: [alvo] });
-  assert.deepEqual(tels(rDivulgacao), ['5547900000103']);
-});
-
-test('vagas + divulgacao: a exclusao de "ja se candidatou ao ALVO" continua valendo mesmo quando o alvo esta FORA do filtro de vagas', () => {
-  // Regressao do furo descrito em aplicarFiltroVagas: jobsInscritos usado pelo filtro tem
-  // que ser o conjunto COMPLETO de vagas da pessoa, nao so as que sobrevivem ao filtro —
-  // senao quem se candidatou a A (dentro do filtro) e TAMBEM ao alvo B (fora do filtro)
-  // deixaria de ser excluido da divulgacao de B.
-  zerarSeg();
-  const vagaA = vagaCom('Joinville');
-  const alvoB = vagaCom('Joinville');
-  const telefone = '+55 47 90000-0106';
-  candidatura(vagaA, 'Duas Vagas', telefone);
-  candidatura(alvoB, 'Duas Vagas', telefone);
-
-  const r = publico.listarPublicoDivulgacaoVaga(alvoB, { vagas: [vagaA] });
-  assert.deepEqual(tels(r), []);
-});
 
 test('periodo: filtra applications.criado_em, INCLUSIVO nos dois extremos', () => {
   zerarSeg();
@@ -1712,23 +1625,6 @@ test('periodo: talento usa o proprio criado_em (cadastro), e nao fica fora so po
 
   const r = publico.listarPublicoConviteGrupo({ dataDe: '2026-02-01', dataAte: '2026-02-28' });
   assert.deepEqual(tels(r), ['5547900000111']);
-});
-
-test('periodo + vagas juntos: periodo recorta a janela, vagas continua excluindo o legado', () => {
-  zerarSeg();
-  const alvo = vagaCom('Joinville');
-  const dentro = candidatura(alvo, 'Dentro', '+55 47 90000-0113');
-  const fora = candidatura(alvo, 'Fora da janela', '+55 47 90000-0114');
-  comCriadoEm('applications', dentro, '2026-04-10');
-  comCriadoEm('applications', fora, '2026-05-10');
-  legado('Legado na janela', '+55 47 90000-0115', 'Joinville');
-
-  const r = publico.listarPublicoConviteGrupo({
-    vagas: [alvo],
-    dataDe: '2026-04-01',
-    dataAte: '2026-04-30',
-  });
-  assert.deepEqual(tels(r), ['5547900000113']);
 });
 
 test('periodo + divulgacao (Incremento 2): a exclusao de "ja se candidatou ao ALVO" continua valendo mesmo quando essa candidatura cai FORA da janela de periodo', () => {

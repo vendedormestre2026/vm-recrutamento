@@ -96,8 +96,7 @@ function apenasData(criadoEm) {
 // listarTalentosParaCampanhaWhatsapp, em sqlite.js) ACEITAM um parametro de janela, mas esta
 // funcao NUNCA o passa. Motivo: jobsInscritos (usado pela exclusao "ja se candidatou a esta
 // vaga" de listarPublicoDivulgacaoVaga) e datas (usado por aplicarFiltroPeriodo) precisam do
-// historico COMPLETO da pessoa para as duas checagens que dependem deles nao falharem —
-// exatamente o mesmo raciocinio ja aplicado ao filtro `vagas` (ver aplicarFiltroVagas). Uma
+// historico COMPLETO da pessoa para as duas checagens que dependem deles nao falharem. Uma
 // janela estreita aplicada AQUI reduziria jobsInscritos junto com o publico, e uma
 // candidatura a vaga alvo de uma divulgacao FORA da janela deixaria de ser barrada pela
 // exclusao. O periodo e filtrado DEPOIS, em JS, sobre o conjunto inteiro — ver
@@ -191,42 +190,15 @@ function paraSaida(p) {
   };
 }
 
-// ── FILTRO "VAGAS" (candidatou-se a uma destas vagas especificas) ──
-//
-// Compara contra jobsInscritos — TODAS as vagas em que aquele TELEFONE ja entrou (ver
-// coletarPessoas), e nao so as que sobreviveram a algum outro recorte. Deliberado: o mesmo
-// jobsInscritos alimenta a exclusao "ja se candidatou a ESTA vaga" em
-// listarPublicoDivulgacaoVaga, mais abaixo. Se este filtro descartasse LINHAS de
-// candidatura antes de jobsInscritos ser montado (em vez de comparar o conjunto pronto),
-// uma pessoa que se candidatou a vaga A (dentro do filtro) e TAMBEM a vaga alvo de uma
-// divulgacao B (fora do filtro) deixaria de ser barrada pela exclusao de B — porque B teria
-// sumido do conjunto antes de chegar ali. Comparar o conjunto JA COMPLETO evita esse furo.
-//
-// EXCLUI toda a Base legada, sem opcao de "incluir sem atributo" (mesmo padrao ja usado
-// para cidade, e mesma logica ja documentada para Origem em promocaoVagas.js ~152-158):
-// talentos nunca tem job_id, entao "candidatou-se a esta vaga" e uma pergunta que so
-// applications responde — jobsInscritos de quem so existe via legado e sempre um Set
-// vazio, e por isso o filtro ja os exclui sozinho, sem precisar checar origemTipo.
-function aplicarFiltroVagas(pessoas, criterios) {
-  const vagas = Array.isArray(criterios.vagas)
-    ? criterios.vagas.map(Number).filter((n) => Number.isInteger(n) && n > 0)
-    : [];
-  if (!vagas.length) return pessoas;
-  const vagasSet = new Set(vagas);
-  return pessoas.filter((p) => [...p.jobsInscritos].some((jobId) => vagasSet.has(jobId)));
-}
-
 // ── FILTRO "PERIODO" (dataDe/dataAte) ──
 //
-// Irma de aplicarFiltroVagas, mesmo motivo estrutural: compara contra `datas` — TODAS as
-// datas (candidatura e/ou cadastro) em que aquele TELEFONE apareceu (ver coletarPessoas) —
-// e nao contra uma consulta ja recortada por janela. Se a janela fosse aplicada nas
-// consultas de origem (como o e-mail faz, e como esta funcao fazia ate o Incremento 1 desta
-// ETAPA), uma candidatura a vaga alvo de uma divulgacao FORA da janela sumiria de
-// jobsInscritos ANTES da exclusao "ja se candidatou a esta vaga" rodar, e deixaria de ser
-// barrada. Comparar `datas` (conjunto completo) DEPOIS do agrupamento, sem tocar
-// jobsInscritos, evita esse furo — o mesmo raciocinio de aplicarFiltroVagas, aplicado ao
-// eixo de tempo em vez de vaga.
+// Compara contra `datas` — TODAS as datas (candidatura e/ou cadastro) em que aquele TELEFONE
+// apareceu (ver coletarPessoas) — e nao contra uma consulta ja recortada por janela. Se a
+// janela fosse aplicada nas consultas de origem (como o e-mail faz, e como esta funcao fazia
+// ate o Incremento 1 desta ETAPA), uma candidatura a vaga alvo de uma divulgacao FORA da
+// janela sumiria de jobsInscritos ANTES da exclusao "ja se candidatou a esta vaga" rodar, e
+// deixaria de ser barrada. Comparar `datas` (conjunto completo) DEPOIS do agrupamento, sem
+// tocar jobsInscritos, evita esse furo.
 //
 // Dois extremos INCLUSIVOS, mesmo contrato do e-mail (condicoesFiltroCandidatos): basta UMA
 // data da pessoa cair dentro da janela para ela entrar — nao todas.
@@ -242,13 +214,10 @@ function aplicarFiltroPeriodo(pessoas, criterios) {
 // 1. CONVITE DE GRUPO
 // ══════════════════════════════════════════════════════════════
 
-// Filtros aceitos: `cidades` (multi-selecao), `vagas` (multi-selecao, candidatura a vaga
-// especifica) e `dataDe`/`dataAte` (periodo da candidatura/cadastro). Nao ha "incluir sem
-// cidade" — ver acima — nem "incluir sem vaga": quem nao tem vaga (Base legada) ja sai pela
-// natureza do filtro (ver aplicarFiltroVagas).
+// Filtros aceitos: `cidades` (multi-selecao) e `dataDe`/`dataAte` (periodo da
+// candidatura/cadastro). Nao ha "incluir sem cidade" — ver acima.
 function listarPublicoConviteGrupo(criterios = {}, deps = {}) {
   let pessoas = aplicarInvariantes(coletarPessoas(deps), deps);
-  pessoas = aplicarFiltroVagas(pessoas, criterios);
   pessoas = aplicarFiltroPeriodo(pessoas, criterios);
 
   const passo = aplicarFiltroMulti(pessoas, {
@@ -270,14 +239,8 @@ function listarPublicoConviteGrupo(criterios = {}, deps = {}) {
 // 2. DIVULGACAO DE VAGA
 // ══════════════════════════════════════════════════════════════
 
-// Filtros aceitos: `cidades` (multi), `perfil` (unico), `vagas` (multi — candidatou-se a
-// alguma destas) e `dataDe`/`dataAte` (periodo). Nada de Origem/Recomendacao/Base — os
-// outros eixos respondem outras perguntas.
-//
-// `vagas` aqui e um eixo DIFERENTE de `jobId` (o parametro abaixo): `jobId` e a vaga sendo
-// DIVULGADA (unica, obrigatoria, e quem ja se candidatou a ela sai por invariante); `vagas`
-// e um recorte OPCIONAL de "so quem ja demonstrou interesse candidatando-se a X" — as duas
-// coisas podem coexistir (divulgar a vaga B so para quem se candidatou a A).
+// Filtros aceitos: `cidades` (multi), `perfil` (unico) e `dataDe`/`dataAte` (periodo). Nada
+// de Origem/Recomendacao/Base — os outros eixos respondem outras perguntas.
 //
 // ── EXCLUSAO INVARIANTE: QUEM JA SE CANDIDATOU A ESTA VAGA ──
 // Mesma regra #1 de promocaoVagas, e pela mesma razao: divulgar uma vaga para quem ja esta
@@ -299,12 +262,10 @@ function listarPublicoDivulgacaoVaga(jobId, criterios = {}, deps = {}) {
 
   let pessoas = aplicarInvariantes(coletarPessoas(deps), deps);
 
-  // Invariante: fora quem ja esta na vaga. ANTES dos filtros `vagas`/periodo de proposito —
-  // sao perguntas independentes (uma exclui, as outras recortam), e jobsInscritos aqui e o
-  // mesmo conjunto COMPLETO usado pelas tres, pela razao documentada em aplicarFiltroVagas e
-  // aplicarFiltroPeriodo.
+  // Invariante: fora quem ja esta na vaga. ANTES do filtro de periodo de proposito — sao
+  // perguntas independentes (uma exclui, a outra recorta), e jobsInscritos aqui e o mesmo
+  // conjunto COMPLETO usado pelas duas, pela razao documentada em aplicarFiltroPeriodo.
   pessoas = pessoas.filter((p) => !p.jobsInscritos.has(alvo));
-  pessoas = aplicarFiltroVagas(pessoas, criterios);
   pessoas = aplicarFiltroPeriodo(pessoas, criterios);
 
   const passoCidade = aplicarFiltroMulti(pessoas, {
