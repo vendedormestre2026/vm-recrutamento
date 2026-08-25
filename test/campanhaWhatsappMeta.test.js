@@ -1063,6 +1063,105 @@ test('materializacao grava telefone normalizado e cidade resolvida', () => {
   assert.equal(db.materializarCampanhaWhatsapp(cid, r.itens), 0);
 });
 
+// ══════════════════ ETAPA B: filtro de Vagas (candidatura) e Periodo ══════════════════
+
+// Sobrescreve criado_em DEPOIS do insert (candidatura/legado gravam com o default now()).
+// `dataIso` no formato YYYY-MM-DD; a hora fixa em meio-dia so evita ambiguidade de fuso.
+function comCriadoEm(tabela, id, dataIso) {
+  exec(`UPDATE ${tabela} SET criado_em = ? WHERE id = ?`, `${dataIso} 12:00:00`, id);
+}
+
+test('vagas: filtro vazio preserva o comportamento atual (sem recorte)', () => {
+  zerarSeg();
+  const j1 = vagaCom('Joinville');
+  const j2 = vagaCom('Curitiba');
+  candidatura(j1, 'Ana', '+55 47 90000-0100');
+  candidatura(j2, 'Bia', '+55 41 90000-0101');
+  legado('Legado', '+55 47 90000-0102', 'Joinville');
+
+  const semFiltro = publico.listarPublicoConviteGrupo({});
+  assert.deepEqual(tels(publico.listarPublicoConviteGrupo({ vagas: [] })), tels(semFiltro));
+  assert.equal(semFiltro.total, 3);
+});
+
+test('vagas: recorta so quem se candidatou a uma das vagas marcadas, e EXCLUI toda a Base legada', () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  const outra = vagaCom('Joinville');
+  candidatura(alvo, 'Candidatou Alvo', '+55 47 90000-0103');
+  candidatura(outra, 'Candidatou Outra', '+55 47 90000-0104');
+  legado('So Legado', '+55 47 90000-0105', 'Joinville');
+
+  const r = publico.listarPublicoConviteGrupo({ vagas: [alvo] });
+  assert.deepEqual(tels(r), ['5547900000103']);
+
+  // Mesmo recorte em divulgacao_vaga (vaga divulgada e uma TERCEIRA, sem relacao com o
+  // filtro). Legado nunca tem job_id: mesmo com cidade batendo, sai sozinho — sem checkbox
+  // de "incluir sem vaga".
+  const rDivulgacao = publico.listarPublicoDivulgacaoVaga(vagaCom('Curitiba'), { vagas: [alvo] });
+  assert.deepEqual(tels(rDivulgacao), ['5547900000103']);
+});
+
+test('vagas + divulgacao: a exclusao de "ja se candidatou ao ALVO" continua valendo mesmo quando o alvo esta FORA do filtro de vagas', () => {
+  // Regressao do furo descrito em aplicarFiltroVagas: jobsInscritos usado pelo filtro tem
+  // que ser o conjunto COMPLETO de vagas da pessoa, nao so as que sobrevivem ao filtro —
+  // senao quem se candidatou a A (dentro do filtro) e TAMBEM ao alvo B (fora do filtro)
+  // deixaria de ser excluido da divulgacao de B.
+  zerarSeg();
+  const vagaA = vagaCom('Joinville');
+  const alvoB = vagaCom('Joinville');
+  const telefone = '+55 47 90000-0106';
+  candidatura(vagaA, 'Duas Vagas', telefone);
+  candidatura(alvoB, 'Duas Vagas', telefone);
+
+  const r = publico.listarPublicoDivulgacaoVaga(alvoB, { vagas: [vagaA] });
+  assert.deepEqual(tels(r), []);
+});
+
+test('periodo: filtra applications.criado_em, INCLUSIVO nos dois extremos', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const dentroDe = candidatura(j, 'No limite De', '+55 47 90000-0107');
+  const dentroAte = candidatura(j, 'No limite Ate', '+55 47 90000-0108');
+  const foraAntes = candidatura(j, 'Antes da janela', '+55 47 90000-0109');
+  const foraDepois = candidatura(j, 'Depois da janela', '+55 47 90000-0110');
+  comCriadoEm('applications', dentroDe, '2026-01-10');
+  comCriadoEm('applications', dentroAte, '2026-01-20');
+  comCriadoEm('applications', foraAntes, '2026-01-09');
+  comCriadoEm('applications', foraDepois, '2026-01-21');
+
+  const r = publico.listarPublicoConviteGrupo({ dataDe: '2026-01-10', dataAte: '2026-01-20' });
+  assert.deepEqual(tels(r), ['5547900000107', '5547900000108']);
+});
+
+test('periodo: talento usa o proprio criado_em (cadastro), e nao fica fora so por ser legado', () => {
+  zerarSeg();
+  const dentro = legado('Cadastrado na janela', '+55 47 90000-0111', 'Joinville');
+  const fora = legado('Cadastrado fora', '+55 47 90000-0112', 'Joinville');
+  comCriadoEm('talentos', dentro, '2026-02-15');
+  comCriadoEm('talentos', fora, '2026-03-01');
+
+  const r = publico.listarPublicoConviteGrupo({ dataDe: '2026-02-01', dataAte: '2026-02-28' });
+  assert.deepEqual(tels(r), ['5547900000111']);
+});
+
+test('periodo + vagas juntos: periodo recorta a janela, vagas continua excluindo o legado', () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  const dentro = candidatura(alvo, 'Dentro', '+55 47 90000-0113');
+  const fora = candidatura(alvo, 'Fora da janela', '+55 47 90000-0114');
+  comCriadoEm('applications', dentro, '2026-04-10');
+  comCriadoEm('applications', fora, '2026-05-10');
+  legado('Legado na janela', '+55 47 90000-0115', 'Joinville');
+
+  const r = publico.listarPublicoConviteGrupo({
+    vagas: [alvo],
+    dataDe: '2026-04-01',
+    dataAte: '2026-04-30',
+  });
+  assert.deepEqual(tels(r), ['5547900000113']);
+});
+
 // ══════════════════ montarUrlVaga parametrizado ══════════════════
 
 test('montarUrlVaga: o comportamento do E-MAIL nao mudou', () => {

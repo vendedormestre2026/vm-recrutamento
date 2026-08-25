@@ -2999,32 +2999,75 @@ function contarSequenciaWhatsapp(applicationId = null) {
 //
 // deleted_at nao entra na condicao, de proposito: candidatura arquivada NAO desfaz o fato de
 // a pessoa ja estar naquela vaga. Mesma leitura de listarEmailsInscritosNaVaga.
-function listarCandidatosParaCampanhaWhatsapp() {
+//
+// `{ dataDe, dataAte }` (ETAPA B, filtro de Periodo): mesmo contrato inclusivo do e-mail
+// (listarCandidatosParaCampanha / condicoesFiltroCandidatos), sobre a.criado_em.
+//
+// ⚠️ DIFERENCA que PRECISA ficar registrada em relacao ao e-mail: la, "ja se candidatou a
+// vaga alvo" e uma consulta SEPARADA e sempre SEM filtro de data (listarEmailsInscritosNaVaga,
+// mais abaixo neste arquivo). Aqui, jobsInscritos — a mesma finalidade, montado em
+// lib/publicoCampanhaWhatsapp a partir das linhas QUE ESTA FUNCAO devolve — nasce da MESMA
+// consulta que agora aceita janela. Uma janela estreita reduz jobsInscritos junto com o
+// publico: quem se candidatou a vaga alvo de uma divulgacao FORA da janela, mas a outra vaga
+// DENTRO dela, deixa de ser barrado pela exclusao "ja se candidatou a esta vaga" em
+// listarPublicoDivulgacaoVaga. Aceito por ora — o filtro de periodo e sobre a candidatura que
+// TRAZ a pessoa para o recorte da campanha, nao uma auditoria do historico completo dela; se
+// algum dia isso gerar um caso real de divulgacao repetida, a correcao e separar as duas
+// consultas como o e-mail ja faz, nao alargar esta.
+function listarCandidatosParaCampanhaWhatsapp({ dataDe, dataAte } = {}) {
+  const where = ["a.telefone IS NOT NULL", "TRIM(a.telefone) <> ''"];
+  const params = [];
+  if (dataDe) {
+    where.push('date(a.criado_em) >= date(?)');
+    params.push(dataDe);
+  }
+  if (dataAte) {
+    where.push('date(a.criado_em) <= date(?)');
+    params.push(dataAte);
+  }
   return getDb()
     .prepare(
       `SELECT a.id, a.nome, a.telefone, a.job_id,
               j.perfil AS perfil, j.cidade AS cidade_vaga
          FROM applications a
          LEFT JOIN jobs j ON j.id = a.job_id
-        WHERE a.telefone IS NOT NULL AND TRIM(a.telefone) <> ''
+        ${montarClausula(where)}
         ORDER BY a.id`,
     )
-    .all();
+    .all(...params);
 }
 
 // Base legada. `categoria='legado'` e o recorte, igual ao motor do disparo pontual: cadastro
 // proprio tem outra finalidade LGPD e nao foi importado com esta expectativa.
-function listarTalentosParaCampanhaWhatsapp() {
+//
+// `{ dataDe, dataAte }` (ETAPA B): mesmo contrato de listarCandidatosParaCampanhaWhatsapp
+// acima, sobre `criado_em` (momento do cadastro do talento). Sem a ressalva de jobsInscritos
+// da funcao irma — talento nunca teve job_id, entao filtrar por periodo aqui nao interage
+// com nenhuma exclusao de "ja se candidatou".
+function listarTalentosParaCampanhaWhatsapp({ dataDe, dataAte } = {}) {
+  const where = [
+    "categoria = 'legado'",
+    "status <> 'descartado'",
+    'telefone IS NOT NULL',
+    "TRIM(telefone) <> ''",
+  ];
+  const params = [];
+  if (dataDe) {
+    where.push('date(criado_em) >= date(?)');
+    params.push(dataDe);
+  }
+  if (dataAte) {
+    where.push('date(criado_em) <= date(?)');
+    params.push(dataAte);
+  }
   return getDb()
     .prepare(
       `SELECT id, nome, telefone, cidade, perfil_interesse
          FROM talentos
-        WHERE categoria = 'legado'
-          AND status <> 'descartado'
-          AND telefone IS NOT NULL AND TRIM(telefone) <> ''
+        ${montarClausula(where)}
         ORDER BY id`,
     )
-    .all();
+    .all(...params);
 }
 
 // Set para lookup O(1) no laco do motor. Sao ~poucas linhas hoje; um SELECT por pessoa seria
