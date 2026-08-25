@@ -599,12 +599,22 @@ CREATE TABLE IF NOT EXISTS campanhas_whatsapp (
   nome         TEXT NOT NULL,
   template_id  INTEGER NOT NULL REFERENCES templates_whatsapp(id),
   base_alvo    TEXT NOT NULL CHECK (base_alvo IN ('applications', 'talentos', 'ambos')),
-  -- O QUE a campanha diz. 'convite_grupo' leva o link do GRUPO da praca; 'divulgacao_vaga'
-  -- leva o link da VAGA. Publicos e variaveis diferentes — dai ser coluna, e nao convencao.
-  tipo_mensagem TEXT NOT NULL DEFAULT 'convite_grupo'
-                 CHECK (tipo_mensagem IN ('convite_grupo', 'divulgacao_vaga')),
-  -- Obrigatorio SO quando tipo_mensagem='divulgacao_vaga'. Nullable na coluna porque o
-  -- convite de grupo nao tem vaga; quem exige e a rota.
+  -- O QUE a campanha diz: 'convite_grupo' leva o link do GRUPO da praca; 'divulgacao_vaga'
+  -- leva o link da VAGA; 'status_candidatura' informa o resultado da candidatura numa vaga
+  -- especifica (aprovado/reprovado/em_analise). Publicos e variaveis diferentes por tipo —
+  -- dai ser coluna, e nao convencao.
+  --
+  -- SEM CHECK de proposito (ETAPA B, Incremento 12) — ATE O Incremento 11 desta ETAPA esta
+  -- coluna tinha CHECK (tipo_mensagem IN ('convite_grupo', 'divulgacao_vaga')), e adicionar
+  -- 'status_candidatura' exigiu recriar a tabela em producao (SQLite nao tem ALTER TABLE ...
+  -- MODIFY CONSTRAINT — ver a migracao correspondente em migrate.js). Em vez de so
+  -- alargar o CHECK (preservando o mesmo problema para um 4o tipo amanha), a coluna passa a
+  -- seguir o MESMO precedente ja usado no resto do projeto para enum extensivel — validado no
+  -- app, nao no schema (ver a nota de jobs.cidade em migrate.js, e talentos.categoria acima).
+  tipo_mensagem TEXT NOT NULL DEFAULT 'convite_grupo',
+  -- Obrigatorio SO quando tipo_mensagem='divulgacao_vaga' OU 'status_candidatura' (a vaga
+  -- sendo divulgada, ou a vaga cuja candidatura esta sendo informada). Nullable na coluna
+  -- porque o convite de grupo nao tem vaga; quem exige por tipo e a rota.
   job_id       INTEGER REFERENCES jobs(id),
   -- Total calculado na criacao, para a tela mostrar divergencia depois. Espelha
   -- campanhas.total_destinatarios.

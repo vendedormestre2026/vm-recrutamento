@@ -382,6 +382,74 @@ function migrar() {
   // nao basta pra saber "ja processada". Mesmo padrao de applications.curriculo_removido_em.
   adicionarColunaSeFaltar('interviews', 'audio_removido_em', 'TEXT');
 
+  // ── ETAPA B, Incremento 12: campanhas_whatsapp.tipo_mensagem perde o CHECK ──
+  //
+  // A coluna nasceu (Incrementos 1-7 desta ETAPA) com
+  // CHECK (tipo_mensagem IN ('convite_grupo', 'divulgacao_vaga')) direto no CREATE TABLE
+  // original — diferente das colunas ADITIVAS deste arquivo (jobs.cidade, reports.recomendacao
+  // etc.), que aprenderam com esse mesmo problema e nunca levam CHECK. SQLite nao tem
+  // ALTER TABLE ... DROP/MODIFY CONSTRAINT: a UNICA forma de mudar um CHECK ja gravado no
+  // schema de uma tabela EXISTENTE e recria-la — o procedimento de 12 passos que o proprio
+  // SQLite documenta para mudancas de schema envolvendo CHECK/FK (criar tabela nova, copiar
+  // linhas, apagar a velha, renomear).
+  //
+  // Em vez de so ALARGAR o CHECK (que preservaria o mesmo problema para um 4o tipo no
+  // futuro), a tabela nova nasce SEM CHECK em tipo_mensagem — alinhando esta coluna ao
+  // precedente do resto do projeto. base_alvo e status mantem os CHECKs deles, intocados.
+  //
+  // Idempotente: so roda se a tabela ainda existir com o CHECK antigo (checa o SQL gravado
+  // em sqlite_master). Banco novo (schema.sql aplicado do zero por aplicarSchema, ja sem o
+  // CHECK) faz este bloco virar no-op para sempre nele.
+  {
+    const conexao = getDb();
+    const linha = conexao
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='campanhas_whatsapp'")
+      .get();
+    const precisaRecriar = Boolean(linha) && /CHECK\s*\(\s*tipo_mensagem/i.test(linha.sql);
+    if (precisaRecriar) {
+      // FK OFF durante o drop/rename: campanha_whatsapp_envios.campanha_id e
+      // vaga_acessos.campanha_whatsapp_id referenciam esta tabela, e o DROP TABLE falharia
+      // com violacao de FK enquanto qualquer linha filha ainda apontar pra ela. Restaurado
+      // no estado anterior no finally — nunca fica desligado por engano pro resto do boot.
+      const fkAntes = conexao.pragma('foreign_keys', { simple: true });
+      conexao.pragma('foreign_keys = OFF');
+      try {
+        conexao.transaction(() => {
+          conexao.exec(`
+            CREATE TABLE campanhas_whatsapp_novo (
+              id             INTEGER PRIMARY KEY AUTOINCREMENT,
+              nome           TEXT NOT NULL,
+              template_id    INTEGER NOT NULL REFERENCES templates_whatsapp(id),
+              base_alvo      TEXT NOT NULL CHECK (base_alvo IN ('applications', 'talentos', 'ambos')),
+              tipo_mensagem  TEXT NOT NULL DEFAULT 'convite_grupo',
+              job_id         INTEGER REFERENCES jobs(id),
+              total_estimado INTEGER,
+              criterios_json TEXT,
+              status         TEXT NOT NULL DEFAULT 'rascunho'
+                               CHECK (status IN ('rascunho', 'ativa', 'pausada', 'concluida')),
+              criado_em      TEXT NOT NULL DEFAULT (datetime('now')),
+              iniciada_em    TEXT,
+              concluida_em   TEXT
+            );
+          `);
+          conexao.exec(`
+            INSERT INTO campanhas_whatsapp_novo
+              (id, nome, template_id, base_alvo, tipo_mensagem, job_id, total_estimado,
+               criterios_json, status, criado_em, iniciada_em, concluida_em)
+            SELECT id, nome, template_id, base_alvo, tipo_mensagem, job_id, total_estimado,
+                   criterios_json, status, criado_em, iniciada_em, concluida_em
+            FROM campanhas_whatsapp;
+          `);
+          conexao.exec('DROP TABLE campanhas_whatsapp;');
+          conexao.exec('ALTER TABLE campanhas_whatsapp_novo RENAME TO campanhas_whatsapp;');
+        })();
+      } finally {
+        conexao.pragma(`foreign_keys = ${fkAntes ? 'ON' : 'OFF'}`);
+      }
+      console.log('[migrate] campanhas_whatsapp recriada sem CHECK em tipo_mensagem (ETAPA B, Incremento 12).');
+    }
+  }
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

@@ -29,13 +29,75 @@ const { PERFIS_VALIDOS } = require('../lib/promocaoVagas');
 const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
 
-const TIPOS = [
-  ['convite_grupo', 'Convite para o grupo da praça'],
-  ['divulgacao_vaga', 'Divulgação de uma vaga'],
+// Os TRES objetivos de campanha (ETAPA B, Incremento 12 — redesenho da segmentacao). O valor
+// gravado em campanhas_whatsapp.tipo_mensagem continua o mesmo de sempre (a coluna perdeu o
+// CHECK no Incremento 12 — ver migrate.js — mas o vocabulario de valores aceitos e este,
+// validado aqui no app). Ordem = ordem de exibicao no select.
+const OBJETIVOS = [
+  ['divulgacao_vaga', 'Promover uma vaga'],
+  ['convite_grupo', 'Promover um grupo de vagas'],
+  ['status_candidatura', 'Informar situação de candidatura'],
 ];
+
+// Rotulos dos checkboxes de Status (Incremento 12) — MESMOS 3 valores de
+// db.STATUS_RECRUTADOR_VALIDOS (decisao humana do recrutador, sqlite.js), so com rotulo pra
+// exibicao. Nao redeclara o enum, so o rotulo — a validacao usa db.STATUS_RECRUTADOR_VALIDOS
+// diretamente (ver lerCriterios).
+const STATUS_CANDIDATURA_OPCOES = [
+  ['aprovado', 'Aprovado'],
+  ['reprovado', 'Reprovado'],
+  ['em_analise', 'Em análise'],
+];
+
+// Campos de body ACEITOS por objetivo — usado por primeiroCampoIncompativel abaixo pra
+// recusar (nao silenciosamente ignorar) um campo que nao pertence ao objetivo escolhido.
+const CAMPOS_POR_OBJETIVO = {
+  convite_grupo: ['cidade', 'de', 'ate', 'base_alvo'],
+  divulgacao_vaga: ['job_id', 'cidade', 'de', 'ate', 'base_alvo'],
+  status_candidatura: ['job_id', 'status_recrutador'],
+};
+
+// Devolve o NOME do primeiro campo presente no body que nao pertence ao objetivo `tipo`, ou
+// null se todos os campos presentes pertencem. "Presente" e sobre o BODY cru (o que o
+// navegador mandou), nao sobre criterios ja saneados — um form corretamente montado pra cada
+// objetivo (JS de toggle desabilita o que nao se aplica, ver o <script> abaixo) nunca manda
+// isto; um POST direto/adulterado manda, e e exatamente esse caso que isto pega.
+//
+// ── POR QUE ISTO EXISTE (Incremento 12) ──
+// Ate aqui (Incremento 7), job_id sobrando no body de um convite_grupo virava NULL
+// silenciosamente — tratado como "form mal preenchido, sem problema". O redesenho em 3
+// objetivos aperta essa regra: um campo que nao pertence ao objetivo agora e ERRO explicito,
+// porque a partir de status_candidatura existem campos (cidade, periodo, base_alvo) cuja
+// presenca indicaria uma leitura ERRADA da intencao do operador (ex.: cidade preenchida
+// numa campanha que devia ir so pra quem tem tal status, nao pra uma praca) — silenciar
+// isso seria mais perigoso que recusar e pedir pra tentar de novo.
+function primeiroCampoIncompativel(tipo, b) {
+  const presentes = {
+    job_id: String(b.job_id || '').trim() !== '',
+    cidade: [].concat(b.cidade || []).filter(Boolean).length > 0,
+    de: dataIsoValida(b.de),
+    ate: dataIsoValida(b.ate),
+    base_alvo: b.base_alvo !== undefined && String(b.base_alvo).trim() !== '',
+    status_recrutador: [].concat(b.status_recrutador || []).filter(Boolean).length > 0,
+  };
+  const permitidos = new Set(CAMPOS_POR_OBJETIVO[tipo] || []);
+  for (const [campo, presente] of Object.entries(presentes)) {
+    if (presente && !permitidos.has(campo)) return campo;
+  }
+  return null;
+}
 
 // Calcula o publico do tipo pedido. Fonte UNICA para a previa e para a materializacao — se
 // divergissem, a tela mostraria um numero e o disparo usaria outro.
+//
+// ⚠️ status_candidatura AINDA NAO tem branch aqui (Incremento 12) — entra no Incremento 13
+// desta mesma ETAPA, junto com POST /previa, POST /:id/disparar e o job. Ate la, criar uma
+// campanha status_candidatura persiste corretamente (tipo_mensagem, job_id, criterios com
+// statusList), mas o total_estimado calculado aqui na criacao fica INCORRETO (cai no branch
+// de convite_grupo por engano) — nao e usado pra nada alem de mostrar um numero estimado na
+// listagem, e o disparo de verdade RECALCULA do zero (ver POST /:id/disparar), entao nao ha
+// risco de enviar pro publico errado por causa disto — so o numero na tela fica errado por um
+// commit.
 function calcularPublico({ tipo, jobId, criterios }) {
   return tipo === 'divulgacao_vaga'
     ? publico.listarPublicoDivulgacaoVaga(jobId, criterios)
@@ -59,6 +121,13 @@ function lerCriterios(b = {}) {
     perfilIncluirSemAtributo: b.perfil_incluir_sem === '1' || b.perfil_incluir_sem === 'on',
     dataDe: dataIsoValida(b.de) ? b.de : undefined,
     dataAte: dataIsoValida(b.ate) ? b.ate : undefined,
+    // ETAPA B, Incremento 12 — status_recrutador marcados (Aprovado/Reprovado/Em analise),
+    // so relevante para o objetivo status_candidatura. Mesmo saneamento dos demais: so valor
+    // dentro do enum sobrevive. Validado contra db.STATUS_RECRUTADOR_VALIDOS (sqlite.js) —
+    // nao redeclarado aqui, pra nunca divergir da allowlist que a decisao humana usa.
+    statusList: [].concat(b.status_recrutador || [])
+      .map(String)
+      .filter((s) => db.STATUS_RECRUTADOR_VALIDOS.includes(s)),
   };
 }
 
@@ -220,7 +289,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
 
     <details class="bloco-card" ${campanhas.length ? '' : 'open'}>
       <summary>Nova campanha</summary>
-      <form method="post" action="/admin/campanhas-whatsapp" class="vm-form">
+      <form method="post" action="/admin/campanhas-whatsapp" class="vm-form" id="form-nova-campanha">
         <label class="campo"><span>Nome</span>
           <input type="text" name="nome" required maxlength="120" placeholder="Ex.: Convite grupo Joinville — agosto">
         </label>
@@ -229,33 +298,67 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
             ${templatesAtivos.map((t) => `<option value="${t.id}">${escapeHtml(t.nome_meta)} (${escapeHtml(t.categoria)})</option>`).join('')}
           </select>
         </label>
-        <label class="campo"><span>Base alvo</span>
-          <select name="base_alvo">
-            ${BASES_ALVO.map(([v, r]) => `<option value="${v}">${escapeHtml(r)}</option>`).join('')}
+        <label class="campo"><span>Objetivo</span>
+          <select name="tipo_mensagem" id="campo-objetivo">
+            ${OBJETIVOS.map(([v, r]) => `<option value="${v}">${escapeHtml(r)}</option>`).join('')}
           </select>
         </label>
-        <label class="campo"><span>Tipo de mensagem</span>
-          <select name="tipo_mensagem" id="campo-tipo-mensagem">
-            ${TIPOS.map(([v, r]) => `<option value="${v}">${escapeHtml(r)}</option>`).join('')}
-          </select>
-        </label>
+
+        <!-- Vaga (job_id): MESMO <select>, usado por dois objetivos com rotulos diferentes —
+             "Vaga sendo divulgada" (divulgacao_vaga) e "Vaga em questão" (status_candidatura).
+             O JS de toggle troca o texto do rotulo; a lista de opcoes e a mesma. -->
         <label class="campo" id="campo-vaga-alvo" hidden>
-          <span>Vaga sendo divulgada (obrigatório)</span>
+          <span id="rotulo-vaga-alvo">Vaga sendo divulgada (obrigatório)</span>
           <select name="job_id">
             <option value="">Selecione a vaga…</option>
             ${vagasAtivas.map((v) => `<option value="${v.id}">${escapeHtml(v.titulo || `Vaga ${v.id}`)} · ${escapeHtml(v.perfil)}</option>`).join('')}
           </select>
         </label>
 
-        <div class="admin-filtros" style="align-items:flex-start;">
-          <label class="filtro">
-            <span>Candidatura/cadastro de</span>
-            <input type="date" name="de">
+        <!-- Segmentacao (Base alvo, Cidade, Periodo): so faz sentido em convite_grupo e
+             divulgacao_vaga. Em status_candidatura o recorte inteiro JA e "candidatos desta
+             vaga com este status" — Base/Cidade/Periodo nem sao exibidos (ver o diagnostico
+             da ETAPA A, item 11: Base legada nunca tem status_recrutador). -->
+        <div id="campo-segmentacao">
+          <label class="campo"><span>Base alvo</span>
+            <select name="base_alvo">
+              ${BASES_ALVO.map(([v, r]) => `<option value="${v}">${escapeHtml(r)}</option>`).join('')}
+            </select>
           </label>
-          <label class="filtro">
-            <span>até</span>
-            <input type="date" name="ate">
-          </label>
+          <div class="admin-filtros" style="align-items:flex-start;">
+            <div class="filtro">
+              <span>Cidade</span>
+              ${listarCidadesValidas().length
+                ? checkboxes(escapeHtml, 'cidade', listarCidadesValidas().map((c) => [c, c]), [])
+                  + `<span style="display:block;color:var(--cinza);font-size:.78rem;margin-top:.35rem;text-transform:none;max-width:16rem">
+                       Nenhuma marcada = todas as praças.
+                     </span>`
+                : `<span style="color:var(--cinza);font-size:.8rem;text-transform:none;">
+                     Nenhuma cidade cadastrada.
+                   </span>`}
+            </div>
+            <label class="filtro">
+              <span>Candidatura/cadastro de</span>
+              <input type="date" name="de">
+            </label>
+            <label class="filtro">
+              <span>até</span>
+              <input type="date" name="ate">
+            </label>
+          </div>
+        </div>
+
+        <!-- Status da candidatura: SO em status_candidatura. Pelo menos 1 marcado e
+             obrigatorio (desvio deliberado do padrao "nada marcado = todos" — ver o
+             comentario em lib/publicoCampanhaWhatsapp.js:listarPublicoStatusCandidatura). -->
+        <div id="campo-status-candidatura" hidden>
+          <div class="filtro">
+            <span>Status (pelo menos um obrigatório)</span>
+            ${checkboxes(escapeHtml, 'status_recrutador', STATUS_CANDIDATURA_OPCOES, [])}
+          </div>
+          <p id="aviso-status-candidatura" class="aviso-alerta" hidden style="margin-top:.5rem;">
+            Marque pelo menos um status antes de criar a campanha.
+          </p>
         </div>
 
         <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem">
@@ -267,25 +370,59 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
 
     <script>
     (function () {
-      // Mostra/esconde "Vaga sendo divulgada" conforme o tipo de mensagem — mesmo mecanismo
+      // Mostra/esconde os blocos condicionais conforme o Objetivo — mesmo mecanismo
       // (propriedade .hidden, nao style.display) ja usado para paineis condicionais em
       // admin.js (o toggle de abas). Nao ha precedente de um <select> disparando esse toggle
-      // no projeto; o addEventListener('change') e o proprio fallback sugerido.
-      var selTipo = document.getElementById('campo-tipo-mensagem');
+      // no projeto (ver Incremento 7); o addEventListener('change') e o proprio fallback
+      // sugerido, agora com 3 ramos em vez de 2.
+      var form = document.getElementById('form-nova-campanha');
+      var selObjetivo = document.getElementById('campo-objetivo');
+      if (!form || !selObjetivo) return;
       var campoVagaAlvo = document.getElementById('campo-vaga-alvo');
-      if (!selTipo || !campoVagaAlvo) return;
-      var selVagaAlvo = campoVagaAlvo.querySelector('select');
-      function atualizar() {
-        var visivel = selTipo.value === 'divulgacao_vaga';
-        campoVagaAlvo.hidden = !visivel;
-        // disabled junto com hidden: um campo desabilitado NAO e enviado no submit, entao
-        // trocar de volta para "Convite de grupo" depois de ter escolhido uma vaga nao deixa
-        // um job_id perdido no body do POST — o proprio navegador ja garante o que o
-        // servidor valida de novo (defesa em profundidade, nao substitui a validacao la).
-        if (selVagaAlvo) selVagaAlvo.disabled = !visivel;
+      var rotuloVagaAlvo = document.getElementById('rotulo-vaga-alvo');
+      var selVagaAlvo = campoVagaAlvo ? campoVagaAlvo.querySelector('select') : null;
+      var campoSegmentacao = document.getElementById('campo-segmentacao');
+      var campoStatus = document.getElementById('campo-status-candidatura');
+      var avisoStatus = document.getElementById('aviso-status-candidatura');
+
+      // disabled junto com hidden: um campo desabilitado NAO e enviado no submit, entao
+      // trocar de objetivo depois de ter preenchido algo nao deixa sobrar campo incompativel
+      // no body do POST — o proprio navegador ja garante o que o servidor valida de novo
+      // (defesa em profundidade — primeiroCampoIncompativel, nao substitui a validacao la).
+      function alternar(container, visivel) {
+        if (!container) return;
+        container.hidden = !visivel;
+        var campos = container.querySelectorAll('input, select');
+        for (var i = 0; i < campos.length; i += 1) campos[i].disabled = !visivel;
       }
-      selTipo.addEventListener('change', atualizar);
+
+      function atualizar() {
+        var objetivo = selObjetivo.value;
+        var temVaga = objetivo === 'divulgacao_vaga' || objetivo === 'status_candidatura';
+        alternar(campoVagaAlvo, temVaga);
+        if (rotuloVagaAlvo) {
+          rotuloVagaAlvo.textContent = objetivo === 'status_candidatura'
+            ? 'Vaga em questão (obrigatório)'
+            : 'Vaga sendo divulgada (obrigatório)';
+        }
+        alternar(campoSegmentacao, objetivo !== 'status_candidatura');
+        alternar(campoStatus, objetivo === 'status_candidatura');
+        if (avisoStatus) avisoStatus.hidden = true;
+      }
+      selObjetivo.addEventListener('change', atualizar);
       atualizar();
+
+      // Pelo menos 1 status marcado — validacao CLIENT-SIDE (a de verdade e no servidor,
+      // erro=status_vazio). Checkbox de grupo nao tem "required" nativo (required numa
+      // checkbox exige SO ELA marcada, nao "pelo menos uma do grupo"), entao isto e feito
+      // a mao no submit.
+      form.addEventListener('submit', function (e) {
+        if (selObjetivo.value !== 'status_candidatura') return;
+        var marcado = form.querySelector('input[name="status_recrutador"]:checked');
+        if (marcado) return;
+        e.preventDefault();
+        if (avisoStatus) avisoStatus.hidden = false;
+      });
     })();
     </script>
 
@@ -473,7 +610,6 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     const b = req.body || {};
     const nome = String(b.nome || '').trim();
     const templateId = Number(b.template_id);
-    const baseAlvo = BASES_ALVO.some(([v]) => v === b.base_alvo) ? b.base_alvo : 'ambos';
 
     const templateEscolhido = Number.isInteger(templateId) ? db.obterTemplateWhatsapp(templateId) : null;
     if (!nome || !templateEscolhido) {
@@ -486,24 +622,33 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     if (!templateEscolhido.ativo) {
       return res.redirect('/admin/campanhas-whatsapp?erro=template_inativo');
     }
-    const tipo = TIPOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
+    const tipo = OBJETIVOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
 
-    // Vaga-ALVO (a que a campanha DIVULGA — Incremento 7). Diferente do filtro de
-    // segmentacao "vaga" (Incremento 6, multi, "ja se candidataram a"): este e singular,
-    // obrigatorio SO em divulgacao_vaga, e vira NULL em convite_grupo mesmo que o body
-    // tenha mandado um job_id — um form mal preenchido (ou adulterado) nao pode gravar uma
-    // vaga-alvo numa campanha que a mensagem inteira nao menciona.
+    // Incremento 12: campo que nao pertence ao objetivo escolhido e ERRO, nao mais
+    // silenciosamente ignorado (ver primeiroCampoIncompativel). ANTES de qualquer outra
+    // validacao de campo especifico, pra nao interpretar um body incoerente como se fizesse
+    // sentido.
+    const campoErrado = primeiroCampoIncompativel(tipo, b);
+    if (campoErrado) {
+      console.warn(`[campanha-wa] POST / recusado: campo '${campoErrado}' incompativel com objetivo '${tipo}'.`);
+      return res.redirect('/admin/campanhas-whatsapp?erro=campo_incompativel');
+    }
+
+    // Vaga (job_id): obrigatoria e validada (existe + ativa) em divulgacao_vaga E
+    // status_candidatura — as duas usam o MESMO select ("Vaga sendo divulgada"/"Vaga em
+    // questão"). Fica NULL em convite_grupo — garantido pela checagem de campo incompativel
+    // acima, que ja recusou um convite_grupo com job_id no body antes de chegar aqui.
     let jobId = null;
-    if (tipo === 'divulgacao_vaga') {
+    if (tipo === 'divulgacao_vaga' || tipo === 'status_candidatura') {
       const jobIdBruto = Number(b.job_id);
-      // Divulgacao SEM vaga nao existe: a mensagem inteira e sobre ela.
+      // Nenhum dos dois objetivos existe sem vaga: a mensagem inteira e sobre ela.
       if (!Number.isInteger(jobIdBruto) || jobIdBruto <= 0) {
         return res.redirect('/admin/campanhas-whatsapp?erro=vaga');
       }
       const vagaAlvo = db.obterVaga(jobIdBruto);
-      // Vaga inexistente ou inativa: divulgar algo que nao existe (mais) ou que fechou seria
-      // convidar candidatos para uma porta fechada. O select do form ja so lista vagas
-      // ativas, mas o POST nao pode confiar so nisso — chega aqui tambem por form adulterado.
+      // Vaga inexistente ou inativa: divulgar/informar sobre algo que nao existe (mais) ou
+      // que fechou nao faz sentido. O select do form ja so lista vagas ativas, mas o POST
+      // nao pode confiar so nisso — chega aqui tambem por form adulterado.
       if (!vagaAlvo || !vagaAlvo.ativo) {
         return res.redirect('/admin/campanhas-whatsapp?erro=vaga_invalida');
       }
@@ -511,6 +656,18 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     }
 
     const criterios = lerCriterios(b);
+    // status_candidatura exige pelo menos 1 status marcado — mesmo tratamento de "job_id
+    // ausente" acima: erro claro, nunca publico vazio nem publico total silenciosos (ver o
+    // desvio de padrao documentado em listarPublicoStatusCandidatura).
+    if (tipo === 'status_candidatura' && !criterios.statusList.length) {
+      return res.redirect('/admin/campanhas-whatsapp?erro=status_vazio');
+    }
+
+    // Base alvo nao se aplica a status_candidatura (ja garantido: primeiroCampoIncompativel
+    // recusou base_alvo presente nesse objetivo). 'ambos' aqui e so o valor inerte que a
+    // coluna NOT NULL exige — listarPublicoStatusCandidatura nunca le base_alvo.
+    const baseAlvo = BASES_ALVO.some(([v]) => v === b.base_alvo) ? b.base_alvo : 'ambos';
+
     let total = null;
     try {
       total = calcularPublico({ tipo, jobId, criterios }).total;
@@ -538,7 +695,7 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
   // linha nenhuma: e a mesma disciplina da previa da campanha de e-mail.
   router.post('/previa', (req, res) => {
     const b = req.body || {};
-    const tipo = TIPOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
+    const tipo = OBJETIVOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
     const jobId = Number(b.job_id);
     try {
       const r = calcularPublico({ tipo, jobId, criterios: lerCriterios(b) });
