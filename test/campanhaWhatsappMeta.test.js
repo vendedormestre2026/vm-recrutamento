@@ -844,6 +844,137 @@ test('atualizarStatusPorWamid NAO regride', () => {
   assert.equal(uma('SELECT status FROM campanha_whatsapp_envios WHERE id = ?', id).status, 'lido');
 });
 
+// ══════════════════ ETAPA B, Incremento 13: previa/disparo/job roteiam os 3 tipos ══════════════════
+
+test('POST /previa: status_candidatura calcula publico via listarPublicoStatusCandidatura', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const aprovadoId = candidatura(j, 'Aprovado', '+55 47 90000-0700');
+  const reprovadoId = candidatura(j, 'Reprovado', '+55 47 90000-0701');
+  db.definirStatusRecrutador(aprovadoId, 'aprovado');
+  db.definirStatusRecrutador(reprovadoId, 'reprovado');
+
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/previa`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams([
+        ['tipo_mensagem', 'status_candidatura'],
+        ['job_id', String(j)],
+        ['status_recrutador', 'aprovado'],
+      ]),
+    });
+    assert.equal(res.status, 200);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, true);
+    assert.equal(corpo.tipo, 'status_candidatura');
+    assert.equal(corpo.total, 1);
+  });
+});
+
+test('POST /previa: status_candidatura sem status marcado devolve erro JSON claro (nao 500)', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/previa`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams([['tipo_mensagem', 'status_candidatura'], ['job_id', String(j)]]),
+    });
+    assert.equal(res.status, 400);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, false);
+    assert.match(corpo.erro, /pelo menos um status/);
+  });
+});
+
+test('POST /:id/disparar: materializa status_candidatura corretamente, SEM exigir link de grupo cadastrado', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const { tid } = montarCenario();
+  // Nenhum link de grupo cadastrado pra Joinville nesta rodada — prova de que
+  // status_candidatura nao depende disso (diferente de convite_grupo).
+  exec('DELETE FROM regioes_grupos_whatsapp');
+  const aprovadoId = candidatura(j, 'Aprovado', '+55 47 90000-0702');
+  const reprovadoId = candidatura(j, 'Reprovado', '+55 47 90000-0703'); // fora do recorte pedido
+  db.definirStatusRecrutador(aprovadoId, 'aprovado');
+  db.definirStatusRecrutador(reprovadoId, 'reprovado');
+
+  await comAdmin(async (base, h) => {
+    await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams([
+        ['nome', 'Situacao disparo'],
+        ['template_id', String(tid)],
+        ['tipo_mensagem', 'status_candidatura'],
+        ['job_id', String(j)],
+        ['status_recrutador', 'aprovado'],
+      ]),
+      redirect: 'manual',
+    });
+    const nova = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Situacao disparo'");
+    assert.ok(nova);
+    assert.equal(nova.tipo_mensagem, 'status_candidatura');
+
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/${nova.id}/disparar`, {
+      method: 'POST',
+      headers: h,
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.doesNotMatch(res.headers.get('location') || '', /erro=/);
+
+    const filaLinhas = todas('SELECT * FROM campanha_whatsapp_envios WHERE campanha_id = ?', nova.id);
+    assert.equal(filaLinhas.length, 1);
+    assert.equal(filaLinhas[0].telefone, '5547900000702');
+  });
+});
+
+test('job: processa uma campanha status_candidatura de ponta a ponta (transporte mockado), SEM exigir link de grupo', async () => {
+  zerarSeg();
+  db.definirConfigBool(job.CHAVE_ATIVO, true);
+  const j = vagaCom('Joinville');
+  const tid = Number(
+    exec(
+      "INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo) VALUES (?, ?, 'utility', ?, 1)",
+      TEMPLATE.nome_meta, TEMPLATE.idioma, JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+  exec('DELETE FROM regioes_grupos_whatsapp'); // nenhum link cadastrado — nao pode bloquear
+
+  const aprovadoId = candidatura(j, 'Aprovado', '+55 47 90000-0704');
+  db.definirStatusRecrutador(aprovadoId, 'aprovado');
+
+  const cid = db.criarCampanhaWhatsapp({
+    nome: 'Job status_candidatura',
+    templateId: tid,
+    baseAlvo: 'ambos',
+    tipoMensagem: 'status_candidatura',
+    jobId: j,
+    totalEstimado: 1,
+    criterios: { statusList: ['aprovado'] },
+  });
+  const publicoCalc = publico.listarPublicoStatusCandidatura(j, ['aprovado']);
+  assert.equal(publicoCalc.total, 1);
+  db.materializarCampanhaWhatsapp(cid, publicoCalc.itens);
+  db.definirStatusCampanhaWhatsapp(cid, 'ativa');
+
+  const recebido = [];
+  const { r } = await semRuido(() =>
+    job.processarCicloCampanhaWhatsapp(deps({
+      enviarTemplate: async (a) => { recebido.push(a); return { wamid: 'wamid-status' }; },
+    })));
+
+  assert.equal(r.enviados, 1);
+  assert.equal(r.falhas, 0, 'sem link de grupo NAO pode virar falha para status_candidatura');
+  assert.equal(recebido.length, 1);
+  assert.equal(recebido[0].telefone, '5547900000704');
+  const linha = fila(cid)[0];
+  assert.equal(linha.status, 'enviado');
+  assert.equal(linha.wamid, 'wamid-status');
+});
+
 // ══════════════════ Webhook ══════════════════
 
 const assinar = (corpo) =>

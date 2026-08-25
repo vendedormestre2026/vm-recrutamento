@@ -178,9 +178,12 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
     // configurado nao pode impedir as outras oito de receberem. E deixar pendente seria pior
     // — a linha reapareceria em todo ciclo, para sempre, sem ninguem entender por que.
     // O link do GRUPO so e exigido no convite. Numa divulgacao de vaga a mensagem leva o
-    // link da VAGA, e cobrar link de grupo ali faria a campanha falhar por um dado que ela
-    // nem usa.
-    const precisaLinkGrupo = linha.tipo_mensagem !== 'divulgacao_vaga';
+    // link da VAGA, e numa status_candidatura a mensagem e sobre o RESULTADO da candidatura
+    // (Incremento 13 da ETAPA B) — nenhum dos dois usa link de grupo, e cobrar isso ali
+    // faria a campanha falhar por um dado que ela nem usa. Por isso a condicao e POSITIVA
+    // (so convite_grupo precisa), nao mais "tudo exceto divulgacao_vaga" — a forma antiga
+    // teria exigido link de grupo de status_candidatura tambem, por engano.
+    const precisaLinkGrupo = linha.tipo_mensagem === 'convite_grupo';
     const link = precisaLinkGrupo ? db.obterLinkGrupo(linha.cidade) : '';
     if (precisaLinkGrupo && !link) {
       db.marcarEnvioWhatsappFalha(

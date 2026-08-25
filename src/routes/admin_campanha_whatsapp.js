@@ -87,21 +87,17 @@ function primeiroCampoIncompativel(tipo, b) {
   return null;
 }
 
-// Calcula o publico do tipo pedido. Fonte UNICA para a previa e para a materializacao — se
-// divergissem, a tela mostraria um numero e o disparo usaria outro.
+// Calcula o publico do tipo pedido. Fonte UNICA para a criacao (estimativa), a previa e a
+// materializacao — se divergissem, a tela mostraria um numero e o disparo usaria outro.
 //
-// ⚠️ status_candidatura AINDA NAO tem branch aqui (Incremento 12) — entra no Incremento 13
-// desta mesma ETAPA, junto com POST /previa, POST /:id/disparar e o job. Ate la, criar uma
-// campanha status_candidatura persiste corretamente (tipo_mensagem, job_id, criterios com
-// statusList), mas o total_estimado calculado aqui na criacao fica INCORRETO (cai no branch
-// de convite_grupo por engano) — nao e usado pra nada alem de mostrar um numero estimado na
-// listagem, e o disparo de verdade RECALCULA do zero (ver POST /:id/disparar), entao nao ha
-// risco de enviar pro publico errado por causa disto — so o numero na tela fica errado por um
-// commit.
+// status_candidatura (Incremento 13) usa `criterios.statusList` — o MESMO objeto `criterios`
+// que os outros dois tipos usam para cidades/perfil/periodo, so que este campo so faz
+// sentido pra ele (ja garantido pelo form + primeiroCampoIncompativel: status_candidatura e
+// o UNICO objetivo que chega aqui com statusList preenchido).
 function calcularPublico({ tipo, jobId, criterios }) {
-  return tipo === 'divulgacao_vaga'
-    ? publico.listarPublicoDivulgacaoVaga(jobId, criterios)
-    : publico.listarPublicoConviteGrupo(criterios);
+  if (tipo === 'divulgacao_vaga') return publico.listarPublicoDivulgacaoVaga(jobId, criterios);
+  if (tipo === 'status_candidatura') return publico.listarPublicoStatusCandidatura(jobId, criterios.statusList);
+  return publico.listarPublicoConviteGrupo(criterios);
 }
 
 // Mesmo formato/regex de admin_promocao.js:dataIsoValida — duplicada aqui (e nao importada)
