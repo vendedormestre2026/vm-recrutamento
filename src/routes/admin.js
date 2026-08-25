@@ -5278,16 +5278,21 @@ router.get('/config', (req, res) => {
           <p style="margin:.2rem 0 1rem;">
             <a class="btn btn--ghost" href="/admin/whatsapp">WhatsApp (pareamento)</a>
           </p>
+          <h3 style="margin:1rem 0 .5rem;">WhatsApp transacional (por candidatura)</h3>
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="whatsapp_sequencia_ativa" value="1"${whatsappSeqAtiva ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
-              Enviar a <b>sequência de WhatsApp</b> (WA1 e WA2) a cada nova candidatura
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Transacional</b> —
+              enviar a <b>sequência de WhatsApp</b> (WA1 e WA2) a cada nova candidatura
             </span>
           </label>
+
+          <h3 style="margin:1.5rem 0 .5rem;">WhatsApp em massa (campanhas)</h3>
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="campanha_whatsapp_ativa" value="1"${campanhaWaAtiva ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
-              Enviar as <b>campanhas por WhatsApp</b> (Meta Cloud API)
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Campanha em massa</b> —
+              enviar as <b>campanhas por WhatsApp</b> (Meta Cloud API)
             </span>
           </label>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
@@ -5318,7 +5323,8 @@ router.get('/config', (req, res) => {
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="promocao_ativa" value="1"${promocaoAtiva ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
-              Enviar as <b>campanhas de Promoção de Vagas</b>
+              <b style="text-transform:uppercase;letter-spacing:.03em;">E-mail</b> —
+              enviar as <b>campanhas de Promoção de Vagas</b>
             </span>
           </label>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>

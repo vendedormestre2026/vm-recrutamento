@@ -143,7 +143,7 @@ test('Commit 9: subtitulos explicativos abaixo de cada checkbox/opcao foram remo
 
   // Os rotulos essenciais (o texto DENTRO do <span> ao lado do checkbox) continuam.
   assert.match(html, /Avisar por e-mail a cada <b>nova candidatura<\/b>/);
-  assert.match(html, /Enviar a <b>sequência de WhatsApp<\/b>/);
+  assert.match(html, /enviar a <b>sequência de WhatsApp<\/b>/);
 
   // A entrevista automatica NAO faz parte deste escopo (fica fora das abas, com seu
   // aviso-alerta preservado — nao e um "subtitulo abaixo de checkbox").
