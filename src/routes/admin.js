@@ -5345,7 +5345,7 @@ router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmt
 // Tela de pareamento do WhatsApp. Sem auth propria — herda o router.use(adminAuth) la em
 // cima, igual as demais telas do painel.
 router.use('/whatsapp', criarRouterWhatsapp({ paginaAdmin, escapeHtml }));
-router.use('/campanhas-whatsapp', criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }));
+router.use('/campanhas-whatsapp', criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBusca }));
 
 // ── GET /divulgacao-vagas ── Promoção de Vagas + Campanha por WhatsApp em abas ──
 // (Item 3 do ETAPA B "Ajustes no Admin", Commit 7). NAO substitui as rotas standalone

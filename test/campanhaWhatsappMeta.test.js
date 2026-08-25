@@ -16,6 +16,7 @@
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const express = require('express');
 
 process.env.DATABASE_PATH = path.join(os.tmpdir(), `vm-test-campanha-meta-${process.pid}-${Date.now()}.db`);
 process.env.INTERVIEW_MOCK = 'true';
@@ -40,7 +41,7 @@ const transporte = require('../src/providers/centralWhats/centralWhats');
 const job = require('../src/lib/campanhaWhatsapp');
 const webhook = require('../src/routes/webhook_meta');
 const { listarCidadesValidas } = require('../src/lib/cidades');
-const { montarConteudoCampanhaWhatsapp } = require('../src/routes/admin_campanha_whatsapp');
+const { montarConteudoCampanhaWhatsapp, criarRouterCampanhaWhatsapp } = require('../src/routes/admin_campanha_whatsapp');
 const { escapeHtml } = require('../src/views');
 
 migrar();
@@ -1038,7 +1039,7 @@ test('admin: o checkbox do kill-switch liga e persiste', async () => {
 // ══════════════════ Motor de segmentacao (dois tipos) ══════════════════
 
 const publico = require('../src/lib/publicoCampanhaWhatsapp');
-const { normalizarTelefoneWhatsapp } = require('../src/lib/whatsapp');
+const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('../src/lib/whatsapp');
 const { montarUrlVaga, UTM_SOURCE_CAMPANHA, UTM_SOURCE_WHATSAPP } = require('../src/lib/ctaCampanha');
 
 let seqSeg = 0;
@@ -1497,4 +1498,302 @@ test('PARIDADE: a guarda e a MESMA funcao, nao uma copia', () => {
       `${bruto} -> ${n}`,
     );
   }
+});
+
+// ══════════════════ ETAPA B, Incremento 5: rotas de envio avulso de teste ══════════════════
+//
+// GET /buscar-candidato NAO toca transporte nenhum (so banco) — testada contra o app REAL
+// via comAdmin, mesma disciplina do resto do arquivo, inclusive a exigencia de sessao.
+//
+// POST /enviar-teste chama enviarTemplate com forcarEnvioReal:true — que FURA o mock por
+// definicao (Incremento 4). Contra o app real isso chamaria fetch() de verdade. Por isso
+// esta suite NUNCA testa /enviar-teste via comAdmin/criarApp(): monta uma instancia isolada
+// do router com um `transporte` FALSO injetado (o mesmo parametro que existe em
+// admin_campanha_whatsapp.js exatamente para isto), presa a uma porta efemera propria. Zero
+// rede real acontece em qualquer teste deste arquivo — aqui e o ponto do projeto onde isso
+// seria mais facil de escorregar, entao a garantia fica estrutural (o fetch global nem e
+// alcancavel a partir do transporte falso), nao so "nao esqueci de mockar".
+async function comRotaEnviarTeste(transporte, fn) {
+  const app = express();
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+  app.use(
+    '/admin/campanhas-whatsapp',
+    criarRouterCampanhaWhatsapp({
+      paginaAdmin: () => '',
+      escapeHtml,
+      fmtInt: String,
+      sanearBusca: (s) => String(s || '').trim(),
+      transporte,
+    }),
+  );
+  const server = app.listen(0);
+  await new Promise((r) => server.once('listening', r));
+  try {
+    return await fn(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+}
+
+// Transporte que FALHA se enviarTemplate for chamado — para os testes de rejeicao, onde a
+// prova que importa e "a rede nunca foi tocada", nao so o codigo de status HTTP devolvido.
+const transporteNuncaChamado = {
+  enviarTemplate: async () => {
+    throw new Error('enviarTemplate NAO deveria ter sido chamado para este cenario');
+  },
+  classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+};
+
+const enviarTestePost = (base, body) =>
+  fetch(`${base}/admin/campanhas-whatsapp/enviar-teste`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+test('GET /buscar-candidato: exige sessao, igual as demais rotas', async () => {
+  await comServidor(async (base) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/buscar-candidato?q=ana`, { redirect: 'manual' });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /\/admin\/login/);
+  });
+});
+
+test('GET /buscar-candidato: acha por sobrenome, devolve id/nome/sobrenome/telefone/vaga_titulo, ate 10', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  // candidatura() (helper de segmentacao) so preenche `nome` — para exercitar `sobrenome`
+  // de verdade (coluna propria em applications) este teste insere direto.
+  seqSeg += 1;
+  const idAlvo = Number(
+    exec(
+      'INSERT INTO applications (job_id, nome, sobrenome, telefone, token) VALUES (?, ?, ?, ?, ?)',
+      j, 'Fernanda', 'Buscavel Oliveira', '+55 47 90000-0300', `tok-busca-${seqSeg}`,
+    ).lastInsertRowid,
+  );
+  candidatura(j, 'Outra Pessoa', '+55 47 90000-0301');
+
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/buscar-candidato?q=Buscavel`, { headers: h });
+    assert.equal(res.status, 200);
+    const corpo = await res.json();
+    assert.equal(Array.isArray(corpo), true);
+    assert.equal(corpo.length, 1);
+    assert.equal(corpo[0].id, idAlvo);
+    assert.equal(corpo[0].nome, 'Fernanda');
+    assert.equal(corpo[0].sobrenome, 'Buscavel Oliveira');
+    assert.equal(corpo[0].telefone, '+55 47 90000-0300');
+    assert.ok(corpo[0].vaga_titulo);
+  });
+});
+
+test('GET /buscar-candidato: sem match nenhum devolve array vazio, HTTP 200', async () => {
+  zerarSeg();
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/buscar-candidato?q=NomeQueNaoExisteEmLugarNenhum`, { headers: h });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), []);
+  });
+});
+
+test('GET /buscar-candidato: query vazia devolve [] sem consultar (nao lista os mais recentes)', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  candidatura(j, 'Alguem', '+55 47 90000-0302');
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/buscar-candidato?q=`, { headers: h });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), []);
+  });
+});
+
+test('POST /enviar-teste: fluxo feliz — contexto do candidato, forcarEnvioReal:true, wamid devolvido', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville', 'SDR');
+  exec('INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo) VALUES (?, ?)', 'Joinville', 'https://chat.whatsapp.com/FELIZ');
+  const appId = candidatura(j, 'Carla Feliz', '+55 47 99958-2500');
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES (?, ?, ?, ?)',
+      TEMPLATE.nome_meta, TEMPLATE.idioma, 'utility', JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+
+  const chamadas = [];
+  const transporteFalso = {
+    enviarTemplate: async (args) => {
+      chamadas.push(args);
+      return { wamid: 'wamid-teste-avulso-123', mock: false };
+    },
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+
+  await comRotaEnviarTeste(transporteFalso, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId,
+      templateId: tid,
+      telefoneDestino: '+55 47 98888-7777',
+    });
+    assert.equal(res.status, 200);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, true);
+    assert.equal(corpo.wamid, 'wamid-teste-avulso-123');
+    // Variaveis resolvidas com os dados do CANDIDATO escolhido, na ordem do template
+    // (nome_primeiro, cargo_vaga, link_grupo_regiao).
+    assert.equal(corpo.variaveis.length, 3);
+    assert.equal(corpo.variaveis[0], 'Carla');
+    assert.match(corpo.variaveis[1], /^Vaga \d+$/); // cargo_vaga = titulo real da vaga do candidato
+    assert.equal(corpo.variaveis[2], 'https://chat.whatsapp.com/FELIZ');
+  });
+
+  assert.equal(chamadas.length, 1);
+  // O UNICO ponto do projeto que chama enviarTemplate com forcarEnvioReal:true a partir de
+  // uma rota HTTP.
+  assert.equal(chamadas[0].forcarEnvioReal, true);
+  assert.equal(chamadas[0].telefone, '5547988887777'); // normalizado, digitado pelo operador
+  assert.equal(chamadas[0].template.nome_meta, TEMPLATE.nome_meta);
+});
+
+test('POST /enviar-teste: o telefone digitado sobrevive a ida e volta (round-trip) antes de chegar ao transporte', async () => {
+  // Ponto cego recorrente do projeto (ver o cabecalho de lib/publicoDisparoWhatsapp): um
+  // telefone que normaliza mas nao sobrevive a ida e volta materializa um numero que a Meta
+  // ou recusa ou entrega a OUTRA pessoa. validarTelefoneBrEstrito ja e estrito o bastante
+  // para nao deixar isso passar, mas esta rota e um destino NOVO para telefone digitado por
+  // gente — a prova fica aqui, e nao so no teste generico da funcao.
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Round Trip', '+55 47 99958-2500');
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES (?, ?, ?, ?)',
+      TEMPLATE.nome_meta, TEMPLATE.idioma, 'utility', JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+
+  const chamadas = [];
+  const transporteFalso = {
+    enviarTemplate: async (args) => {
+      chamadas.push(args);
+      return { wamid: 'w', mock: false };
+    },
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+
+  await comRotaEnviarTeste(transporteFalso, async (base) => {
+    for (const digitado of ['+55 47 98888-7777', '+5547988887777', '47988887777']) {
+      const res = await enviarTestePost(base, { applicationId: appId, templateId: tid, telefoneDestino: digitado });
+      assert.equal(res.status, 200, digitado);
+    }
+  });
+
+  assert.equal(chamadas.length, 3);
+  for (const c of chamadas) {
+    // O MESMO contrato de ida-e-volta usado no resto do projeto: normalizarTelefoneRecebido
+    // aplicado ao valor ja normalizado tem que devolver ele mesmo, sem alteracao.
+    assert.equal(normalizarTelefoneRecebido(c.telefone), c.telefone, c.telefone);
+    assert.equal(c.telefone, '5547988887777');
+  }
+});
+
+test('POST /enviar-teste: NAO grava em campanha_whatsapp_envios (e teste avulso, nao campanha)', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Nao Materializa', '+55 47 99958-2500');
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES (?, ?, ?, ?)',
+      TEMPLATE.nome_meta, TEMPLATE.idioma, 'utility', JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+  const transporteFalso = {
+    enviarTemplate: async () => ({ wamid: 'w', mock: false }),
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+
+  await comRotaEnviarTeste(transporteFalso, async (base) => {
+    const res = await enviarTestePost(base, { applicationId: appId, templateId: tid, telefoneDestino: '+55 47 98888-7777' });
+    assert.equal(res.status, 200);
+  });
+
+  assert.equal(todas('SELECT * FROM campanha_whatsapp_envios').length, 0);
+});
+
+test('POST /enviar-teste: telefone invalido e rejeitado ANTES de qualquer chamada externa', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Alvo', '+55 47 99958-2500');
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES (?, ?, ?, ?)',
+      TEMPLATE.nome_meta, TEMPLATE.idioma, 'utility', JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+
+  await comRotaEnviarTeste(transporteNuncaChamado, async (base) => {
+    for (const ruim of ['123', 'nao e telefone', '+55 199831863', '+55 47 3333']) {
+      const res = await enviarTestePost(base, { applicationId: appId, templateId: tid, telefoneDestino: ruim });
+      assert.equal(res.status, 400, ruim);
+      const corpo = await res.json();
+      assert.equal(corpo.ok, false);
+      assert.match(corpo.erro, /[Tt]elefone/);
+    }
+  });
+});
+
+test('POST /enviar-teste: application_id inexistente retorna erro claro, sem chamar a rede', async () => {
+  zerarSeg();
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES (?, ?, ?, ?)',
+      TEMPLATE.nome_meta, TEMPLATE.idioma, 'utility', JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+
+  await comRotaEnviarTeste(transporteNuncaChamado, async (base) => {
+    const res = await enviarTestePost(base, { applicationId: 999999, templateId: tid, telefoneDestino: '+55 47 98888-7777' });
+    assert.equal(res.status, 400);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, false);
+    assert.match(corpo.erro, /nao encontrada/);
+  });
+});
+
+test('POST /enviar-teste: template inexistente retorna erro claro, sem chamar a rede', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Alvo', '+55 47 99958-2500');
+
+  await comRotaEnviarTeste(transporteNuncaChamado, async (base) => {
+    const res = await enviarTestePost(base, { applicationId: appId, templateId: 999999, telefoneDestino: '+55 47 98888-7777' });
+    assert.equal(res.status, 400);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, false);
+    assert.match(corpo.erro, /[Tt]emplate/);
+  });
+});
+
+test('POST /enviar-teste: erro do transporte volta classificado, sem derrubar a rota', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Alvo', '+55 47 99958-2500');
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES (?, ?, ?, ?)',
+      TEMPLATE.nome_meta, TEMPLATE.idioma, 'utility', JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+  const transporteFalso = {
+    enviarTemplate: async () => { throw new Error('HTTP 400 — template nao sincronizado no Central Whats'); },
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+
+  await comRotaEnviarTeste(transporteFalso, async (base) => {
+    const res = await enviarTestePost(base, { applicationId: appId, templateId: tid, telefoneDestino: '+55 47 98888-7777' });
+    assert.equal(res.status, 502);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, false);
+    assert.equal(corpo.categoria, 'terminal');
+    assert.match(corpo.erro, /template nao sincronizado/);
+  });
 });

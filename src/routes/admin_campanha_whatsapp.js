@@ -13,10 +13,21 @@ const express = require('express');
 
 const db = require('../db');
 const campanha = require('../lib/campanhaWhatsapp');
-const transporte = require('../providers/centralWhats/centralWhats');
+// Nome "Padrao" de proposito: criarRouterCampanhaWhatsapp aceita um `transporte` injetavel
+// (default = este), mesmo padrao de `deps.db || dbPadrao` usado no resto do projeto — e o
+// que permite o teste da rota POST /enviar-teste substituir por um transporte com
+// httpClient mockado, sem NUNCA deixar a suite tocar rede de verdade (a rota chama
+// enviarTemplate com forcarEnvioReal: true, que fura o mock por padrao).
+const transportePadrao = require('../providers/centralWhats/centralWhats');
 const { listarCidadesValidas } = require('../lib/cidades');
 const publico = require('../lib/publicoCampanhaWhatsapp');
 const { PERFIS_VALIDOS } = require('../lib/promocaoVagas');
+// Telefone DIGITADO por gente (o campo de destino do envio avulso) exige a validacao
+// ESTRITA — DDI 55 + DDD real + nono digito —, a mesma ja usada no formulario publico de
+// candidatura (routes/api.js). `mascarar` e so para o LOG da tentativa de envio; o numero
+// completo nunca aparece no stdout, mesma disciplina do resto do projeto.
+const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
+const { mascarar } = require('../whatsapp/sequenciaOutbox');
 
 const TIPOS = [
   ['convite_grupo', 'Convite para o grupo da praça'],
@@ -71,9 +82,9 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
   const campanhas = db.listarCampanhasWhatsapp();
   const contagens = contagensPorCampanha();
   const ativo = campanha.ativo();
-  const emMock = transporte.modoMock();
+  const emMock = transportePadrao.modoMock();
   // Agora sao as CENTRALWHATS_*: quem fala com a Meta e o Central Whats, com o token dele.
-  const faltando = transporte.credenciaisFaltando();
+  const faltando = transportePadrao.credenciaisFaltando();
   const semLink = regioes.filter((r) => !r.link_convite_grupo).length;
 
   // Diagnostico do que impede um disparo real. Ordem deliberada: da barreira mais externa
@@ -205,7 +216,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
     </section>`;
 }
 
-function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
+function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBusca, transporte = transportePadrao }) {
   const router = express.Router();
 
   // ── GET / ── a tela ──
@@ -279,6 +290,113 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt }) {
       res.json({ ok: true, total: r.total, tipo });
     } catch (err) {
       res.status(400).json({ ok: false, erro: err.message });
+    }
+  });
+
+  // ── GET /buscar-candidato ── autocomplete p/ o envio avulso de teste ──
+  //
+  // Reaproveita sanearBusca (o mesmo saneamento de admin.js: trim + teto de 100 caracteres)
+  // e listarAplicacoesComContexto, que ja implementa o filtro de nome/sobrenome/nome
+  // completo/e-mail/telefone usado na listagem principal de /admin — fonte UNICA de "o que
+  // 'buscar candidato' significa" no projeto, para nao nascer uma segunda regra de busca
+  // aqui com um comportamento sutilmente diferente.
+  //
+  // Query vazia/so espaco NAO lista os mais recentes — devolve [] direto, sem consultar o
+  // banco: este endpoint e um autocomplete, e listar os ultimos candidatos "porque nao
+  // digitou nada ainda" seria surpreendente para quem chamou.
+  router.get('/buscar-candidato', (req, res) => {
+    const termo = sanearBusca((req.query || {}).q);
+    if (!termo) return res.json([]);
+    const resultados = db.listarAplicacoesComContexto({ busca: termo }).slice(0, 10);
+    res.json(
+      resultados.map((c) => ({
+        id: c.id,
+        nome: c.nome,
+        sobrenome: c.sobrenome,
+        telefone: c.telefone,
+        vaga_titulo: c.vaga_titulo,
+      })),
+    );
+  });
+
+  // ── POST /enviar-teste ── envio avulso de teste, IGNORA o kill-switch de mock ──
+  //
+  // Existe para o operador ver, com um candidato REAL escolhido a mao, as variaveis do
+  // template preenchidas com os dados dele, e confirmar de ponta a ponta (Recrutador ->
+  // Central Whats -> Meta -> aparelho) ANTES de materializar uma campanha inteira. NAO cria
+  // nem toca `campanha_whatsapp_envios` — nao e uma campanha, e um teste tecnico avulso;
+  // so fica registro no log (nivel info, telefone MASCARADO).
+  //
+  // Ordem das validacoes e deliberada: tudo que NAO depende de rede primeiro (candidato,
+  // template, telefone), para nenhuma chamada externa acontecer antes de o pedido estar
+  // completo e valido.
+  router.post('/enviar-teste', async (req, res) => {
+    const b = req.body || {};
+    const applicationId = Number(b.applicationId);
+    const templateId = Number(b.templateId);
+
+    if (!Number.isInteger(applicationId) || applicationId <= 0) {
+      return res.status(400).json({ ok: false, erro: 'Escolha um candidato valido.' });
+    }
+    if (!Number.isInteger(templateId) || templateId <= 0) {
+      return res.status(400).json({ ok: false, erro: 'Escolha um template valido.' });
+    }
+    const template = db.obterTemplateWhatsapp(templateId);
+    if (!template) {
+      return res.status(400).json({ ok: false, erro: 'Template nao encontrado.' });
+    }
+
+    // Telefone digitado por gente — validacao ESTRITA, ANTES de qualquer chamada externa.
+    const telefone = validarTelefoneBrEstrito(String(b.telefoneDestino || ''));
+    if (!telefone) {
+      return res.status(400).json({
+        ok: false,
+        erro: 'Telefone de destino invalido. Use o formato +55DDNNNNNNNNN, com DDD real e o nono digito no celular.',
+      });
+    }
+
+    let contexto;
+    try {
+      contexto = campanha.montarContextoWhatsapp(applicationId);
+    } catch (err) {
+      // application inexistente / sem vaga associada — erro de lib/campanhaWhatsapp, ja com
+      // mensagem clara (ver o comentario da funcao).
+      return res.status(400).json({ ok: false, erro: err.message });
+    }
+
+    let mapa = [];
+    try {
+      mapa = JSON.parse(template.variaveis || '[]');
+    } catch {
+      mapa = [];
+    }
+    const variaveis = campanha.resolverVariaveis(mapa, contexto);
+
+    console.log(
+      `[campanha-wa] envio avulso de teste: template '${template.nome_meta}' -> ` +
+        `${mascarar(telefone)} (candidatura ${applicationId}).`,
+    );
+
+    try {
+      const { wamid } = await transporte.enviarTemplate({
+        telefone,
+        template: {
+          nome_meta: template.nome_meta,
+          idioma: template.idioma,
+          botao_parametro_fixo: template.botao_parametro_fixo,
+        },
+        variaveis,
+        // A UNICA chamada do projeto que passa isto: um teste avulso EXISTE para furar o
+        // mock — ver o comentario de forcarEnvioReal em providers/centralWhats/centralWhats.js.
+        forcarEnvioReal: true,
+      });
+      res.json({ ok: true, wamid, contexto, variaveis });
+    } catch (err) {
+      const classe = transporte.classificarErroCentralWhats(err);
+      console.error(
+        `[campanha-wa] envio avulso de teste FALHOU [${classe.categoria}]: ${err.message}`,
+      );
+      res.status(502).json({ ok: false, erro: err.message, categoria: classe.categoria, motivo: classe.motivo });
     }
   });
 
