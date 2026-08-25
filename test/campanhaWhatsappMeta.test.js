@@ -1183,6 +1183,87 @@ test('periodo + divulgacao (Incremento 2): a exclusao de "ja se candidatou ao AL
   assert.deepEqual(tels(r), []);
 });
 
+// ══════════════════ montarContextoWhatsapp (envio avulso de teste) ══════════════════
+//
+// ETAPA B, Incremento 3. Contexto a partir de UM application_id, sem fila materializada e
+// sem campanha — usado pelo envio avulso de teste. NAO e chamado pelo loop do ciclo acima
+// (ver o comentario extenso ao lado da funcao, em src/lib/campanhaWhatsapp.js): cargo_vaga
+// e link_vaga do ciclo vem da vaga que a CAMPANHA divulga, aqui vem da vaga a que O PROPRIO
+// CANDIDATO se candidatou — sao perguntas diferentes, e so coincidem por acaso.
+
+test('montarContextoWhatsapp: contexto correto a partir de UM candidato, com vaga e cidade resolviveis', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville', 'SDR');
+  exec('INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo) VALUES (?, ?)', 'Joinville', 'https://chat.whatsapp.com/TESTE123');
+  const appId = candidatura(j, 'Ana Paula Silva', '+55 47 90000-0201');
+  const tituloEsperado = uma('SELECT titulo FROM jobs WHERE id = ?', j).titulo;
+
+  const ctx = job.montarContextoWhatsapp(appId);
+  assert.equal(ctx.nome_primeiro, 'Ana');
+  assert.equal(ctx.cargo_vaga, tituloEsperado);
+  assert.equal(ctx.cidade, 'Joinville');
+  assert.equal(ctx.link_grupo_regiao, 'https://chat.whatsapp.com/TESTE123');
+  assert.match(ctx.link_vaga, /\/vaga\//);
+  assert.match(ctx.link_vaga, /utm_source=whatsapp/);
+  // Sem campanha por tras: nao ha campanha_whatsapp_id nenhum para carimbar no link.
+  assert.doesNotMatch(ctx.link_vaga, /campanha_whatsapp_id=/);
+});
+
+test('montarContextoWhatsapp: cidade sem link de grupo cadastrado NAO lanca, so devolve link vazio', () => {
+  zerarSeg();
+  const j = vagaCom('Curitiba'); // sem INSERT em regioes_grupos_whatsapp
+  const appId = candidatura(j, 'Sem Link', '+55 41 90000-0202');
+
+  const ctx = job.montarContextoWhatsapp(appId);
+  assert.equal(ctx.cidade, 'Curitiba');
+  assert.equal(ctx.link_grupo_regiao, '');
+});
+
+test('montarContextoWhatsapp: application_id inexistente lanca erro claro', () => {
+  zerarSeg();
+  assert.throws(() => job.montarContextoWhatsapp(999999), /nao encontrada/);
+});
+
+test('montarContextoWhatsapp: application sem vaga associada (job_id nao resolve) lanca erro claro', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Vaga Sumiu', '+55 47 90000-0203');
+  // Nao ha fluxo real de produto para isto — applications.job_id e FK NOT NULL —, mas a
+  // funcao precisa recusar mesmo assim, defensivamente, em vez de devolver contexto parcial.
+  exec('PRAGMA foreign_keys = OFF');
+  try {
+    exec('DELETE FROM jobs WHERE id = ?', j);
+  } finally {
+    exec('PRAGMA foreign_keys = ON');
+  }
+  assert.throws(() => job.montarContextoWhatsapp(appId), /vaga associada/);
+});
+
+test('montarContextoWhatsapp: NAO e a mesma resolucao do ciclo (job continua usando a vaga da CAMPANHA, nao a do candidato)', async () => {
+  // Prova de nao-regressao: o ciclo (processarCicloCampanhaWhatsapp) continua resolvendo
+  // cargo_vaga/link_vaga a partir da linha materializada (vaga da CAMPANHA), mesmo depois de
+  // montarContextoWhatsapp existir. Um destinatario de divulgacao_vaga nunca tem job_id igual
+  // ao alvo (e invariante — ver publicoCampanhaWhatsapp), entao se o ciclo passasse a chamar
+  // montarContextoWhatsapp(origem_id) por engano, o cargo_vaga do envio mudaria de "a vaga
+  // divulgada" para "a vaga do candidato" — regressao silenciosa de conteudo de mensagem.
+  zerar();
+  db.definirConfigBool(job.CHAVE_ATIVO, true);
+  const { cid } = montarCenario();
+  adicionar(cid, '5547999582500', 'Ana Paula', 'Joinville');
+
+  const recebido = [];
+  await semRuido(() =>
+    job.processarCicloCampanhaWhatsapp(deps({
+      enviarTemplate: async (a) => { recebido.push(a); return { wamid: 'w' }; },
+    })));
+
+  // montarCenario() e uma campanha convite_grupo (sem job_id) — cargo_vaga fica vazio, como
+  // sempre foi. Se o ciclo tivesse passado a usar montarContextoWhatsapp(origem_id=1, que
+  // aqui e um id de TALENTO, nao de application), a chamada teria estourado (application 1
+  // pode nem existir) ou resolvido o campo errado.
+  assert.deepEqual(recebido[0].variaveis, ['Ana', '', 'https://chat.whatsapp.com/ABC123']);
+});
+
 // ══════════════════ montarUrlVaga parametrizado ══════════════════
 
 test('montarUrlVaga: o comportamento do E-MAIL nao mudou', () => {

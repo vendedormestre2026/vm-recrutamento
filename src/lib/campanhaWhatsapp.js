@@ -73,6 +73,61 @@ function primeiroNome(nome) {
   return String(nome || '').trim().split(/\s+/)[0] || '';
 }
 
+// Monta o contexto de variaveis { nome_primeiro, cargo_vaga, link_grupo_regiao, link_vaga,
+// cidade } para UM candidato, a partir SO do application_id — sem fila materializada, sem
+// campanha. Existe para o envio avulso de teste (admin_campanha_whatsapp.js, ETAPA B): o
+// operador escolhe um candidato real e ve as variaveis preenchidas com os dados DELE antes
+// de disparar.
+//
+// ⚠️ NAO E A MESMA RESOLUCAO do loop do ciclo (processarCicloCampanhaWhatsapp, abaixo) — de
+// proposito, e a diferenca muda o CONTEUDO da mensagem se confundida:
+//   - cargo_vaga/link_vaga do CICLO vem da vaga que a CAMPANHA esta divulgando
+//     (campanhas_whatsapp.job_id, materializado na linha da fila como job_titulo/job_slug).
+//     Numa divulgacao_vaga, essa vaga e SEMPRE diferente da vaga a que o destinatario se
+//     candidatou — e o proprio motivo de "ja se candidatou a esta vaga" ser invariante de
+//     exclusao em lib/publicoCampanhaWhatsapp (ninguem recebe divulgacao da propria vaga).
+//   - cargo_vaga/link_vaga AQUI vem da vaga a que O CANDIDATO se candidatou (applications.job_id)
+//     — a unica vaga que faz sentido perguntar "e a vaga dele?" quando nao ha campanha
+//     nenhuma por tras, so uma pessoa escolhida a mao para um teste tecnico.
+// Por isso esta funcao NAO substitui a montagem de contexto do ciclo, e o ciclo NAO a chama
+// — ligar as duas faria toda divulgacao_vaga anunciar, para cada destinatario, a vaga ERRADA
+// (a dele proprio, e nao a que a campanha existe para divulgar).
+//
+// LANCA se a application nao existir ou nao tiver vaga associada — nunca devolve contexto
+// parcial: um contexto incompleto usado para preencher variaveis de um envio REAL esconderia
+// o problema atras de campos vazios, e quem testa precisa saber que o dado de origem falta,
+// nao receber um WhatsApp com buracos.
+//
+// Cidade sem link de grupo cadastrado NAO lanca — vira '' (mesma tolerancia de
+// resolverVariaveis): falta de link e configuracao incompleta de UMA praca, nao motivo para
+// impedir o teste de rodar com o resto do contexto correto.
+function montarContextoWhatsapp(applicationId, deps = {}) {
+  const db = deps.db || dbPadrao;
+
+  const aplicacao = db.obterAplicacao(applicationId);
+  if (!aplicacao) {
+    throw new Error(`Candidatura ${applicationId} nao encontrada.`);
+  }
+  const vaga = aplicacao.job_id ? db.obterVaga(aplicacao.job_id) : null;
+  if (!vaga) {
+    throw new Error(
+      `Candidatura ${applicationId} nao tem vaga associada (job_id ${aplicacao.job_id || '(vazio)'} nao resolve).`,
+    );
+  }
+
+  const cidade = String(vaga.cidade || '').trim();
+  const link = cidade ? db.obterLinkGrupo(cidade) : null;
+  const linkVaga = vaga.slug ? montarUrlVaga(vaga.slug, { utmSource: UTM_SOURCE_WHATSAPP }) : '';
+
+  return {
+    nome_primeiro: primeiroNome(aplicacao.nome),
+    cargo_vaga: vaga.titulo || '',
+    link_grupo_regiao: link || '',
+    link_vaga: linkVaga,
+    cidade,
+  };
+}
+
 // Uma passada. Devolve { enviados, falhas, retentar, optOut } (+ `desativado`/`abortado`).
 async function processarCicloCampanhaWhatsapp(deps = {}) {
   const db = deps.db || dbPadrao;
@@ -254,6 +309,7 @@ module.exports = {
   processarCicloCampanhaWhatsapp,
   varrerSeOcioso,
   resolverVariaveis,
+  montarContextoWhatsapp,
   ativo,
   CHAVE_ATIVO,
   ENVIOS_POR_CICLO,
