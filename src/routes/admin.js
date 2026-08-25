@@ -262,6 +262,118 @@ const ESTILO_ADMIN = `
   td.col-num, th.col-num { text-align:right; font-variant-numeric:tabular-nums; }
   table.admin-tab tbody tr:hover { background:var(--cinza-suave); }
   table.admin-tab tbody tr.linha-selecionada { background:var(--cinza-suave); border-left:3px solid var(--laranja); }
+
+  /* ── Modal de confirmacao reutilizavel (ETAPA B, Incremento 8) ──
+     Substitui o confirm() nativo do browser nos 7 pontos do painel que pediam confirmacao
+     antes de uma acao (arquivar, apagar, reprocessar, editar slug, enviar teste avulso).
+     Ver window.confirmarAcao() no <script> global de paginaAdmin(). */
+  .vm-modal-overlay { position:fixed; inset:0; z-index:50; background:rgba(13,11,10,.6); display:flex; align-items:center; justify-content:center; padding:1rem; }
+  .vm-modal { background:var(--branco); color:var(--preto); border-radius:10px; padding:1.5rem; max-width:26rem; width:100%; box-shadow:0 10px 40px rgba(0,0,0,.3); }
+  .vm-modal h3 { margin:0 0 .75rem; }
+  .vm-modal p { font-family:'Barlow',system-ui,sans-serif; font-size:.95rem; line-height:1.5; margin:0 0 1.25rem; color:var(--cinza); }
+  .vm-modal-acoes { display:flex; gap:.6rem; justify-content:flex-end; flex-wrap:wrap; }
+  /* Confirmar NAO-destrutivo (reprocessar, aplicar status em lote, restaurar): neutro, nao
+     laranja — --laranja fica reservado para acao destrutiva/sensivel (apagar, arquivar,
+     enviar de verdade), mesma leitura de .btn ja usado nesses casos no resto do painel. */
+  .btn--neutro { background:var(--preto); color:var(--offwhite); border:none; }
+  .btn--neutro:hover { filter:brightness(1.4); }
+`;
+
+// Script global do painel (injetado em TODA pagina via paginaAdmin, uma vez so) — hoje so o
+// modal de confirmacao. Fica separado de ESTILO_ADMIN (que e so CSS) por clareza: um e
+// <style>, o outro e <script>.
+//
+// window.confirmarAcao({ titulo, mensagem, textoConfirmar, destrutivo }) -> Promise<boolean>
+// Substitui o confirm() nativo do browser nos 7 pontos do painel que pediam confirmacao
+// (ETAPA A, PARTE 1 do diagnostico). Nunca lanca; resolve false tanto para "Cancelar" quanto
+// para Esc/clique fora. `destrutivo` colore o botao de confirmar em --laranja (apagar,
+// arquivar, enviar de verdade) — sem ele, o botao e neutro (--preto).
+//
+// Dois usos:
+//   1. Declarativo: <form data-confirm="mensagem" data-confirm-titulo="..."
+//      data-confirm-texto="..." data-confirm-destrutivo="1"> — o listener de `submit`
+//      abaixo intercepta QUALQUER form com data-confirm, sem precisar de JS por formulario.
+//      Cobre 5 dos 7 casos (mensagem estatica, decidida no render do servidor).
+//   2. Programatico: `await window.confirmarAcao({...})` — para os 2 casos onde a mensagem
+//      so existe em tempo de execucao no cliente (acao em massa com N variavel; envio
+//      avulso de teste com telefone/template escolhidos pelo operador).
+const SCRIPT_MODAL_CONFIRMACAO = `
+(function () {
+  window.confirmarAcao = function (opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      var overlay = document.createElement('div');
+      overlay.className = 'vm-modal-overlay';
+      var caixa = document.createElement('div');
+      caixa.className = 'vm-modal';
+      var h = document.createElement('h3');
+      h.textContent = opts.titulo || 'Confirmar ação';
+      var p = document.createElement('p');
+      p.textContent = opts.mensagem || '';
+      var acoes = document.createElement('div');
+      acoes.className = 'vm-modal-acoes';
+      var btnCancelar = document.createElement('button');
+      btnCancelar.type = 'button';
+      btnCancelar.className = 'btn btn--ghost';
+      btnCancelar.textContent = 'Cancelar';
+      var btnConfirmar = document.createElement('button');
+      btnConfirmar.type = 'button';
+      btnConfirmar.className = opts.destrutivo ? 'btn' : 'btn btn--neutro';
+      btnConfirmar.textContent = opts.textoConfirmar || 'Confirmar';
+
+      function fechar(resultado) {
+        document.removeEventListener('keydown', aoTeclar);
+        overlay.remove();
+        resolve(resultado);
+      }
+      function aoTeclar(e) {
+        if (e.key === 'Escape') fechar(false);
+      }
+
+      btnCancelar.addEventListener('click', function () { fechar(false); });
+      btnConfirmar.addEventListener('click', function () { fechar(true); });
+      // Clique no overlay (fora da caixa) cancela, igual a maioria dos modais — clique
+      // DENTRO da caixa nao deve fechar (e.target === overlay garante isso).
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) fechar(false); });
+      document.addEventListener('keydown', aoTeclar);
+
+      acoes.appendChild(btnCancelar);
+      acoes.appendChild(btnConfirmar);
+      caixa.appendChild(h);
+      caixa.appendChild(p);
+      caixa.appendChild(acoes);
+      overlay.appendChild(caixa);
+      document.body.appendChild(overlay);
+      btnConfirmar.focus();
+    });
+  };
+
+  // Delegado no document (nao por formulario): pega TODO <form data-confirm> presente
+  // agora ou inserido depois, sem precisar registrar um listener por formulario.
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || !form.hasAttribute || !form.hasAttribute('data-confirm')) return;
+    // Reentrada apos confirmar: o proprio requestSubmit() abaixo dispara 'submit' de novo
+    // neste MESMO listener. Sem esta marca, o modal apareceria uma segunda vez e o form
+    // nunca chegaria a submeter de verdade.
+    if (form.dataset.confirmado === '1') {
+      delete form.dataset.confirmado;
+      return;
+    }
+    e.preventDefault();
+    window.confirmarAcao({
+      titulo: form.dataset.confirmTitulo,
+      mensagem: form.dataset.confirm,
+      textoConfirmar: form.dataset.confirmTexto,
+      destrutivo: form.dataset.confirmDestrutivo === '1',
+    }).then(function (ok) {
+      if (!ok) return;
+      form.dataset.confirmado = '1';
+      if (form.requestSubmit) form.requestSubmit();
+      else form.submit();
+    });
+  });
+})();
 `;
 
 // Shell HTML do painel (sem o header/funil/app.js do candidato).
@@ -290,6 +402,7 @@ function paginaAdmin({ titulo, conteudo, subtitulo = 'Painel do Recrutador', mos
     </header>
     ${conteudo}
   </div>
+  <script>${SCRIPT_MODAL_CONFIRMACAO}</script>
 </body>
 </html>`;
 }
@@ -1132,16 +1245,41 @@ router.get('/', (req, res) => {
       form.addEventListener('submit', function (e) {
         var n = marcados().length;
         if (n === 0) { e.preventDefault(); return; }
+        // Reentrada apos confirmar (requestSubmit dispara 'submit' de novo neste MESMO
+        // listener) — mesma marca usada pelo listener global de [data-confirm] em
+        // paginaAdmin(), mas local: este form monta a mensagem em cima de QUAL botao
+        // disparou o submit, algo que o atributo declarativo data-confirm nao expressa.
+        if (form.dataset.confirmando === '1') {
+          delete form.dataset.confirmando;
+          return;
+        }
+        e.preventDefault();
         var alvo = e.submitter || ultimoBotao;
-        var msg;
+        var msg, titulo, destrutivo;
         if (alvo && alvo.hasAttribute('data-status-lote')) {
           msg = 'Aplicar o status escolhido a ' + n + ' candidato(s)?';
+          titulo = 'Aplicar status?';
+          destrutivo = false;
         } else if (alvo && alvo.hasAttribute('data-restaurar-lote')) {
           msg = 'Restaurar ' + n + ' candidato(s)? Eles voltam para a listagem de ativos.';
+          titulo = 'Restaurar selecionados?';
+          destrutivo = false;
         } else {
           msg = 'Arquivar ' + n + ' lead(s)? Eles saem da listagem, mas o histórico é preservado.';
+          titulo = 'Arquivar selecionados?';
+          destrutivo = true;
         }
-        if (!confirm(msg)) { e.preventDefault(); }
+        window.confirmarAcao({
+          titulo: titulo,
+          mensagem: msg,
+          textoConfirmar: destrutivo ? 'Arquivar' : 'Confirmar',
+          destrutivo: destrutivo,
+        }).then(function (ok) {
+          if (!ok) return;
+          form.dataset.confirmando = '1';
+          if (form.requestSubmit) form.requestSubmit(alvo);
+          else form.submit();
+        });
       });
       atualizar();
     })();
@@ -1286,7 +1424,8 @@ router.get('/candidato/:id', (req, res) => {
   // a arquivar/restaurar) + confirm, porque a acao gasta uma chamada paga e dispara e-mail.
   const botaoReprocessar = podeReprocessar
     ? `<form method="POST" action="/admin/candidato/${cand.id}/reprocessar" style="margin:0;display:inline;"
-             onsubmit="return confirm('Gerar uma nova avaliação desta entrevista com a IA? Isso consome uma chamada paga e envia um novo e-mail ao recrutador.')">
+             data-confirm="Gerar uma nova avaliação desta entrevista com a IA? Isso consome uma chamada paga e envia um novo e-mail ao recrutador."
+             data-confirm-titulo="Gerar nova avaliação?" data-confirm-texto="Reprocessar">
          <button type="submit" class="btn btn--ghost">Reprocessar avaliação</button>
        </form>`
     : '';
@@ -1355,7 +1494,8 @@ router.get('/candidato/:id', (req, res) => {
          <button type="submit" class="btn btn--ghost">Restaurar lead</button>
        </form>`
     : `<form method="POST" action="/admin/candidato/${cand.id}/arquivar" style="margin:0;display:inline;"
-             onsubmit="return confirm('Arquivar este lead? Ele sai da listagem, mas o histórico é preservado.')">
+             data-confirm="Arquivar este lead? Ele sai da listagem, mas o histórico é preservado."
+             data-confirm-titulo="Arquivar lead?" data-confirm-texto="Arquivar" data-confirm-destrutivo="1">
          <button type="submit" class="btn btn--ghost">Arquivar lead</button>
        </form>`;
 
@@ -1883,7 +2023,9 @@ router.get('/curriculos-backup/apagar', (req, res) => {
         ${semArquivo ? `<div><dt>Já sem arquivo no disco</dt><dd>${fmtInt(semArquivo)} (só serão marcadas)</dd></div>` : ''}
       </dl>
     </section>
-    <form method="POST" action="/admin/curriculos-backup/apagar" onsubmit="return confirm(${JSON.stringify(mensagemConfirm)})">
+    <form method="POST" action="/admin/curriculos-backup/apagar"
+          data-confirm="${escapeHtml(mensagemConfirm)}" data-confirm-titulo="Apagar currículos?"
+          data-confirm-texto="Apagar" data-confirm-destrutivo="1">
       <input type="hidden" name="antes" value="${escapeHtml(antes)}">
       <label class="campo-check">
         <input type="checkbox" name="confirmo_backup" value="1" required>
@@ -2017,7 +2159,9 @@ router.get('/audio-entrevistas/apagar', (req, res) => {
       </div>
       ${elegiveis.length > 50 ? `<p style="color:var(--cinza);font-size:.85rem;">Mostrando as 50 primeiras de ${fmtInt(elegiveis.length)}.</p>` : ''}
     </section>
-    <form method="POST" action="/admin/audio-entrevistas/apagar" onsubmit="return confirm(${JSON.stringify(mensagemConfirm)})">
+    <form method="POST" action="/admin/audio-entrevistas/apagar"
+          data-confirm="${escapeHtml(mensagemConfirm)}" data-confirm-titulo="Apagar áudios?"
+          data-confirm-texto="Apagar" data-confirm-destrutivo="1">
       <label class="campo-check">
         <input type="checkbox" name="confirmo_exclusao" value="1" required>
         <span style="color:var(--preto);text-transform:none;">
@@ -3318,10 +3462,13 @@ function blocoFormCadastroCidade({ cidadeCadastroAction, cidadeCadastroHidden = 
 // Mini-formulario para corrigir o slug de uma vaga ja criada (POST /vagas/:id/slug,
 // Incremento 1). Separado do form geral da vaga de proposito — mesma razao de
 // atualizarSlugVaga ser funcao a parte em sqlite.js: e uma acao distinta, com botao e
-// confirmacao proprios, nao mais um campo do formulario grande. O confirm() usa aspas
-// curvas (“ ”) em vez de aspas retas dentro da mensagem para nao colidir com as aspas
-// simples que ja delimitam a string do onsubmit (mesmo padrao de confirm() do arquivo,
-// ex. blocoArquivarRestaurar).
+// confirmacao proprios, nao mais um campo do formulario grande.
+//
+// Modal (ETAPA B, Incremento 8) em vez de confirm() nativo — data-confirm escapado via
+// escapeHtml (atributo HTML, nao mais string de JS dentro de onsubmit). Marcada como
+// destrutiva: nao apaga nada, mas quebra link ja distribuido por e-mail/WhatsApp de um jeito
+// que ninguem desfaz sozinho (o candidato ve "pagina nao encontrada"), mesma categoria de
+// "sensivel" citada junto de apagar/arquivar/enviar.
 function blocoEditarSlug(vaga, { erroSlug = '' } = {}) {
   const linkAtual = `${config.baseUrl}/vaga/${vaga.slug}`;
   const erro =
@@ -3337,7 +3484,8 @@ function blocoEditarSlug(vaga, { erroSlug = '' } = {}) {
         Link público atual: <b>${escapeHtml(linkAtual)}</b></p>
       ${erro}
       <form method="POST" action="/admin/vagas/${vaga.id}/slug"
-            onsubmit="return confirm('Candidatos que já receberam o link atual por e-mail ou WhatsApp vão ver “página não encontrada” depois dessa mudança. Continuar?')"
+            data-confirm="${escapeHtml('Candidatos que já receberam o link atual por e-mail ou WhatsApp vão ver “página não encontrada” depois dessa mudança. Continuar?')}"
+            data-confirm-titulo="Alterar o link da vaga?" data-confirm-texto="Alterar" data-confirm-destrutivo="1"
             style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap;">
         <label class="campo" style="flex:1;min-width:16rem;margin:0;">
           <span>Slug</span>

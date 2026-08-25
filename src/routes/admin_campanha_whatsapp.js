@@ -417,38 +417,44 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
         }
         var opcaoTemplate = templateSelect.options[templateSelect.selectedIndex];
         var templateNome = opcaoTemplate ? opcaoTemplate.text : '(nenhum template)';
-        // confirm() dinamico — nao da para usar onsubmit estatico (mesmo padrao das demais
-        // telas admin) porque telefone e template mudam com a escolha do operador. Mostra os
-        // dois ANTES de confirmar: e um envio de verdade, para um numero de verdade.
-        var pergunta = 'Isto envia uma mensagem de WhatsApp DE VERDADE para ' + telefone +
-          ', usando o template “' + templateNome + '”. Confirma?';
-        if (!confirm(pergunta)) return;
+        // Modal (ETAPA B, Incremento 8) em vez de confirm() nativo — dinamico, nao da para
+        // usar data-confirm estatico (telefone e template mudam com a escolha do operador).
+        // Mostra os dois ANTES de confirmar: e um envio de verdade, para um numero de verdade.
+        window.confirmarAcao({
+          titulo: 'Enviar mensagem real?',
+          mensagem: 'Isto envia uma mensagem de WhatsApp DE VERDADE para ' + telefone +
+            ', usando o template “' + templateNome + '”.',
+          textoConfirmar: 'Enviar',
+          destrutivo: true,
+        }).then(function (confirmado) {
+          if (!confirmado) return;
 
-        btnEnviar.disabled = true;
-        mostrarAviso(resultadoDiv, 'aviso-ok', 'Enviando…');
-        fetch('/admin/campanhas-whatsapp/enviar-teste', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            applicationId: candidatoEscolhido,
-            templateId: Number(templateSelect.value),
-            telefoneDestino: telefone,
-          }),
-        })
-          .then(function (r) { return r.json().then(function (corpo) { return { status: r.status, corpo: corpo }; }); })
-          .then(function (res) {
-            if (res.corpo && res.corpo.ok) {
-              mostrarAviso(resultadoDiv, 'aviso-ok', 'Enviado. wamid: ' + (res.corpo.wamid || '(sem id)'));
-            } else {
-              mostrarAviso(resultadoDiv, 'aviso-alerta', 'Falhou: ' + ((res.corpo && res.corpo.erro) || ('HTTP ' + res.status)));
-            }
+          btnEnviar.disabled = true;
+          mostrarAviso(resultadoDiv, 'aviso-ok', 'Enviando…');
+          return fetch('/admin/campanhas-whatsapp/enviar-teste', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              applicationId: candidatoEscolhido,
+              templateId: Number(templateSelect.value),
+              telefoneDestino: telefone,
+            }),
           })
-          .catch(function (err) {
-            mostrarAviso(resultadoDiv, 'aviso-alerta', 'Falhou: ' + err.message);
-          })
-          .finally(function () {
-            btnEnviar.disabled = false;
-          });
+            .then(function (r) { return r.json().then(function (corpo) { return { status: r.status, corpo: corpo }; }); })
+            .then(function (res) {
+              if (res.corpo && res.corpo.ok) {
+                mostrarAviso(resultadoDiv, 'aviso-ok', 'Enviado. wamid: ' + (res.corpo.wamid || '(sem id)'));
+              } else {
+                mostrarAviso(resultadoDiv, 'aviso-alerta', 'Falhou: ' + ((res.corpo && res.corpo.erro) || ('HTTP ' + res.status)));
+              }
+            })
+            .catch(function (err) {
+              mostrarAviso(resultadoDiv, 'aviso-alerta', 'Falhou: ' + err.message);
+            })
+            .finally(function () {
+              btnEnviar.disabled = false;
+            });
+        });
       });
     })();
     </script>
