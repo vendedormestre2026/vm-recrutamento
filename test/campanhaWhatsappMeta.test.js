@@ -1036,6 +1036,110 @@ test('admin: o checkbox do kill-switch liga e persiste', async () => {
   });
 });
 
+// ══════════════════ ETAPA B, Incremento 6: UI (filtros + envio avulso) ══════════════════
+
+test('admin: form "Nova campanha" renderiza checkboxes de Vaga (titulo · perfil · cidade) e periodo', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville', 'SDR');
+  montarCenario();
+  const tituloVaga = uma('SELECT titulo FROM jobs WHERE id = ?', j).titulo;
+
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    assert.match(html, /Vaga \(candidatura\)/);
+    // Checkbox de multi-selecao com name="vaga", MESMO padrao de name="cidade" ja usado.
+    const reCheckbox = new RegExp(`<input type="checkbox" name="vaga" value="${j}">`);
+    assert.match(html, reCheckbox);
+    assert.match(html, new RegExp(escapeHtml(`${tituloVaga} · SDR · Joinville`)));
+    // Periodo: dois <input type="date">, de/ate.
+    assert.match(html, /<input type="date" name="de">/);
+    assert.match(html, /<input type="date" name="ate">/);
+  });
+});
+
+test('admin: sem vaga cadastrada, o bloco de Vaga avisa em vez de renderizar checkbox vazio', async () => {
+  zerarSeg();
+  montarCenario();
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    assert.match(html, /Nenhuma vaga cadastrada\./);
+    assert.doesNotMatch(html, /<input type="checkbox" name="vaga"/);
+  });
+});
+
+test('admin: POST / grava vagas[] e periodo em criterios_json', async () => {
+  zerarSeg();
+  const j1 = vagaCom('Joinville');
+  const j2 = vagaCom('Curitiba');
+  const { tid } = montarCenario();
+
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams([
+        ['nome', 'Campanha com filtro de vaga'],
+        ['template_id', String(tid)],
+        ['base_alvo', 'ambos'],
+        ['vaga', String(j1)],
+        ['vaga', String(j2)],
+        ['de', '2026-01-01'],
+        ['ate', '2026-12-31'],
+      ]),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+  });
+
+  const linha = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Campanha com filtro de vaga'");
+  const criterios = JSON.parse(linha.criterios_json);
+  assert.deepEqual(criterios.vagas.sort(), [j1, j2].sort());
+  assert.equal(criterios.dataDe, '2026-01-01');
+  assert.equal(criterios.dataAte, '2026-12-31');
+});
+
+test('admin: POST /previa repassa o filtro de vaga para o motor de publico (o total muda)', async () => {
+  zerarSeg();
+  const jA = vagaCom('Joinville');
+  const jB = vagaCom('Joinville');
+  candidatura(jA, 'Candidatou A', '+55 47 90000-0400');
+  candidatura(jB, 'Candidatou B', '+55 47 90000-0401');
+
+  await comAdmin(async (base, h) => {
+    const previa = (extra) =>
+      fetch(`${base}/admin/campanhas-whatsapp/previa`, {
+        method: 'POST',
+        headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ tipo_mensagem: 'convite_grupo', ...extra }),
+      }).then((r) => r.json());
+
+    const semFiltro = await previa({});
+    assert.equal(semFiltro.total, 2);
+
+    const comFiltro = await previa({ vaga: String(jA) });
+    assert.equal(comFiltro.total, 1);
+  });
+});
+
+test('admin: a tela tem a secao "Testar envio avulso" com busca, telefone, template e botao', async () => {
+  zerar();
+  montarCenario();
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    assert.match(html, /Testar envio avulso/);
+    assert.match(html, /id="teste-busca-candidato"/);
+    assert.match(html, /id="teste-telefone"/);
+    assert.match(html, /id="teste-template"/);
+    assert.match(html, /id="teste-btn-enviar"/);
+    // O select de template usa a MESMA fonte (templates_whatsapp) do form de campanha —
+    // aparece nos dois lugares da tela.
+    assert.match(html, new RegExp(`id="teste-template"[\\s\\S]*?${TEMPLATE.nome_meta}`));
+    // Avisa que fura o mock, e nao grava campanha.
+    assert.match(html, /ignora <code>META_CAMPANHA_MOCK<\/code>/);
+    assert.match(html, /não grava em[\s\S]*campanha_whatsapp_envios/);
+  });
+});
+
 // ══════════════════ Motor de segmentacao (dois tipos) ══════════════════
 
 const publico = require('../src/lib/publicoCampanhaWhatsapp');

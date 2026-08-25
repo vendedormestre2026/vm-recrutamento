@@ -42,6 +42,13 @@ function calcularPublico({ tipo, jobId, criterios }) {
     : publico.listarPublicoConviteGrupo(criterios);
 }
 
+// Mesmo formato/regex de admin_promocao.js:dataIsoValida — duplicada aqui (e nao importada)
+// porque e um one-liner puro sem estado, mesmo precedente ja aceito no projeto para
+// validadores deste tamanho (ex.: `ehData` em admin.js).
+function dataIsoValida(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+}
+
 function lerCriterios(b = {}) {
   return {
     // `[].concat` pelo mesmo motivo de admin_promocao: o Express entrega `name` repetido como
@@ -50,6 +57,15 @@ function lerCriterios(b = {}) {
     cidades: [].concat(b.cidade || []).map(String).filter((c) => listarCidadesValidas().includes(c)),
     perfil: PERFIS_VALIDOS.includes(b.perfil) ? b.perfil : undefined,
     perfilIncluirSemAtributo: b.perfil_incluir_sem === '1' || b.perfil_incluir_sem === 'on',
+    // ETAPA B, Incremento 6 — mesmo [].concat de cidade acima, e mesmo saneamento: so
+    // numero inteiro positivo sobrevive, o resto (lixo, string vazia do "nenhuma marcada")
+    // cai fora silenciosamente, exatamente como listarCidadesValidas().includes(c) faz para
+    // cidade.
+    vagas: [].concat(b.vaga || [])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0),
+    dataDe: dataIsoValida(b.de) ? b.de : undefined,
+    dataAte: dataIsoValida(b.ate) ? b.ate : undefined,
   };
 }
 
@@ -74,11 +90,37 @@ function contagensPorCampanha() {
 // extraida para uma funcao pura (Item 3 do ETAPA B "Ajustes no Admin", Commit 6)
 // reaproveitada tanto pela rota standalone abaixo (comportamento inalterado) quanto pela
 // nova pagina /admin/divulgacao-vagas (Commit 7), que a embute como uma das abas.
+// Grupo de checkboxes de multi-selecao — MESMO padrao (mesmas classes, mesmo contrato de
+// "nada marcado = filtro inativo") de admin_promocao.js:checkboxes. Nao importada de la
+// porque e uma funcao fechada dentro de criarRouterPromocao (nao exportada) — replicar o
+// PADRAO aqui e o mais perto de "reaproveitar" que da sem extrair um modulo de UI
+// compartilhado so para uma funcao de ~10 linhas usada em dois lugares.
+function checkboxes(escapeHtml, nome, pares, marcados) {
+  const marcadosSet = new Set((marcados || []).map(String));
+  return pares
+    .map(
+      ([valor, rotulo]) => `
+        <label class="campo-check" style="margin:.2rem 0 0;font-size:.85rem;">
+          <input type="checkbox" name="${nome}" value="${escapeHtml(valor)}"${marcadosSet.has(valor) ? ' checked' : ''}>
+          <span style="color:var(--cinza);text-transform:none;">${escapeHtml(rotulo)}</span>
+        </label>`,
+    )
+    .join('');
+}
+
+// Rotulo legivel de uma vaga para o checkbox de segmentacao por candidatura: "titulo ·
+// perfil · cidade" (cidade omitida quando a vaga e remota/sem cidade cadastrada).
+function rotuloVaga(v) {
+  const base = `${v.titulo || `Vaga ${v.id}`} · ${v.perfil}`;
+  return v.cidade ? `${base} · ${v.cidade}` : base;
+}
+
 function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
   const inteiro = (v) => (fmtInt ? fmtInt(v) : String(v));
 
   const templates = db.listarTemplatesWhatsapp();
   const regioes = db.listarRegioesGrupos();
+  const vagas = db.listarVagas();
   const campanhas = db.listarCampanhasWhatsapp();
   const contagens = contagensPorCampanha();
   const ativo = campanha.ativo();
@@ -198,12 +240,176 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
             ${BASES_ALVO.map(([v, r]) => `<option value="${v}">${escapeHtml(r)}</option>`).join('')}
           </select>
         </label>
+
+        <div class="admin-filtros" style="align-items:flex-start;">
+          <div class="filtro">
+            <span>Vaga (candidatura)</span>
+            ${vagas.length
+              ? checkboxes(escapeHtml, 'vaga', vagas.map((v) => [String(v.id), rotuloVaga(v)]), [])
+                + `<span style="display:block;color:var(--cinza);font-size:.78rem;margin-top:.35rem;text-transform:none;max-width:18rem">
+                     Nenhuma marcada = todas. Marcando uma ou mais, só quem se candidatou a
+                     alguma delas entra — a Base legada fica de fora (ela não tem vaga).
+                   </span>`
+              : `<span style="color:var(--cinza);font-size:.8rem;text-transform:none;">
+                   Nenhuma vaga cadastrada.
+                 </span>`}
+          </div>
+          <label class="filtro">
+            <span>Candidatura/cadastro de</span>
+            <input type="date" name="de">
+          </label>
+          <label class="filtro">
+            <span>até</span>
+            <input type="date" name="ate">
+          </label>
+        </div>
+
         <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem">
           A campanha nasce em <b>rascunho</b> e não envia nada até ser ativada aqui.
         </p>
         <button type="submit" class="btn">Criar campanha</button>
       </form>
     </details>
+
+    <details class="bloco-card">
+      <summary>Testar envio avulso</summary>
+      <p style="color:var(--cinza);font-size:.85rem">
+        Escolha um candidato real para ver as variáveis do template preenchidas com os dados
+        dele, digite um telefone de destino e dispare UMA mensagem de verdade — este envio
+        <b>ignora <code>META_CAMPANHA_MOCK</code></b> e não é campanha nenhuma: não grava em
+        <code>campanha_whatsapp_envios</code>, não tem fila, não repete.
+      </p>
+      <div class="vm-form" style="max-width:32rem">
+        <label class="campo"><span>Buscar candidato</span>
+          <input type="text" id="teste-busca-candidato" placeholder="Nome, e-mail ou telefone" autocomplete="off">
+        </label>
+        <div id="teste-resultados-busca" style="margin:-.6rem 0 1rem"></div>
+        <label class="campo"><span>Telefone de destino</span>
+          <input type="text" id="teste-telefone" placeholder="+55 47 99999-9999">
+        </label>
+        <label class="campo"><span>Template</span>
+          <select id="teste-template">
+            ${templates.map((t) => `<option value="${t.id}">${escapeHtml(t.nome_meta)} (${escapeHtml(t.categoria)})</option>`).join('')}
+          </select>
+        </label>
+        <button type="button" id="teste-btn-enviar" class="btn">Enviar teste real</button>
+        <div id="teste-resultado" style="margin-top:.8rem"></div>
+      </div>
+    </details>
+
+    <script>
+    (function () {
+      // Sem framework, sem dependencia nova — mesmo espirito do resto do painel admin. Toda
+      // busca escreve os resultados via DOM (createElement/textContent), NUNCA innerHTML com
+      // string interpolada: nome/telefone/vaga vem do banco, e um candidato com um nome
+      // "criativo" nao pode injetar HTML nesta tela.
+      var buscaInput = document.getElementById('teste-busca-candidato');
+      if (!buscaInput) return; // secao pode nao estar presente (defensivo)
+      var resultadosDiv = document.getElementById('teste-resultados-busca');
+      var telefoneInput = document.getElementById('teste-telefone');
+      var templateSelect = document.getElementById('teste-template');
+      var btnEnviar = document.getElementById('teste-btn-enviar');
+      var resultadoDiv = document.getElementById('teste-resultado');
+      var candidatoEscolhido = null;
+      var debounce = null;
+
+      function limparResultados() {
+        while (resultadosDiv.firstChild) resultadosDiv.removeChild(resultadosDiv.firstChild);
+      }
+
+      function mostrarAviso(container, classe, texto) {
+        while (container.firstChild) container.removeChild(container.firstChild);
+        var p = document.createElement('p');
+        p.className = classe;
+        p.textContent = texto;
+        container.appendChild(p);
+      }
+
+      buscaInput.addEventListener('input', function () {
+        var termo = buscaInput.value.trim();
+        candidatoEscolhido = null;
+        clearTimeout(debounce);
+        limparResultados();
+        if (!termo) return;
+        debounce = setTimeout(function () {
+          fetch('/admin/campanhas-whatsapp/buscar-candidato?q=' + encodeURIComponent(termo))
+            .then(function (r) { return r.json(); })
+            .then(function (lista) {
+              limparResultados();
+              if (!lista.length) {
+                mostrarAviso(resultadosDiv, 'aviso-alerta', 'Nenhum candidato encontrado.');
+                return;
+              }
+              lista.forEach(function (c) {
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn--ghost';
+                btn.style.cssText = 'display:block;width:100%;text-align:left;margin-bottom:.3rem';
+                var nome = [c.nome, c.sobrenome].filter(Boolean).join(' ') || '(sem nome)';
+                var detalhe = (c.telefone || 's/ telefone') + (c.vaga_titulo ? ' · ' + c.vaga_titulo : '');
+                btn.textContent = nome + ' — ' + detalhe;
+                btn.addEventListener('click', function () {
+                  candidatoEscolhido = c.id;
+                  telefoneInput.value = c.telefone || '';
+                  buscaInput.value = nome;
+                  limparResultados();
+                });
+                resultadosDiv.appendChild(btn);
+              });
+            })
+            .catch(function () {
+              mostrarAviso(resultadosDiv, 'aviso-alerta', 'Falha ao buscar. Tente de novo.');
+            });
+        }, 300);
+      });
+
+      btnEnviar.addEventListener('click', function () {
+        if (!candidatoEscolhido) {
+          mostrarAviso(resultadoDiv, 'aviso-alerta', 'Escolha um candidato na busca acima.');
+          return;
+        }
+        var telefone = telefoneInput.value.trim();
+        if (!telefone) {
+          mostrarAviso(resultadoDiv, 'aviso-alerta', 'Digite o telefone de destino.');
+          return;
+        }
+        var opcaoTemplate = templateSelect.options[templateSelect.selectedIndex];
+        var templateNome = opcaoTemplate ? opcaoTemplate.text : '(nenhum template)';
+        // confirm() dinamico — nao da para usar onsubmit estatico (mesmo padrao das demais
+        // telas admin) porque telefone e template mudam com a escolha do operador. Mostra os
+        // dois ANTES de confirmar: e um envio de verdade, para um numero de verdade.
+        var pergunta = 'Isto envia uma mensagem de WhatsApp DE VERDADE para ' + telefone +
+          ', usando o template “' + templateNome + '”. Confirma?';
+        if (!confirm(pergunta)) return;
+
+        btnEnviar.disabled = true;
+        mostrarAviso(resultadoDiv, 'aviso-ok', 'Enviando…');
+        fetch('/admin/campanhas-whatsapp/enviar-teste', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            applicationId: candidatoEscolhido,
+            templateId: Number(templateSelect.value),
+            telefoneDestino: telefone,
+          }),
+        })
+          .then(function (r) { return r.json().then(function (corpo) { return { status: r.status, corpo: corpo }; }); })
+          .then(function (res) {
+            if (res.corpo && res.corpo.ok) {
+              mostrarAviso(resultadoDiv, 'aviso-ok', 'Enviado. wamid: ' + (res.corpo.wamid || '(sem id)'));
+            } else {
+              mostrarAviso(resultadoDiv, 'aviso-alerta', 'Falhou: ' + ((res.corpo && res.corpo.erro) || ('HTTP ' + res.status)));
+            }
+          })
+          .catch(function (err) {
+            mostrarAviso(resultadoDiv, 'aviso-alerta', 'Falhou: ' + err.message);
+          })
+          .finally(function () {
+            btnEnviar.disabled = false;
+          });
+      });
+    })();
+    </script>
 
     <section class="rel-sec">
       <h2>Campanhas</h2>
