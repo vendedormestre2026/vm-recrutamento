@@ -148,9 +148,23 @@ function montarPayload({ telefone, template, variaveis }) {
 }
 
 // Le o corpo de erro sem nunca lancar pela leitura em si.
+//
+// PARTE 2 (ETAPA B, Incremento 14): antes deste incremento o corte em MAX_DETALHE_ERRO
+// (300 chars) acontecia ANTES de qualquer log — nao existia, em lugar nenhum do projeto, um
+// registro do corpo de erro completo que o Central Whats devolveu. Isso cegou o diagnostico
+// da ETAPA A: so foi possivel ver a mensagem completa "Template nao sincronizado. Informe o
+// idioma ou rode o sync." porque o corpo daquele caso especifico coube nos 300 chars por
+// coincidencia — um corpo mais longo teria sido cortado no meio sem deixar rastro.
+//
+// Agora o corpo INTEIRO (sem limite) vai pro log do servidor via console.error, seguindo o
+// mesmo padrao de prefixo '[modulo] ...' ja usado em lib/campanhaWhatsapp.js. O valor
+// RETORNADO por esta funcao (usado no throw que vira a mensagem de erro pro chamador/UI)
+// continua cortado em MAX_DETALHE_ERRO — nenhuma mudanca de comportamento externo, so
+// logging a mais no servidor.
 async function detalheDoErro(resposta) {
   try {
     const texto = await resposta.text();
+    console.error('[central-whats] corpo de erro completo:', texto);
     return String(texto || '').slice(0, MAX_DETALHE_ERRO);
   } catch {
     return '(corpo da resposta ilegivel)';

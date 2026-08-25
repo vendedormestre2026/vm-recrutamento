@@ -710,6 +710,61 @@ test('envio real: HTTP de erro vira excecao com o status legivel na mensagem', a
   }
 });
 
+// ══════════════════ Observabilidade do corpo de erro (ETAPA B, Incremento 14 - Parte 2) ══════════════════
+//
+// Ate aqui detalheDoErro() cortava o corpo em MAX_DETALHE_ERRO (300 chars) ANTES de
+// qualquer log — nao existia, em lugar nenhum, um registro do corpo completo que o Central
+// Whats devolveu. Isso cegou o diagnostico da ETAPA A. O corte pro chamador/UI continua
+// existindo (nao pode virar uma mensagem de erro gigante na tela) — so o log do servidor
+// passou a receber o texto inteiro.
+
+test('detalheDoErro: loga o corpo INTEIRO no servidor, mas o erro que sobe pro chamador continua truncado em 300 chars', async () => {
+  const antes = { mock: process.env.META_CAMPANHA_MOCK, base: process.env.CENTRALWHATS_BASE_URL, inst: process.env.CENTRALWHATS_INSTANCE_ID, key: process.env.CENTRALWHATS_API_KEY };
+  process.env.META_CAMPANHA_MOCK = 'false';
+  process.env.CENTRALWHATS_BASE_URL = 'https://exemplo-invalido.local';
+  process.env.CENTRALWHATS_INSTANCE_ID = 'instancia-de-teste';
+  process.env.CENTRALWHATS_API_KEY = 'chave-de-teste';
+
+  // NAO usa semRuido() aqui: aquele helper restaura o console no `finally` LOGO apos chamar
+  // fn(), de forma sincrona — o que so captura console.* chamado ANTES do primeiro `await`
+  // interno de fn. O console.error de detalheDoErro() acontece DEPOIS do `await http(...)`
+  // dentro de enviarTemplate, entao precisa de uma captura que so restaura o console depois
+  // do await terminar de verdade.
+  const { log, warn, error } = console;
+  const linhas = [];
+  console.log = console.warn = console.error = (...a) => linhas.push(a.join(' '));
+  try {
+    // Corpo fabricado bem maior que os 300 chars do corte (MAX_DETALHE_ERRO).
+    const corpoCompleto = `{"error":"falha detalhada do Central Whats: ${'x'.repeat(400)}"}`;
+    assert.ok(corpoCompleto.length > 300);
+    const httpClient = async () => ({ ok: false, status: 400, text: async () => corpoCompleto });
+
+    let erro = null;
+    try {
+      await transporte.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: ['Ana'], httpClient });
+    } catch (e) {
+      erro = e;
+    }
+
+    // O log do servidor recebe o corpo INTEIRO, sem corte.
+    const logComCorpo = linhas.find((l) => l.includes('[central-whats] corpo de erro completo:'));
+    assert.ok(logComCorpo, 'esperava um log com o prefixo [central-whats] corpo de erro completo:');
+    assert.ok(logComCorpo.includes(corpoCompleto), 'o log precisa conter o corpo INTEIRO, sem truncar');
+
+    // O erro que sobe pro chamador/UI continua truncado em MAX_DETALHE_ERRO — sem mudanca de
+    // comportamento externo.
+    assert.ok(erro, 'esperava que o envio lancasse um erro');
+    assert.ok(!erro.message.includes(corpoCompleto), 'a mensagem do erro NAO pode conter o corpo inteiro');
+    assert.ok(erro.message.includes(corpoCompleto.slice(0, 300)), 'a mensagem do erro precisa conter o corpo truncado em 300 chars');
+  } finally {
+    Object.assign(console, { log, warn, error });
+    for (const [k, v] of [['META_CAMPANHA_MOCK', antes.mock], ['CENTRALWHATS_BASE_URL', antes.base], ['CENTRALWHATS_INSTANCE_ID', antes.inst], ['CENTRALWHATS_API_KEY', antes.key]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
 // ══════════════════ Job ══════════════════
 
 test('kill-switch OFF: nao processa nada', async () => {
