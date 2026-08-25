@@ -1405,6 +1405,96 @@ test('POST /:id/disparar: materializa divulgacao_vaga corretamente a partir do q
   });
 });
 
+// ══════════════════ ETAPA B, Incremento 9: template inativo nao pode ser usado ══════════════════
+
+function criarTemplateAtivo(nomeMeta) {
+  return Number(
+    exec(
+      "INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo) VALUES (?, 'pt_BR', 'utility', ?, 1)",
+      nomeMeta, JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+}
+function criarTemplateInativo(nomeMeta) {
+  return Number(
+    exec(
+      "INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo) VALUES (?, 'pt_BR', 'marketing', ?, 0)",
+      nomeMeta, JSON.stringify(TEMPLATE.variaveis),
+    ).lastInsertRowid,
+  );
+}
+
+test('db.listarTemplatesWhatsapp({apenasAtivos:true}) so devolve ativo=1; sem parametro devolve todos (regressao)', () => {
+  zerar();
+  const ativoId = criarTemplateAtivo('tpl_ativo_9');
+  const inativoId = criarTemplateInativo('tpl_inativo_9');
+
+  const todosOs = db.listarTemplatesWhatsapp();
+  assert.deepEqual(todosOs.map((t) => t.id).sort((a, b) => a - b), [ativoId, inativoId].sort((a, b) => a - b));
+
+  const soAtivos = db.listarTemplatesWhatsapp({ apenasAtivos: true });
+  assert.deepEqual(soAtivos.map((t) => t.id), [ativoId]);
+});
+
+test('admin: os DOIS selects de escolha (Nova campanha, Testar envio avulso) so oferecem template ATIVO; a tabela somente-leitura continua mostrando todos', async () => {
+  zerar();
+  criarTemplateAtivo('tpl_visivel_select_9');
+  criarTemplateInativo('tpl_oculto_select_9');
+
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    // Aparece na tabela "Templates aprovados" (le TODOS, sem filtro) — confirma que a
+    // leitura completa nao regrediu.
+    assert.match(html, /tpl_oculto_select_9/);
+    // Mas NENHUM dos dois <select> (name="template_id" e id="teste-template") pode conter
+    // uma <option> para o template inativo — verificado contando quantas vezes o nome dele
+    // aparece: 1 (so na linha da tabela), nunca dentro de <option>.
+    assert.doesNotMatch(html, /<option value="\d+">tpl_oculto_select_9/);
+    assert.match(html, /<option value="\d+">tpl_visivel_select_9/);
+  });
+});
+
+test('admin: POST / com template INATIVO -> erro claro, nenhuma campanha criada', async () => {
+  zerar();
+  const inativoId = criarTemplateInativo('tpl_post_inativo_9');
+  await comAdmin(async (base, h) => {
+    const antes = uma('SELECT COUNT(*) n FROM campanhas_whatsapp').n;
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Campanha com template inativo',
+        template_id: String(inativoId),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'convite_grupo',
+      }),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /erro=template_inativo/);
+    assert.equal(uma('SELECT COUNT(*) n FROM campanhas_whatsapp').n, antes);
+  });
+});
+
+test('POST /enviar-teste com template INATIVO -> erro claro, SEM chamar a rede', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Alvo', '+55 47 99958-2500');
+  const inativoId = criarTemplateInativo('tpl_teste_inativo_9');
+
+  await comRotaEnviarTeste(transporteNuncaChamado, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId,
+      templateId: inativoId,
+      telefoneDestino: '+55 47 98888-7777',
+    });
+    assert.equal(res.status, 400);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, false);
+    assert.match(corpo.erro, /não está ativo/);
+  });
+});
+
 // ══════════════════ Motor de segmentacao (dois tipos) ══════════════════
 
 const publico = require('../src/lib/publicoCampanhaWhatsapp');

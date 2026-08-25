@@ -119,6 +119,11 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
   const inteiro = (v) => (fmtInt ? fmtInt(v) : String(v));
 
   const templates = db.listarTemplatesWhatsapp();
+  // ETAPA B, Incremento 9: os DOIS <select> de escolha (Nova campanha, Testar envio avulso)
+  // so oferecem template ATIVO — `templates` (todos, inclusive placeholders com ativo=0)
+  // continua alimentando so a tabela "Templates aprovados (somente leitura)", que existe
+  // justamente para mostrar o espelho completo.
+  const templatesAtivos = db.listarTemplatesWhatsapp({ apenasAtivos: true });
   const regioes = db.listarRegioesGrupos();
   const vagas = db.listarVagas();
   // Vaga sendo DIVULGADA (Incremento 7): so ativas, mesmo recorte de admin_promocao.js
@@ -238,7 +243,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
         </label>
         <label class="campo"><span>Template</span>
           <select name="template_id" required>
-            ${templates.map((t) => `<option value="${t.id}">${escapeHtml(t.nome_meta)} (${escapeHtml(t.categoria)})</option>`).join('')}
+            ${templatesAtivos.map((t) => `<option value="${t.id}">${escapeHtml(t.nome_meta)} (${escapeHtml(t.categoria)})</option>`).join('')}
           </select>
         </label>
         <label class="campo"><span>Base alvo</span>
@@ -331,7 +336,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
         </label>
         <label class="campo"><span>Template</span>
           <select id="teste-template">
-            ${templates.map((t) => `<option value="${t.id}">${escapeHtml(t.nome_meta)} (${escapeHtml(t.categoria)})</option>`).join('')}
+            ${templatesAtivos.map((t) => `<option value="${t.id}">${escapeHtml(t.nome_meta)} (${escapeHtml(t.categoria)})</option>`).join('')}
           </select>
         </label>
         <button type="button" id="teste-btn-enviar" class="btn">Enviar teste real</button>
@@ -499,8 +504,16 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     const templateId = Number(b.template_id);
     const baseAlvo = BASES_ALVO.some(([v]) => v === b.base_alvo) ? b.base_alvo : 'ambos';
 
-    if (!nome || !Number.isInteger(templateId) || !db.obterTemplateWhatsapp(templateId)) {
+    const templateEscolhido = Number.isInteger(templateId) ? db.obterTemplateWhatsapp(templateId) : null;
+    if (!nome || !templateEscolhido) {
       return res.redirect('/admin/campanhas-whatsapp?erro=dados');
+    }
+    // Incremento 9: template inativo (placeholder nunca sincronizado no Central Whats/Meta —
+    // ver o diagnostico da ETAPA A) nao pode virar campanha. O select do form ja so oferece
+    // ativos, mas o POST nao pode confiar so nisso — mesma disciplina ja aplicada a vaga-alvo
+    // no Incremento 7 (form adulterado/direto nao pode furar a checagem do servidor).
+    if (!templateEscolhido.ativo) {
+      return res.redirect('/admin/campanhas-whatsapp?erro=template_inativo');
     }
     const tipo = TIPOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
 
@@ -615,6 +628,15 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     const template = db.obterTemplateWhatsapp(templateId);
     if (!template) {
       return res.status(400).json({ ok: false, erro: 'Template nao encontrado.' });
+    }
+    // Incremento 9: recusa ANTES de resolver contexto ou tocar rede — e exatamente o furo
+    // que produziu o erro cru do Central Whats no diagnostico da ETAPA A (template
+    // 'divulgacao_vaga_vm_PENDENTE', ativo=0, nunca sincronizado do lado deles).
+    if (!template.ativo) {
+      return res.status(400).json({
+        ok: false,
+        erro: 'Este template não está ativo/sincronizado, não pode ser usado para envio.',
+      });
     }
 
     // Telefone digitado por gente — validacao ESTRITA, ANTES de qualquer chamada externa.

@@ -3105,8 +3105,16 @@ function definirTotalEstimadoCampanhaWhatsapp(id, total) {
   return getDb().prepare('UPDATE campanhas_whatsapp SET total_estimado = ? WHERE id = ?').run(total, id).changes;
 }
 
-function listarTemplatesWhatsapp() {
-  return getDb().prepare('SELECT * FROM templates_whatsapp ORDER BY nome_meta').all();
+// `{ apenasAtivos = false }` (ETAPA B, Incremento 9): default preserva o comportamento de
+// sempre (todos os templates, inclusive placeholders com ativo=0 — a tabela "Templates
+// aprovados" da tela e deliberadamente um espelho completo, somente leitura). `true` filtra
+// WHERE ativo=1 — para os SELECTs de escolha de template (Nova campanha, Testar envio
+// avulso), onde oferecer um placeholder nunca sincronizado no Central Whats/Meta e o que
+// deixou o operador testar contra 'divulgacao_vaga_vm_PENDENTE' e receber um erro cru de
+// terceiro (ver o diagnostico da ETAPA A, PARTE 2).
+function listarTemplatesWhatsapp({ apenasAtivos = false } = {}) {
+  const clausula = apenasAtivos ? 'WHERE ativo = 1' : '';
+  return getDb().prepare(`SELECT * FROM templates_whatsapp ${clausula} ORDER BY nome_meta`).all();
 }
 
 function obterTemplateWhatsapp(id) {
