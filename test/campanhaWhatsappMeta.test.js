@@ -337,16 +337,30 @@ test('o payload segue o formato do Central Whats, com vars POSICIONAIS', () => {
   assert.equal(p.template.components, undefined);
 });
 
-test('o payload NAO leva language — o idioma e resolvido do lado de la', () => {
-  // O template sincronizado no Central Whats e quem decide o idioma. Mandar explicito daqui
-  // pode produzir comportamento diferente do esperado, mesmo com o valor "certo".
+test('o payload leva language, lido de template.idioma (Incremento 14)', () => {
+  // Ate o Incremento 14, o payload NAO levava language de proposito — um envio real de teste
+  // (nova_vaga_v2, ETAPA A) provou que o Central Whats recusa template nao sincronizado
+  // pedindo EXPLICITAMENTE por idioma. Ver o comentario extenso em
+  // centralWhats.js:montarPayload sobre a suposicao do nome do campo (nao confirmada).
   const p = transporte.montarPayload({
     telefone: '5547999582500',
     template: { ...TEMPLATE, idioma: 'pt_BR' },
     variaveis: ['Ana'],
   });
-  assert.equal(p.template.language, undefined);
-  assert.deepEqual(Object.keys(p.template), ['name']);
+  assert.equal(p.template.language, 'pt_BR');
+  assert.deepEqual(Object.keys(p.template).sort(), ['language', 'name']);
+});
+
+test('o payload NAO leva language quando template.idioma esta ausente/vazio — chave omitida, nao string vazia', () => {
+  for (const idioma of [undefined, null, '', '   ']) {
+    const p = transporte.montarPayload({
+      telefone: '5547999582500',
+      template: { ...TEMPLATE, idioma },
+      variaveis: ['Ana'],
+    });
+    assert.equal('language' in p.template, false, `idioma ${JSON.stringify(idioma)} nao podia gerar language`);
+    assert.deepEqual(Object.keys(p.template), ['name']);
+  }
 });
 
 // ══════════════════ forcarEnvioReal (ETAPA B, envio avulso de teste) ══════════════════
@@ -533,6 +547,35 @@ test('botao: template com a coluna NULL nao recebe botao no envio real', async (
   assert.equal('button0' in p.vars, false);
 });
 
+// ══════════════════ Language explicito no payload (ETAPA B, Incremento 14) ══════════════════
+//
+// Ate aqui o payload nao levava idioma nenhum, por decisao deliberada — um envio real de
+// teste (nova_vaga_v2, ETAPA A) provou o pressuposto errado: o Central Whats recusou com
+// HTTP 400 pedindo "informe o idioma". Ver o comentario extenso em
+// centralWhats.js:montarPayload sobre a suposicao do NOME do campo (nao confirmada).
+
+test('language: o job (confirmacao_cadastro_vaga_vm, template que ja funciona hoje) monta payload com language incluido, sem quebrar', async () => {
+  // Regressao: prova que o template QUE JA FUNCIONA em producao continua montando um
+  // payload valido depois desta mudanca — a coluna templates_whatsapp.idioma ja e lida pelo
+  // JOIN da fila (sqlite.js:listarPendentesCampanhaWhatsapp), entao nao precisou de consulta
+  // nova nenhuma.
+  zerar();
+  db.definirConfigBool(job.CHAVE_ATIVO, true);
+  const { cid } = montarCenario(); // TEMPLATE.idioma = 'pt_BR' (fixture no topo do arquivo)
+  adicionar(cid, '5547999582500', 'Ana Paula', 'Joinville');
+
+  const recebido = [];
+  await semRuido(() =>
+    job.processarCicloCampanhaWhatsapp(deps({
+      enviarTemplate: async (a) => { recebido.push(a); return { wamid: 'w' }; },
+    })));
+
+  assert.equal(recebido[0].template.idioma, 'pt_BR');
+  const p = transporte.montarPayload({ telefone: '5547999582500', template: recebido[0].template, variaveis: ['Ana', '', 'https://chat.whatsapp.com/ABC123'] });
+  assert.equal(p.template.name, TEMPLATE.nome_meta);
+  assert.equal(p.template.language, 'pt_BR');
+});
+
 // ══════════════════ Erros do Central Whats ══════════════════
 
 test('classificacao: cada status do Central Whats cai na categoria certa', () => {
@@ -628,7 +671,7 @@ test('envio real (httpClient injetado): URL, header e corpo do Central Whats', a
     assert.deepEqual(JSON.parse(chamadas[0].opcoes.body), {
       type: 'template',
       to: '5547999582500',
-      template: { name: 'confirmacao_cadastro_vaga_vm' },
+      template: { name: 'confirmacao_cadastro_vaga_vm', language: 'pt_BR' },
       vars: { 1: 'Ana', 2: 'SDR', 3: 'https://chat.whatsapp.com/X', button0: 'indisponivel' },
     });
     assert.equal(r.mock, false);

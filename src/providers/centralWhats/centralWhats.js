@@ -107,14 +107,42 @@ function montarPayload({ telefone, template, variaveis }) {
   const parametroBotao = String((template && template.botao_parametro_fixo) || '').trim();
   if (parametroBotao) vars.button0 = parametroBotao;
 
+  // ── LANGUAGE (ETAPA B, Incremento 14) ──
+  //
+  // ATE AQUI o payload nao mandava idioma nenhum, de proposito — o comentario que morava
+  // aqui dizia "o Central Whats resolve pelo template sincronizado la". Um envio real de
+  // teste (nova_vaga_v2, ETAPA A) provou esse pressuposto ERRADO: o Central Whats recusou
+  // com HTTP 400 — `{"error":"Template \"nova_vaga_v2\" nao sincronizado. Informe o idioma
+  // ou rode o sync."}` — pedindo explicitamente por idioma. O nome do template chegou
+  // correto (ecoado de volta na mensagem, sem reclamar dele), entao o problema era so isto.
+  //
+  // ⚠️ NOME DO CAMPO — SUPOSICAO DOCUMENTADA, NAO CONFIRMADA: nao ha documentacao do
+  // contrato do Central Whats neste repositorio nem em lugar nenhum que a sessao de
+  // diagnostico encontrou, e a mensagem de erro nao da o nome do campo, so pede "o idioma".
+  // Usamos `language` DENTRO de `template` (e nao no nivel raiz do payload) por dois
+  // motivos: (1) e a mesma posicao e o mesmo nome que a Graph API oficial da Meta usa
+  // (`template.language.code` — ver providers/whatsappMeta/metaWhatsapp.js:132, o adaptador
+  // dormente que fala direto com ela), e o Central Whats e um proxy na frente da Graph API;
+  // (2) e o proprio local onde a IDENTIDADE do template (nome) ja mora neste payload. Se
+  // isto se provar errado (nome de campo diferente, ou valor esperado como objeto
+  // `{code:'pt_BR'}` em vez de string plana), o sintoma vai ser o MESMO tipo de erro 400
+  // "nao sincronizado" continuando a aparecer mesmo com language presente — reabra este
+  // comentario antes de tentar de novo.
+  //
+  // Fonte do valor: templates_whatsapp.idioma (coluna NOT NULL, ja lida pelos dois pontos
+  // que chamam enviarTemplate — o job, em lib/campanhaWhatsapp.js, e a rota de envio avulso,
+  // em routes/admin_campanha_whatsapp.js — nenhum dos dois precisou de uma consulta nova).
+  // Ausente/vazio (ex.: um `template` montado a mao sem idioma) -> chave OMITIDA, nao string
+  // vazia — mesma disciplina ja usada para `button0` acima.
+  const idioma = String((template && template.idioma) || '').trim();
+
   return {
     type: 'template',
     to: telefone,
-    // ⚠️ SEM `language`. O idioma e resolvido do lado do Central Whats, pelo template
-    // sincronizado la. Mandar idioma explicito daqui pode produzir comportamento diferente do
-    // esperado — e por isso templates_whatsapp.idioma NAO e lido nesta montagem, apesar de
-    // continuar existindo (o adaptador dormente da Graph API precisa dele).
-    template: { name: template.nome_meta },
+    template: {
+      name: template.nome_meta,
+      ...(idioma ? { language: idioma } : {}),
+    },
     vars,
   };
 }
