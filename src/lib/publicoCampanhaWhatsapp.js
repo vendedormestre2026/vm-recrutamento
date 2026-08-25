@@ -289,4 +289,80 @@ function listarPublicoDivulgacaoVaga(jobId, criterios = {}, deps = {}) {
   return { itens, total: itens.length, semPerfil: passoPerfil.semAtributo };
 }
 
-module.exports = { listarPublicoConviteGrupo, listarPublicoDivulgacaoVaga, coletarPessoas };
+// ══════════════════════════════════════════════════════════════
+// 3. STATUS DA CANDIDATURA (aprovados/reprovados/em analise, de UMA vaga)
+// ══════════════════════════════════════════════════════════════
+//
+// Terceiro objetivo de campanha (ETAPA B, Incremento 11): "informar aos candidatos de UMA
+// vaga qual foi o resultado da candidatura deles" — nao e uma pergunta de segmentacao (quem
+// PODE querer isto), e uma pergunta de CONTEUDO da mensagem (o que essas pessoas ESPECIFICAS
+// precisam saber sobre a candidatura delas). O formato e por isso deliberadamente diferente
+// dos outros dois:
+//
+//   - jobId e statusList sao AMBOS obrigatorios. Nao ha "todas as vagas" nem "qualquer
+//     status": mandar "sua candidatura foi X" sem saber X nem em qual vaga nao e uma
+//     mensagem que faz sentido existir.
+//   - SO applications, NUNCA talentos: `status_recrutador` nao existe na tabela `talentos` —
+//     Base legada nunca passa por entrevista nem por decisao do recrutador (ver o diagnostico
+//     da ETAPA A, item 11). Base alvo (applications/talentos/ambos) nem se aplica aqui —
+//     diferente dos outros dois tipos, nao e exposta na tela para este objetivo.
+//   - Sem cidade, sem periodo: o recorte inteiro JA e "candidatos desta vaga com este
+//     status"; cidade/periodo perguntariam algo que jobId+statusList ja decidiu sozinho.
+//
+// ── ⚠️ DESVIO DE PADRAO DELIBERADO: statusList VAZIO E ERRO, NAO "TODOS" ──
+// Em cidade/perfil (os outros dois tipos), nada marcado = filtro inativo = todo mundo entra
+// (ver aplicarFiltroMulti/aplicarFiltroAtributo). AQUI NAO. "Nenhum status marcado" NUNCA
+// pode virar silenciosamente "manda para todo mundo, aprovado ou reprovado ou em analise" —
+// o erro custa dizer "voce foi aprovado" para quem foi reprovado, ou o inverso. Por isso
+// statusList vazio LANCA (mesmo tratamento de jobId invalido), em vez de devolver publico
+// vazio ou publico total. NAO "conserte" isto de volta ao padrao de aplicarFiltroMulti sem
+// reler este comentario primeiro — a omissao aqui e intencional, nao um bug esquecido.
+function listarPublicoStatusCandidatura(jobId, statusList, deps = {}) {
+  const db = deps.db || dbPadrao;
+  const alvo = Number(jobId);
+  if (!Number.isInteger(alvo) || alvo <= 0) {
+    throw new Error('Informar situacao de candidatura exige um job_id valido.');
+  }
+  // dbPadrao.STATUS_RECRUTADOR_VALIDOS (sqlite.js) — MESMA allowlist ['aprovado', 'reprovado',
+  // 'em_analise'] que valida a decisao humana do recrutador em admin.js (STATUS_RECRUTADOR_
+  // FILTRAVEIS = [...db.STATUS_RECRUTADOR_VALIDOS, 'sem_decisao']). Lida daqui, nao
+  // redeclarada, para as duas fontes nunca divergirem.
+  const statusValidos = Array.isArray(statusList)
+    ? statusList.filter((s) => dbPadrao.STATUS_RECRUTADOR_VALIDOS.includes(s))
+    : [];
+  if (!statusValidos.length) {
+    throw new Error('Informar situacao de candidatura exige pelo menos um status selecionado.');
+  }
+
+  // opt-out e telefoneUtilizavel: MESMAS duas invariantes dos outros dois tipos (ver o
+  // cabecalho do arquivo). `status_recrutador IN (...)` no SQL ja exclui NULL ("sem decisao")
+  // sozinho — IN nunca casa com NULL —, entao nao ha checagem extra a fazer aqui para isso.
+  const optOut = db.listarTelefonesOptOutWhatsapp();
+  const porTelefone = new Map();
+
+  for (const linha of db.listarCandidatosPorVagaEStatusRecrutador(alvo, statusValidos)) {
+    const telefone = normalizarTelefoneWhatsapp(linha.telefone);
+    if (!telefone) continue;
+    if (!telefoneUtilizavel(telefone, `application ${linha.id}`)) continue;
+    if (optOut.has(telefone)) continue;
+    if (porTelefone.has(telefone)) continue; // duplicata por telefone: a primeira (menor id) vence
+    porTelefone.set(telefone, {
+      telefone,
+      nome: linha.nome || '',
+      nome_primeiro: primeiroNome(linha.nome),
+      origemTipo: 'application',
+      origemId: linha.id,
+      cidade: cidadeLimpa(linha.cidade_vaga) || null,
+    });
+  }
+
+  const itens = [...porTelefone.values()];
+  return { itens, total: itens.length };
+}
+
+module.exports = {
+  listarPublicoConviteGrupo,
+  listarPublicoDivulgacaoVaga,
+  listarPublicoStatusCandidatura,
+  coletarPessoas,
+};

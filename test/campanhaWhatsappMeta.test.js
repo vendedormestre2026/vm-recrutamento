@@ -1648,6 +1648,106 @@ test('periodo + divulgacao (Incremento 2): a exclusao de "ja se candidatou ao AL
   assert.deepEqual(tels(r), []);
 });
 
+// ══════════════════ ETAPA B, Incremento 11: status_candidatura (3o tipo) ══════════════════
+
+test('status_candidatura: publico correto para UM status', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const aprovadoId = candidatura(j, 'Aprovado', '+55 47 90000-0600');
+  const reprovadoId = candidatura(j, 'Reprovado', '+55 47 90000-0601');
+  db.definirStatusRecrutador(aprovadoId, 'aprovado');
+  db.definirStatusRecrutador(reprovadoId, 'reprovado');
+
+  const r = publico.listarPublicoStatusCandidatura(j, ['aprovado']);
+  assert.deepEqual(tels(r), ['5547900000600']);
+});
+
+test('status_candidatura: publico correto para MULTIPLOS status combinados', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const aprovadoId = candidatura(j, 'Aprovado', '+55 47 90000-0602');
+  const reprovadoId = candidatura(j, 'Reprovado', '+55 47 90000-0603');
+  const analiseId = candidatura(j, 'Em Analise', '+55 47 90000-0604');
+  db.definirStatusRecrutador(aprovadoId, 'aprovado');
+  db.definirStatusRecrutador(reprovadoId, 'reprovado');
+  db.definirStatusRecrutador(analiseId, 'em_analise');
+
+  const r = publico.listarPublicoStatusCandidatura(j, ['aprovado', 'reprovado']);
+  assert.deepEqual(tels(r), ['5547900000602', '5547900000603'].sort());
+});
+
+test('status_candidatura: statusList vazio/ausente LANCA (nao devolve "todos", desvio de padrao deliberado)', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const aprovadoId = candidatura(j, 'Aprovado', '+55 47 90000-0605');
+  db.definirStatusRecrutador(aprovadoId, 'aprovado');
+
+  assert.throws(() => publico.listarPublicoStatusCandidatura(j, []), /pelo menos um status/);
+  assert.throws(() => publico.listarPublicoStatusCandidatura(j, undefined), /pelo menos um status/);
+  assert.throws(() => publico.listarPublicoStatusCandidatura(j, ['status_inventado']), /pelo menos um status/);
+});
+
+test('status_candidatura: job_id invalido LANCA', () => {
+  zerarSeg();
+  for (const ruim of [null, 0, -1, 'abc', undefined]) {
+    assert.throws(() => publico.listarPublicoStatusCandidatura(ruim, ['aprovado']), /job_id valido/);
+  }
+});
+
+test('status_candidatura: exclui quem tem status_recrutador NULL ("sem decisao"), mesmo que a vaga bata', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const semDecisaoId = candidatura(j, 'Sem Decisao', '+55 47 90000-0606');
+  const aprovadoId = candidatura(j, 'Aprovado', '+55 47 90000-0607');
+  db.definirStatusRecrutador(aprovadoId, 'aprovado');
+  // semDecisaoId fica sem tocar status_recrutador — nasce NULL.
+
+  const r = publico.listarPublicoStatusCandidatura(j, ['aprovado', 'reprovado', 'em_analise']);
+  assert.deepEqual(tels(r), ['5547900000607']);
+});
+
+test('status_candidatura: exclusao ESTRUTURAL de talentos (nem aparecem na consulta)', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const aprovadoId = candidatura(j, 'Aprovado', '+55 47 90000-0608');
+  db.definirStatusRecrutador(aprovadoId, 'aprovado');
+  // Talento na MESMA cidade, sem relacao nenhuma com a vaga — nao tem job_id nem
+  // status_recrutador possivel (a tabela nao tem essa coluna).
+  legado('So Legado', '+55 47 90000-0609', 'Joinville');
+
+  const r = publico.listarPublicoStatusCandidatura(j, ['aprovado']);
+  assert.deepEqual(tels(r), ['5547900000608']);
+  assert.ok(r.itens.every((i) => i.origemTipo === 'application'));
+});
+
+test('status_candidatura: candidatura de OUTRA vaga com o mesmo status fica de fora', () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  const outra = vagaCom('Curitiba');
+  const daVagaAlvo = candidatura(alvo, 'Da Vaga Alvo', '+55 47 90000-0610');
+  const deOutraVaga = candidatura(outra, 'De Outra Vaga', '+55 41 90000-0611');
+  db.definirStatusRecrutador(daVagaAlvo, 'aprovado');
+  db.definirStatusRecrutador(deOutraVaga, 'aprovado');
+
+  const r = publico.listarPublicoStatusCandidatura(alvo, ['aprovado']);
+  assert.deepEqual(tels(r), ['5547900000610']);
+});
+
+test('status_candidatura: opt-out e telefoneUtilizavel valem aqui tambem (mesmo padrao dos outros dois tipos)', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const optOutId = candidatura(j, 'Opt Out', '+55 47 90000-0612');
+  const corrompidoId = candidatura(j, 'Corrompido', '+55 +5547900000613'); // DDI duplicado
+  const validoId = candidatura(j, 'Valido', '+55 47 90000-0614');
+  db.definirStatusRecrutador(optOutId, 'aprovado');
+  db.definirStatusRecrutador(corrompidoId, 'aprovado');
+  db.definirStatusRecrutador(validoId, 'aprovado');
+  db.registrarOptOutWhatsapp('5547900000612', 'resposta_webhook');
+
+  const r = semRuido(() => publico.listarPublicoStatusCandidatura(j, ['aprovado'])).r;
+  assert.deepEqual(tels(r), ['5547900000614']);
+});
+
 // ══════════════════ montarContextoWhatsapp (envio avulso de teste) ══════════════════
 //
 // ETAPA B, Incremento 3. Contexto a partir de UM application_id, sem fila materializada e

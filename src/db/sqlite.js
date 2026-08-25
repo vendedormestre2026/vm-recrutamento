@@ -3072,6 +3072,34 @@ function listarTalentosParaCampanhaWhatsapp({ dataDe, dataAte } = {}) {
     .all(...params);
 }
 
+// Candidatos de UMA vaga especifica, filtrados por status_recrutador (decisao HUMANA do
+// recrutador — STATUS_RECRUTADOR_VALIDOS em admin.js). Fonte de dados do terceiro tipo de
+// campanha por WhatsApp, 'status_candidatura' (ETAPA B, Incremento 11): "informar
+// aprovados/reprovados/em analise de uma vaga". Estruturalmente so `applications` — NUNCA
+// `talentos`, que nao tem status_recrutador (Base legada nunca passa por entrevista/decisao
+// do recrutador). Sem JOIN com talentos em lugar nenhum desta funcao, de proposito.
+//
+// `status_recrutador IN (...)` ja exclui NULL ("sem decisao") pela propria semantica SQL de
+// IN — NULL nunca casa com IN, entao nao precisa de AND status_recrutador IS NOT NULL
+// explicito. Mas o CHAMADOR (lib/publicoCampanhaWhatsapp) ainda precisa recusar statusList
+// vazio ANTES de chegar aqui — com [] o placeholder fica vazio e o SQL quebraria.
+function listarCandidatosPorVagaEStatusRecrutador(jobId, statusList) {
+  const status = Array.isArray(statusList) ? statusList.filter(Boolean) : [];
+  if (!status.length) return [];
+  const placeholders = status.map(() => '?').join(', ');
+  return getDb()
+    .prepare(
+      `SELECT a.id, a.nome, a.telefone, a.status_recrutador,
+              j.cidade AS cidade_vaga
+         FROM applications a
+         JOIN jobs j ON j.id = a.job_id
+        WHERE a.job_id = ?
+          AND a.status_recrutador IN (${placeholders})
+        ORDER BY a.id`,
+    )
+    .all(jobId, ...status);
+}
+
 // Set para lookup O(1) no laco do motor. Sao ~poucas linhas hoje; um SELECT por pessoa seria
 // N+1 no lugar mais quente.
 function listarTelefonesOptOutWhatsapp() {
@@ -3450,6 +3478,7 @@ module.exports = {
   listarCidadesDistintas,
   listarCandidatosParaCampanhaWhatsapp,
   listarTalentosParaCampanhaWhatsapp,
+  listarCandidatosPorVagaEStatusRecrutador,
   listarTelefonesOptOutWhatsapp,
   materializarCampanhaWhatsapp,
   definirTotalEstimadoCampanhaWhatsapp,

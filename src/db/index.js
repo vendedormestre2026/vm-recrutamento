@@ -181,6 +181,7 @@ module.exports = {
   // Campanha por WhatsApp (Meta Cloud API)
   listarCandidatosParaCampanhaWhatsapp: driver.listarCandidatosParaCampanhaWhatsapp,
   listarTalentosParaCampanhaWhatsapp: driver.listarTalentosParaCampanhaWhatsapp,
+  listarCandidatosPorVagaEStatusRecrutador: driver.listarCandidatosPorVagaEStatusRecrutador,
   listarTelefonesOptOutWhatsapp: driver.listarTelefonesOptOutWhatsapp,
   materializarCampanhaWhatsapp: driver.materializarCampanhaWhatsapp,
   definirTotalEstimadoCampanhaWhatsapp: driver.definirTotalEstimadoCampanhaWhatsapp,
