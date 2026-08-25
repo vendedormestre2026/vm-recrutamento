@@ -63,17 +63,47 @@ function cidadeLimpa(v) {
   return String(v == null ? '' : v).trim();
 }
 
+// Cria o registro vazio de uma pessoa nova no Map de agrupamento. Extraida porque os dois
+// lacos abaixo (candidatos e legado) precisam do MESMO formato inicial.
+function pessoaVazia(telefone) {
+  return {
+    telefone,
+    nome: null,
+    origemTipo: null,
+    origemId: null,
+    perfis: new Set(),
+    cidades: new Set(),
+    jobsInscritos: new Set(),
+    // Todas as datas (YYYY-MM-DD) em que esta pessoa apareceu — candidatura(s) e/ou cadastro
+    // de talento. Usado por aplicarFiltroPeriodo (mais abaixo) DEPOIS do agrupamento, nunca
+    // como filtro nas consultas de origem — ver o comentario em coletarPessoas.
+    datas: new Set(),
+  };
+}
+
+// Trunca um `criado_em` (formato datetime do SQLite, "YYYY-MM-DD HH:MM:SS") para so a data.
+// String vazia p/ valor ausente — nunca entra no Set de datas de aplicarFiltroPeriodo.
+function apenasData(criadoEm) {
+  return String(criadoEm || '').slice(0, 10);
+}
+
 // Monta o mapa telefone -> pessoa a partir das duas origens.
 //
 // `deps.db` injetavel, como no resto do projeto.
-// `criterios.dataDe`/`criterios.dataAte` (ETAPA B): janela de PERIODO, repassada as duas
-// consultas de origem — cada uma filtra pelo seu proprio `criado_em` (candidatura ou
-// cadastro do talento). Passada AQUI, e nao como filtro pos-agrupamento em JS, porque e
-// exatamente o mesmo padrao do e-mail: a janela recorta QUEM ENTRA no publico, e o SQL e
-// quem sabe comparar datas sem carregar linha que ja sai fora.
-function coletarPessoas(deps = {}, criterios = {}) {
+//
+// ── SEM JANELA DE PERIODO NAS CONSULTAS, DE PROPOSITO (ETAPA B, Incremento 2) ──
+// As duas consultas de origem (listarCandidatosParaCampanhaWhatsapp/
+// listarTalentosParaCampanhaWhatsapp, em sqlite.js) ACEITAM um parametro de janela, mas esta
+// funcao NUNCA o passa. Motivo: jobsInscritos (usado pela exclusao "ja se candidatou a esta
+// vaga" de listarPublicoDivulgacaoVaga) e datas (usado por aplicarFiltroPeriodo) precisam do
+// historico COMPLETO da pessoa para as duas checagens que dependem deles nao falharem —
+// exatamente o mesmo raciocinio ja aplicado ao filtro `vagas` (ver aplicarFiltroVagas). Uma
+// janela estreita aplicada AQUI reduziria jobsInscritos junto com o publico, e uma
+// candidatura a vaga alvo de uma divulgacao FORA da janela deixaria de ser barrada pela
+// exclusao. O periodo e filtrado DEPOIS, em JS, sobre o conjunto inteiro — ver
+// aplicarFiltroPeriodo logo abaixo das duas funcoes de agrupamento.
+function coletarPessoas(deps = {}) {
   const db = deps.db || dbPadrao;
-  const janela = { dataDe: criterios.dataDe, dataAte: criterios.dataAte };
   const porTelefone = new Map();
 
   // ── CANDIDATOS ──
@@ -81,23 +111,13 @@ function coletarPessoas(deps = {}, criterios = {}) {
   // applications.cidade e orfa. E uma INFERENCIA, registrada como tal: a cidade de um
   // candidato e onde fica a vaga, nao onde ele mora. Para um recorte regional de processo
   // seletivo ela e o recorte certo, mas nao e o mesmo dado.
-  for (const linha of db.listarCandidatosParaCampanhaWhatsapp(janela)) {
+  for (const linha of db.listarCandidatosParaCampanhaWhatsapp()) {
     const telefone = normalizarTelefoneWhatsapp(linha.telefone);
     if (!telefone) continue;
     // ANTES de agrupar: um telefone corrompido nao pode nem entrar no Map, senao ele passa a
     // ser a chave de dedup de uma pessoa que deveria estar fora.
     if (!telefoneUtilizavel(telefone, `application ${linha.id}`)) continue;
-    if (!porTelefone.has(telefone)) {
-      porTelefone.set(telefone, {
-        telefone,
-        nome: null,
-        origemTipo: null,
-        origemId: null,
-        perfis: new Set(),
-        cidades: new Set(),
-        jobsInscritos: new Set(),
-      });
-    }
+    if (!porTelefone.has(telefone)) porTelefone.set(telefone, pessoaVazia(telefone));
     const p = porTelefone.get(telefone);
     // applications vence talentos na EXIBICAO (nome/origem), mesma precedencia dos outros
     // dois motores: o contexto vivo vale mais que o cadastro antigo.
@@ -110,30 +130,24 @@ function coletarPessoas(deps = {}, criterios = {}) {
     // Guarda TODAS as vagas em que a pessoa ja entrou — inclusive por outro telefone/e-mail,
     // porque o agrupamento aqui e por numero. Usado pela exclusao de divulgacao_vaga.
     if (linha.job_id) p.jobsInscritos.add(linha.job_id);
+    const data = apenasData(linha.criado_em);
+    if (data) p.datas.add(data);
   }
 
   // ── LEGADO ──
-  for (const linha of db.listarTalentosParaCampanhaWhatsapp(janela)) {
+  for (const linha of db.listarTalentosParaCampanhaWhatsapp()) {
     const telefone = normalizarTelefoneWhatsapp(linha.telefone);
     if (!telefone) continue;
     if (!telefoneUtilizavel(telefone, `talento ${linha.id}`)) continue;
-    if (!porTelefone.has(telefone)) {
-      porTelefone.set(telefone, {
-        telefone,
-        nome: null,
-        origemTipo: null,
-        origemId: null,
-        perfis: new Set(),
-        cidades: new Set(),
-        jobsInscritos: new Set(),
-      });
-    }
+    if (!porTelefone.has(telefone)) porTelefone.set(telefone, pessoaVazia(telefone));
     const p = porTelefone.get(telefone);
     // ATRIBUTOS antes da precedencia de exibicao: perfil e cidade sao da PESSOA e se
     // acumulam, mesmo quando a linha de applications vence o nome.
     if (linha.perfil_interesse) p.perfis.add(linha.perfil_interesse);
     const c = cidadeLimpa(linha.cidade);
     if (c) p.cidades.add(c);
+    const data = apenasData(linha.criado_em);
+    if (data) p.datas.add(data);
 
     if (p.origemTipo === 'application') continue;
     p.origemTipo = 'talento';
@@ -202,6 +216,28 @@ function aplicarFiltroVagas(pessoas, criterios) {
   return pessoas.filter((p) => [...p.jobsInscritos].some((jobId) => vagasSet.has(jobId)));
 }
 
+// ── FILTRO "PERIODO" (dataDe/dataAte) ──
+//
+// Irma de aplicarFiltroVagas, mesmo motivo estrutural: compara contra `datas` — TODAS as
+// datas (candidatura e/ou cadastro) em que aquele TELEFONE apareceu (ver coletarPessoas) —
+// e nao contra uma consulta ja recortada por janela. Se a janela fosse aplicada nas
+// consultas de origem (como o e-mail faz, e como esta funcao fazia ate o Incremento 1 desta
+// ETAPA), uma candidatura a vaga alvo de uma divulgacao FORA da janela sumiria de
+// jobsInscritos ANTES da exclusao "ja se candidatou a esta vaga" rodar, e deixaria de ser
+// barrada. Comparar `datas` (conjunto completo) DEPOIS do agrupamento, sem tocar
+// jobsInscritos, evita esse furo — o mesmo raciocinio de aplicarFiltroVagas, aplicado ao
+// eixo de tempo em vez de vaga.
+//
+// Dois extremos INCLUSIVOS, mesmo contrato do e-mail (condicoesFiltroCandidatos): basta UMA
+// data da pessoa cair dentro da janela para ela entrar — nao todas.
+function aplicarFiltroPeriodo(pessoas, criterios) {
+  const { dataDe, dataAte } = criterios;
+  if (!dataDe && !dataAte) return pessoas;
+  return pessoas.filter((p) =>
+    [...p.datas].some((data) => (!dataDe || data >= dataDe) && (!dataAte || data <= dataAte)),
+  );
+}
+
 // ══════════════════════════════════════════════════════════════
 // 1. CONVITE DE GRUPO
 // ══════════════════════════════════════════════════════════════
@@ -211,8 +247,9 @@ function aplicarFiltroVagas(pessoas, criterios) {
 // cidade" — ver acima — nem "incluir sem vaga": quem nao tem vaga (Base legada) ja sai pela
 // natureza do filtro (ver aplicarFiltroVagas).
 function listarPublicoConviteGrupo(criterios = {}, deps = {}) {
-  let pessoas = aplicarInvariantes(coletarPessoas(deps, criterios), deps);
+  let pessoas = aplicarInvariantes(coletarPessoas(deps), deps);
   pessoas = aplicarFiltroVagas(pessoas, criterios);
+  pessoas = aplicarFiltroPeriodo(pessoas, criterios);
 
   const passo = aplicarFiltroMulti(pessoas, {
     selecionados: Array.isArray(criterios.cidades) ? criterios.cidades.filter(Boolean) : [],
@@ -260,13 +297,15 @@ function listarPublicoDivulgacaoVaga(jobId, criterios = {}, deps = {}) {
     throw new Error('Divulgacao de vaga exige um job_id valido.');
   }
 
-  let pessoas = aplicarInvariantes(coletarPessoas(deps, criterios), deps);
+  let pessoas = aplicarInvariantes(coletarPessoas(deps), deps);
 
-  // Invariante: fora quem ja esta na vaga. ANTES do filtro `vagas` de proposito — sao
-  // perguntas independentes (uma exclui, a outra inclui), e jobsInscritos aqui e o mesmo
-  // conjunto COMPLETO usado pelas duas, pela razao documentada em aplicarFiltroVagas.
+  // Invariante: fora quem ja esta na vaga. ANTES dos filtros `vagas`/periodo de proposito —
+  // sao perguntas independentes (uma exclui, as outras recortam), e jobsInscritos aqui e o
+  // mesmo conjunto COMPLETO usado pelas tres, pela razao documentada em aplicarFiltroVagas e
+  // aplicarFiltroPeriodo.
   pessoas = pessoas.filter((p) => !p.jobsInscritos.has(alvo));
   pessoas = aplicarFiltroVagas(pessoas, criterios);
+  pessoas = aplicarFiltroPeriodo(pessoas, criterios);
 
   const passoCidade = aplicarFiltroMulti(pessoas, {
     selecionados: Array.isArray(criterios.cidades) ? criterios.cidades.filter(Boolean) : [],

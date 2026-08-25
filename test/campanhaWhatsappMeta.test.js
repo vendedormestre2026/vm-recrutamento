@@ -1162,6 +1162,27 @@ test('periodo + vagas juntos: periodo recorta a janela, vagas continua excluindo
   assert.deepEqual(tels(r), ['5547900000113']);
 });
 
+test('periodo + divulgacao (Incremento 2): a exclusao de "ja se candidatou ao ALVO" continua valendo mesmo quando essa candidatura cai FORA da janela de periodo', () => {
+  // Regressao simetrica a de vagas (Incremento 1): jobsInscritos usado pelo invariante
+  // "ja se candidatou a esta vaga" tem que vir do historico COMPLETO da pessoa, nao so das
+  // candidaturas que sobrevivem ao filtro de periodo — senao quem se candidatou ao ALVO
+  // muito antes da janela (mas a outra vaga DENTRO dela) deixaria de ser barrado.
+  zerarSeg();
+  const vagaRecente = vagaCom('Joinville');
+  const alvoAntigo = vagaCom('Joinville');
+  const telefone = '+55 47 90000-0116';
+  const idAntigo = candidatura(alvoAntigo, 'Candidatura Antiga', telefone);
+  const idRecente = candidatura(vagaRecente, 'Candidatura Antiga', telefone);
+  comCriadoEm('applications', idAntigo, '2025-01-01');   // MUITO antes da janela
+  comCriadoEm('applications', idRecente, '2026-06-15');  // dentro da janela
+
+  const r = publico.listarPublicoDivulgacaoVaga(alvoAntigo, { dataDe: '2026-06-01', dataAte: '2026-06-30' });
+  // Sem a candidatura antiga sumir de jobsInscritos por causa do filtro de periodo, a pessoa
+  // continua excluida da divulgacao do alvo que ja se candidatou — mesmo a candidatura em si
+  // estando fora da janela.
+  assert.deepEqual(tels(r), []);
+});
+
 // ══════════════════ montarUrlVaga parametrizado ══════════════════
 
 test('montarUrlVaga: o comportamento do E-MAIL nao mudou', () => {
