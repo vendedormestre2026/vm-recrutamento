@@ -229,9 +229,19 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
             .join(' · ') || '—'}
         </td>
         <td class="acoes-linha">
-          ${c.status !== 'ativa'
-            ? `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/status"><input type="hidden" name="status" value="ativa"><button class="btn">Ativar</button></form>`
-            : `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/status"><input type="hidden" name="status" value="pausada"><button class="btn btn--ghost">Pausar</button></form>`}
+          ${c.status === 'rascunho'
+            // Rascunho MATERIALIZA ao ativar — precisa ir para /disparar (que grava
+            // campanha_whatsapp_envios e so DEPOIS marca 'ativa'), nunca para /status. Bater
+            // em /status aqui e o bug do Incremento 16: a campanha virava 'ativa' sem nunca
+            // materializar (ver o comentario do guard em POST /:id/disparar).
+            ? `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/disparar"><button class="btn">Ativar</button></form>`
+            : c.status === 'ativa'
+            ? `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/status"><input type="hidden" name="status" value="pausada"><button class="btn btn--ghost">Pausar</button></form>`
+            : c.status === 'pausada'
+            // Pausada -> ativa NAO materializa de novo: a fila ja existe de quando a
+            // campanha foi disparada a primeira vez. /status e o caminho certo aqui.
+            ? `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/status"><input type="hidden" name="status" value="ativa"><button class="btn">Retomar</button></form>`
+            : `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/status"><input type="hidden" name="status" value="ativa"><button class="btn">Ativar</button></form>`}
         </td>
       </tr>`;
   };
@@ -832,9 +842,17 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     const c = Number.isInteger(id) && id > 0 ? db.obterCampanhaWhatsapp(id) : null;
     if (!c) return res.redirect('/admin/campanhas-whatsapp?erro=nao_encontrada');
 
-    // So rascunho dispara. Uma campanha ja ativa re-materializada acrescentaria gente nova a
-    // uma fila em andamento, sem ninguem pedir.
-    if (c.status !== 'rascunho') {
+    // Rascunho sempre dispara. Uma campanha ja 'ativa' so dispara se a fila ainda estiver
+    // VAZIA — o caso do bug corrigido no Incremento 16: o botao "Ativar" chamava so
+    // POST /:id/status (definirStatusCampanhaWhatsapp), que troca o status sem passar por
+    // aqui, deixando a campanha 'ativa' e sem nenhuma linha em campanha_whatsapp_envios. O
+    // botao ja foi corrigido para chamar esta rota quando parte de rascunho, mas campanhas
+    // que ja ficaram presas nesse estado (ex.: id=1, "Nova Vaga - Donna Conecta") precisam
+    // de uma saida sem SQL manual. Uma campanha 'ativa' com fila JA preenchida continua
+    // bloqueada: reprocessar acrescentaria gente nova a um envio em andamento, sem ninguem
+    // pedir — exatamente o risco que o guard original evitava.
+    const filaVazia = c.status === 'ativa' && db.contarEnviosCampanhaWhatsapp(id).length === 0;
+    if (c.status !== 'rascunho' && !filaVazia) {
       return res.redirect('/admin/campanhas-whatsapp?erro=status');
     }
 

@@ -1892,6 +1892,197 @@ test('POST /:id/disparar: materializa divulgacao_vaga corretamente a partir do q
   });
 });
 
+// ══════════════════ ETAPA B, Incremento 16: guard de /disparar relaxado + botao "Ativar" corrigido ══════════════════
+//
+// Bug original: o botao "Ativar" da lista chamava POST /:id/status para QUALQUER status
+// != 'ativa' (inclusive rascunho), e /status so troca a coluna — nunca materializa. Uma
+// campanha em rascunho "ativada" pelo botao antigo ficava com status='ativa' e
+// campanha_whatsapp_envios vazia PARA SEMPRE, porque /disparar (a unica rota que
+// materializa) recusava qualquer status != 'rascunho'. Caso real: campanha id=1
+// ("Nova Vaga - Donna Conecta").
+
+test('POST /:id/disparar (Incremento 16): campanha \'ativa\' com fila VAZIA materializa — destrava o caso do bug do botao antigo', async () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  candidatura(vagaCom('Joinville'), 'Candidato Valido', '+55 47 90000-0503'); // vaga DIFERENTE da alvo, mesma cidade
+  const { tid } = montarCenario();
+
+  await comAdmin(async (base, h) => {
+    await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Presa em ativa sem fila',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'divulgacao_vaga',
+        job_id: String(alvo),
+      }),
+      redirect: 'manual',
+    });
+    const nova = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Presa em ativa sem fila'");
+    assert.equal(nova.status, 'rascunho');
+
+    // Simula o bug do botao antigo: vira 'ativa' via /status, SEM passar por /disparar.
+    db.definirStatusCampanhaWhatsapp(nova.id, 'ativa');
+    assert.equal(uma('SELECT status FROM campanhas_whatsapp WHERE id = ?', nova.id).status, 'ativa');
+    assert.equal(todas('SELECT * FROM campanha_whatsapp_envios WHERE campanha_id = ?', nova.id).length, 0);
+
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/${nova.id}/disparar`, {
+      method: 'POST',
+      headers: h,
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.doesNotMatch(res.headers.get('location') || '', /erro=/);
+
+    const filaGravada = todas('SELECT * FROM campanha_whatsapp_envios WHERE campanha_id = ?', nova.id);
+    assert.equal(filaGravada.length, 1);
+    assert.equal(filaGravada[0].telefone, '5547900000503');
+    // iniciada_em, ja setado pelo /status simulado acima, nao e trocado (COALESCE).
+    assert.equal(uma('SELECT status FROM campanhas_whatsapp WHERE id = ?', nova.id).status, 'ativa');
+  });
+});
+
+test('POST /:id/disparar (Incremento 16): campanha \'ativa\' com fila JA preenchida continua bloqueada — nao reprocessa', async () => {
+  zerarSeg();
+  const { cid } = montarCenario(); // nasce 'ativa' (helper simplificado), sem materializar
+  adicionar(cid, '5547900000900', 'Ja Na Fila', 'Joinville');
+  assert.equal(fila(cid).length, 1);
+
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/${cid}/disparar`, {
+      method: 'POST',
+      headers: h,
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /erro=status/);
+    assert.equal(fila(cid).length, 1); // sem duplicar, sem reprocessar
+  });
+});
+
+test('POST /:id/disparar: campanha \'rascunho\' continua funcionando como sempre (regressao)', async () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  candidatura(vagaCom('Joinville'), 'Candidato Rascunho', '+55 47 90000-0505'); // vaga DIFERENTE da alvo, mesma cidade
+  const { tid } = montarCenario();
+
+  await comAdmin(async (base, h) => {
+    await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Rascunho normal',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'divulgacao_vaga',
+        job_id: String(alvo),
+      }),
+      redirect: 'manual',
+    });
+    const nova = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Rascunho normal'");
+    assert.equal(nova.status, 'rascunho');
+
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/${nova.id}/disparar`, {
+      method: 'POST',
+      headers: h,
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.doesNotMatch(res.headers.get('location') || '', /erro=/);
+    assert.equal(uma('SELECT status FROM campanhas_whatsapp WHERE id = ?', nova.id).status, 'ativa');
+    assert.equal(todas('SELECT * FROM campanha_whatsapp_envios WHERE campanha_id = ?', nova.id).length, 1);
+  });
+});
+
+test('admin: botao da lista roteia por status (Incremento 16) — rascunho -> /disparar, ativa -> /status pausada, pausada -> /status ativa', () => {
+  zerar();
+  const { tid, cid: cidAtiva } = montarCenario(); // nasce 'ativa'
+  const idRascunho = db.criarCampanhaWhatsapp({ nome: 'Rascunho X', templateId: tid, baseAlvo: 'ambos' });
+  const idPausada = db.criarCampanhaWhatsapp({ nome: 'Pausada X', templateId: tid, baseAlvo: 'ambos' });
+  db.definirStatusCampanhaWhatsapp(idPausada, 'pausada');
+
+  const html = montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt: (v) => String(v) });
+
+  assert.ok(html.includes(
+    `<form method="post" action="/admin/campanhas-whatsapp/${idRascunho}/disparar"><button class="btn">Ativar</button></form>`,
+  ));
+  assert.ok(html.includes(
+    `<form method="post" action="/admin/campanhas-whatsapp/${cidAtiva}/status"><input type="hidden" name="status" value="pausada"><button class="btn btn--ghost">Pausar</button></form>`,
+  ));
+  assert.ok(html.includes(
+    `<form method="post" action="/admin/campanhas-whatsapp/${idPausada}/status"><input type="hidden" name="status" value="ativa"><button class="btn">Retomar</button></form>`,
+  ));
+  // Nenhuma campanha rascunho/pausada aponta para /status com o proposito de ativar —
+  // so a 'ativa' de verdade posta para /status (e so para pausar).
+  assert.ok(!html.includes(`campanhas-whatsapp/${idRascunho}/status`));
+});
+
+test('admin: fluxo do botao "Ativar" em rascunho materializa E ativa numa chamada so (Incremento 16)', async () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  candidatura(vagaCom('Joinville'), 'Candidato Do Botao', '+55 47 90000-0504'); // vaga DIFERENTE da alvo, mesma cidade
+  const { tid } = montarCenario();
+
+  await comAdmin(async (base, h) => {
+    await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Campanha do botao',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'divulgacao_vaga',
+        job_id: String(alvo),
+      }),
+      redirect: 'manual',
+    });
+    const nova = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Campanha do botao'");
+    assert.equal(nova.status, 'rascunho');
+
+    // A lista precisa renderizar o botao "Ativar" apontando para /disparar (nao /status).
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    assert.ok(html.includes(`action="/admin/campanhas-whatsapp/${nova.id}/disparar"`));
+
+    // "Clica" no botao: POST direto na action renderizada.
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/${nova.id}/disparar`, {
+      method: 'POST', headers: h, redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.doesNotMatch(res.headers.get('location') || '', /erro=/);
+
+    assert.equal(uma('SELECT status FROM campanhas_whatsapp WHERE id = ?', nova.id).status, 'ativa');
+    const filaGravada = todas('SELECT * FROM campanha_whatsapp_envios WHERE campanha_id = ?', nova.id);
+    assert.equal(filaGravada.length, 1);
+    assert.equal(filaGravada[0].telefone, '5547900000504');
+  });
+});
+
+test('admin: fluxo do botao "Retomar" em pausada NAO materializa de novo — sem duplicar envios (Incremento 16)', async () => {
+  zerarSeg();
+  const { cid } = montarCenario(); // nasce 'ativa' (helper simplificado)
+  adicionar(cid, '5547900000905', 'Ja Enviado Antes', 'Joinville');
+  db.definirStatusCampanhaWhatsapp(cid, 'pausada');
+  assert.equal(fila(cid).length, 1);
+
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    assert.ok(html.includes(`action="/admin/campanhas-whatsapp/${cid}/status"`));
+    assert.match(html, /Retomar/);
+
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/${cid}/status`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ status: 'ativa' }),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.equal(uma('SELECT status FROM campanhas_whatsapp WHERE id = ?', cid).status, 'ativa');
+    assert.equal(fila(cid).length, 1); // sem duplicar
+  });
+});
+
 // ══════════════════ ETAPA B, Incremento 9: template inativo nao pode ser usado ══════════════════
 
 function criarTemplateAtivo(nomeMeta) {
