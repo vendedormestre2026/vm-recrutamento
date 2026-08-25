@@ -444,7 +444,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
           </select>
         </label>
         <button type="button" id="teste-btn-enviar" class="btn">Enviar teste real</button>
-        <div id="teste-resultado" style="margin-top:.8rem"></div>
+        <div id="teste-resultado" style="margin-top:.8rem;overflow-wrap:break-word"></div>
       </div>
     </details>
 
@@ -552,7 +552,11 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
             .then(function (r) { return r.json().then(function (corpo) { return { status: r.status, corpo: corpo }; }); })
             .then(function (res) {
               if (res.corpo && res.corpo.ok) {
-                mostrarAviso(resultadoDiv, 'aviso-ok', 'Enviado. wamid: ' + (res.corpo.wamid || '(sem id)'));
+                // O wamid (ID tecnico interno) NAO aparece mais na tela — e uma string longa
+                // sem espaços que estourava a largura da caixa e nao tem utilidade nenhuma
+                // pro operador. Continua disponivel no JSON de resposta (res.corpo.wamid) e
+                // nos logs do Railway, so nao e mais exibido aqui.
+                mostrarAviso(resultadoDiv, 'aviso-ok', 'Enviado com sucesso.');
               } else {
                 mostrarAviso(resultadoDiv, 'aviso-alerta', 'Falhou: ' + ((res.corpo && res.corpo.erro) || ('HTTP ' + res.status)));
               }
