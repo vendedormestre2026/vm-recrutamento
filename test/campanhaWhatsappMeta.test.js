@@ -287,6 +287,115 @@ test('o payload NAO leva language — o idioma e resolvido do lado de la', () =>
   assert.deepEqual(Object.keys(p.template), ['name']);
 });
 
+// ══════════════════ forcarEnvioReal (ETAPA B, envio avulso de teste) ══════════════════
+
+test('forcarEnvioReal=true: chama a rede mesmo com META_CAMPANHA_MOCK=true', async () => {
+  const original = process.env.META_CAMPANHA_MOCK;
+  const antesCred = {
+    base: process.env.CENTRALWHATS_BASE_URL,
+    inst: process.env.CENTRALWHATS_INSTANCE_ID,
+    key: process.env.CENTRALWHATS_API_KEY,
+  };
+  process.env.META_CAMPANHA_MOCK = 'true';
+  process.env.CENTRALWHATS_BASE_URL = 'https://exemplo-invalido.local';
+  process.env.CENTRALWHATS_INSTANCE_ID = 'instancia-de-teste';
+  process.env.CENTRALWHATS_API_KEY = 'chave-de-teste';
+  try {
+    let chamadas = 0;
+    let urlChamada = null;
+    const httpClient = async (url) => {
+      chamadas += 1;
+      urlChamada = url;
+      return { ok: true, json: async () => ({ wa_message_id: 'wamid-real-forcado' }) };
+    };
+    const { wamid, mock } = await transporte.enviarTemplate({
+      telefone: '5547999582500',
+      template: TEMPLATE,
+      variaveis: ['Ana'],
+      httpClient,
+      forcarEnvioReal: true,
+    });
+    // O KILL-SWITCH esta ligado (META_CAMPANHA_MOCK=true) e mesmo assim a rede foi chamada:
+    // e exatamente o furo que este parametro existe para abrir, so para ESTA chamada.
+    assert.equal(chamadas, 1, 'a rede TEM que ser chamada com forcarEnvioReal');
+    assert.match(urlChamada, /\/api\/instances\//);
+    assert.equal(mock, false);
+    assert.equal(wamid, 'wamid-real-forcado');
+  } finally {
+    if (original === undefined) delete process.env.META_CAMPANHA_MOCK;
+    else process.env.META_CAMPANHA_MOCK = original;
+    for (const [k, v] of [
+      ['CENTRALWHATS_BASE_URL', antesCred.base],
+      ['CENTRALWHATS_INSTANCE_ID', antesCred.inst],
+      ['CENTRALWHATS_API_KEY', antesCred.key],
+    ]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test('forcarEnvioReal ausente/false: comportamento mock de sempre, SEM chamar a rede (regressao)', async () => {
+  const original = process.env.META_CAMPANHA_MOCK;
+  process.env.META_CAMPANHA_MOCK = 'true';
+  try {
+    let chamadas = 0;
+    const httpClient = async () => {
+      chamadas += 1;
+      throw new Error('a rede nao pode ser tocada em mock');
+    };
+
+    const { r: semParametro } = await semRuido(() =>
+      transporte.enviarTemplate({ telefone: '5547999582500', template: TEMPLATE, variaveis: ['Ana'], httpClient }));
+    const { r: comFalseExplicito } = await semRuido(() =>
+      transporte.enviarTemplate({
+        telefone: '5547999582500', template: TEMPLATE, variaveis: ['Ana'], httpClient, forcarEnvioReal: false,
+      }));
+
+    // Nenhuma chamada existente no projeto passa forcarEnvioReal — este teste prova que a
+    // ausencia do parametro (job de disparo real) se comporta EXATAMENTE como antes.
+    assert.equal(chamadas, 0, 'nenhuma chamada de rede sem forcarEnvioReal');
+    assert.equal(semParametro.mock, true);
+    assert.equal(comFalseExplicito.mock, true);
+    assert.equal(semParametro.wamid, comFalseExplicito.wamid, 'mesmo wamid deterministico dos dois jeitos de "nao forcar"');
+  } finally {
+    if (original === undefined) delete process.env.META_CAMPANHA_MOCK;
+    else process.env.META_CAMPANHA_MOCK = original;
+  }
+});
+
+test('forcarEnvioReal=true SEM credenciais: lanca, nao finge sucesso nem cai no mock', async () => {
+  const original = process.env.META_CAMPANHA_MOCK;
+  const chaves = ['CENTRALWHATS_BASE_URL', 'CENTRALWHATS_INSTANCE_ID', 'CENTRALWHATS_API_KEY'];
+  const antes = chaves.map((k) => [k, process.env[k]]);
+  process.env.META_CAMPANHA_MOCK = 'true';
+  for (const k of chaves) delete process.env[k];
+  try {
+    let chamadas = 0;
+    await assert.rejects(
+      () => transporte.enviarTemplate({
+        telefone: '5547999582500',
+        template: TEMPLATE,
+        variaveis: ['Ana'],
+        httpClient: async () => {
+          chamadas += 1;
+          return { ok: true, json: async () => ({}) };
+        },
+        forcarEnvioReal: true,
+      }),
+      /Credenciais do Central Whats ausentes/,
+    );
+    assert.equal(chamadas, 0, 'sem credenciais, nem tenta chamar a rede');
+  } finally {
+    if (original === undefined) delete process.env.META_CAMPANHA_MOCK;
+    else process.env.META_CAMPANHA_MOCK = original;
+    for (const [k, v] of antes) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
 // ══════════════════ Botao estrutural do template ══════════════════
 //
 // O template aprovado tem um botao de URL DINAMICA, e a Graph API recusa com 131008

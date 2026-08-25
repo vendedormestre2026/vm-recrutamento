@@ -130,7 +130,21 @@ async function detalheDoErro(resposta) {
 }
 
 // Envia UM template. Devolve { wamid, mock }.
-async function enviarTemplate({ telefone, template, variaveis, httpClient } = {}) {
+//
+// `forcarEnvioReal` (ETAPA B, envio avulso de teste): default `false`, comportamento
+// IDENTICO ao de sempre — nenhuma chamada existente (o job de disparo, em particular) passa
+// este parametro, entao nenhuma delas muda de comportamento.
+//
+// ── POR QUE ISTO EXISTE, EM VEZ DE SETAR META_CAMPANHA_MOCK NO PROCESSO ──
+// src/scripts/teste-envio-unico-central-whats.js:14-19 ja documenta a saida que ESTE modulo
+// nao tinha: `process.env.META_CAMPANHA_MOCK = 'false'` funciona ali porque o script roda
+// num processo Node EFEMERO, que morre logo em seguida. O servidor admin e um processo de
+// VIDA LONGA — fazer o mesmo ali desligaria o mock para a campanha INTEIRA, ate o proximo
+// deploy, deixando o ciclo periodico a UM kill-switch de enviar de verdade sem ninguem ter
+// pedido isso. `forcarEnvioReal` resolve o mesmo problema (furar o mock para UM envio) sem
+// tocar em estado global: o override vale so para ESTA chamada, e o processo continua em
+// mock para todo o resto (inclusive o proximo ciclo do job, rodando no mesmo processo).
+async function enviarTemplate({ telefone, template, variaveis, httpClient, forcarEnvioReal = false } = {}) {
   if (!telefone) throw new Error('Destinatario de WhatsApp ausente.');
   if (!template || !template.nome_meta) throw new Error('Template sem nome_meta: nada a enviar.');
 
@@ -140,7 +154,10 @@ async function enviarTemplate({ telefone, template, variaveis, httpClient } = {}
   // Registra o que SAIRIA, com o telefone MASCARADO (o stdout do Railway e lido por mais
   // gente que o banco), e devolve um id falso para o fluxo inteiro poder ser exercitado sem
   // custo e sem gastar reputacao do numero.
-  if (modoMock()) {
+  //
+  // `forcarEnvioReal` ignora modoMock() de proposito: e a UNICA forma prevista de furar o
+  // kill-switch para uma chamada isolada, sem depender da env var do processo.
+  if (modoMock() && !forcarEnvioReal) {
     const wamid = wamidMock(telefone, template.nome_meta);
     console.log(
       `[central-whats] (mock) template '${template.nome_meta}' -> ${mascarar(telefone)} ` +
