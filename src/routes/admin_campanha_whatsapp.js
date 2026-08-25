@@ -121,6 +121,12 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
   const templates = db.listarTemplatesWhatsapp();
   const regioes = db.listarRegioesGrupos();
   const vagas = db.listarVagas();
+  // Vaga sendo DIVULGADA (Incremento 7): so ativas, mesmo recorte de admin_promocao.js
+  // (vagasAtivas). Distinto de `vagas` acima — aquele alimenta o filtro de SEGMENTACAO
+  // "ja se candidataram a" (Incremento 6), que faz sentido para vaga inativa tambem (gente
+  // se candidatou no passado a uma vaga que fechou depois). Divulgar uma vaga inativa,
+  // porem, nao faz sentido nenhum: seria convidar gente para se candidatar a algo fechado.
+  const vagasAtivas = vagas.filter((v) => v.ativo);
   const campanhas = db.listarCampanhasWhatsapp();
   const contagens = contagensPorCampanha();
   const ativo = campanha.ativo();
@@ -240,10 +246,22 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
             ${BASES_ALVO.map(([v, r]) => `<option value="${v}">${escapeHtml(r)}</option>`).join('')}
           </select>
         </label>
+        <label class="campo"><span>Tipo de mensagem</span>
+          <select name="tipo_mensagem" id="campo-tipo-mensagem">
+            ${TIPOS.map(([v, r]) => `<option value="${v}">${escapeHtml(r)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="campo" id="campo-vaga-alvo" hidden>
+          <span>Vaga sendo divulgada (obrigatório)</span>
+          <select name="job_id">
+            <option value="">Selecione a vaga…</option>
+            ${vagasAtivas.map((v) => `<option value="${v.id}">${escapeHtml(v.titulo || `Vaga ${v.id}`)} · ${escapeHtml(v.perfil)}</option>`).join('')}
+          </select>
+        </label>
 
         <div class="admin-filtros" style="align-items:flex-start;">
           <div class="filtro">
-            <span>Vaga (candidatura)</span>
+            <span>Já se candidataram a (opcional)</span>
             ${vagas.length
               ? checkboxes(escapeHtml, 'vaga', vagas.map((v) => [String(v.id), rotuloVaga(v)]), [])
                 + `<span style="display:block;color:var(--cinza);font-size:.78rem;margin-top:.35rem;text-transform:none;max-width:18rem">
@@ -270,6 +288,30 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
         <button type="submit" class="btn">Criar campanha</button>
       </form>
     </details>
+
+    <script>
+    (function () {
+      // Mostra/esconde "Vaga sendo divulgada" conforme o tipo de mensagem — mesmo mecanismo
+      // (propriedade .hidden, nao style.display) ja usado para paineis condicionais em
+      // admin.js (o toggle de abas). Nao ha precedente de um <select> disparando esse toggle
+      // no projeto; o addEventListener('change') e o proprio fallback sugerido.
+      var selTipo = document.getElementById('campo-tipo-mensagem');
+      var campoVagaAlvo = document.getElementById('campo-vaga-alvo');
+      if (!selTipo || !campoVagaAlvo) return;
+      var selVagaAlvo = campoVagaAlvo.querySelector('select');
+      function atualizar() {
+        var visivel = selTipo.value === 'divulgacao_vaga';
+        campoVagaAlvo.hidden = !visivel;
+        // disabled junto com hidden: um campo desabilitado NAO e enviado no submit, entao
+        // trocar de volta para "Convite de grupo" depois de ter escolhido uma vaga nao deixa
+        // um job_id perdido no body do POST — o proprio navegador ja garante o que o
+        // servidor valida de novo (defesa em profundidade, nao substitui a validacao la).
+        if (selVagaAlvo) selVagaAlvo.disabled = !visivel;
+      }
+      selTipo.addEventListener('change', atualizar);
+      atualizar();
+    })();
+    </script>
 
     <details class="bloco-card">
       <summary>Testar envio avulso</summary>
@@ -455,10 +497,27 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
       return res.redirect('/admin/campanhas-whatsapp?erro=dados');
     }
     const tipo = TIPOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
-    const jobId = Number(b.job_id);
-    // Divulgacao SEM vaga nao existe: a mensagem inteira e sobre ela.
-    if (tipo === 'divulgacao_vaga' && (!Number.isInteger(jobId) || jobId <= 0)) {
-      return res.redirect('/admin/campanhas-whatsapp?erro=vaga');
+
+    // Vaga-ALVO (a que a campanha DIVULGA — Incremento 7). Diferente do filtro de
+    // segmentacao "vaga" (Incremento 6, multi, "ja se candidataram a"): este e singular,
+    // obrigatorio SO em divulgacao_vaga, e vira NULL em convite_grupo mesmo que o body
+    // tenha mandado um job_id — um form mal preenchido (ou adulterado) nao pode gravar uma
+    // vaga-alvo numa campanha que a mensagem inteira nao menciona.
+    let jobId = null;
+    if (tipo === 'divulgacao_vaga') {
+      const jobIdBruto = Number(b.job_id);
+      // Divulgacao SEM vaga nao existe: a mensagem inteira e sobre ela.
+      if (!Number.isInteger(jobIdBruto) || jobIdBruto <= 0) {
+        return res.redirect('/admin/campanhas-whatsapp?erro=vaga');
+      }
+      const vagaAlvo = db.obterVaga(jobIdBruto);
+      // Vaga inexistente ou inativa: divulgar algo que nao existe (mais) ou que fechou seria
+      // convidar candidatos para uma porta fechada. O select do form ja so lista vagas
+      // ativas, mas o POST nao pode confiar so nisso — chega aqui tambem por form adulterado.
+      if (!vagaAlvo || !vagaAlvo.ativo) {
+        return res.redirect('/admin/campanhas-whatsapp?erro=vaga_invalida');
+      }
+      jobId = jobIdBruto;
     }
 
     const criterios = lerCriterios(b);
@@ -476,7 +535,7 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
       templateId,
       baseAlvo,
       tipoMensagem: tipo,
-      jobId: tipo === 'divulgacao_vaga' ? jobId : null,
+      jobId,
       totalEstimado: total,
       criterios,
     });

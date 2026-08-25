@@ -1046,7 +1046,9 @@ test('admin: form "Nova campanha" renderiza checkboxes de Vaga (titulo · perfil
 
   await comAdmin(async (base, h) => {
     const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
-    assert.match(html, /Vaga \(candidatura\)/);
+    // Rotulo renomeado no Incremento 7 para nao ser confundido com a vaga-ALVO da
+    // divulgacao ("Vaga sendo divulgada").
+    assert.match(html, /Já se candidataram a \(opcional\)/);
     // Checkbox de multi-selecao com name="vaga", MESMO padrao de name="cidade" ja usado.
     const reCheckbox = new RegExp(`<input type="checkbox" name="vaga" value="${j}">`);
     assert.match(html, reCheckbox);
@@ -1137,6 +1139,269 @@ test('admin: a tela tem a secao "Testar envio avulso" com busca, telefone, templ
     // Avisa que fura o mock, e nao grava campanha.
     assert.match(html, /ignora <code>META_CAMPANHA_MOCK<\/code>/);
     assert.match(html, /não grava em[\s\S]*campanha_whatsapp_envios/);
+  });
+});
+
+// ══════════════════ ETAPA B, Incremento 7: tipo_mensagem + vaga-alvo na UI ══════════════════
+
+test('admin: form "Nova campanha" renderiza o select de tipo e o campo de vaga-alvo (escondido por padrao)', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville', 'CLOSER');
+  montarCenario();
+  const tituloVaga = uma('SELECT titulo FROM jobs WHERE id = ?', j).titulo;
+
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    assert.match(html, /<select name="tipo_mensagem" id="campo-tipo-mensagem">/);
+    assert.match(html, /<option value="convite_grupo">/);
+    assert.match(html, /<option value="divulgacao_vaga">/);
+    // Campo da vaga-alvo: rotulo inconfundivel do de segmentacao, e escondido por padrao
+    // (nasce com `hidden`, so o JS de toggle mostra quando divulgacao_vaga for escolhido).
+    assert.match(html, /<label class="campo" id="campo-vaga-alvo" hidden>/);
+    assert.match(html, /Vaga sendo divulgada \(obrigatório\)/);
+    // So vaga ATIVA aparece no select-alvo (mesmo rotulo "titulo · perfil" de admin_promocao).
+    assert.match(html, new RegExp(`<option value="${j}">${escapeHtml(`${tituloVaga} · CLOSER`)}</option>`));
+    // O toggle e feito por JS (sem precedente de <select> disparando isso no projeto).
+    assert.match(html, /getElementById\('campo-tipo-mensagem'\)/);
+    assert.match(html, /addEventListener\('change', atualizar\)/);
+  });
+});
+
+test('admin: vaga INATIVA nao aparece no select da vaga-alvo, mas continua no checkbox de segmentacao', async () => {
+  zerarSeg();
+  const jInativa = vagaCom('Curitiba');
+  exec('UPDATE jobs SET ativo = 0 WHERE id = ?', jInativa);
+  montarCenario();
+  const tituloInativa = uma('SELECT titulo FROM jobs WHERE id = ?', jInativa).titulo;
+
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    // Nao esta entre as <option> do select de vaga-alvo...
+    assert.doesNotMatch(html, new RegExp(`<option value="${jInativa}">${escapeHtml(tituloInativa)}`));
+    // ...mas continua disponivel no checkbox de segmentacao (Incremento 6 nao mudou: quem
+    // se candidatou no passado a uma vaga que fechou depois continua um alvo valido).
+    assert.match(html, new RegExp(`<input type="checkbox" name="vaga" value="${jInativa}">`));
+  });
+});
+
+test('admin: POST / cria convite_grupo SEM vaga-alvo (sucesso, job_id NULL)', async () => {
+  zerar();
+  const { tid } = montarCenario();
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Convite sem vaga',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'convite_grupo',
+      }),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.doesNotMatch(res.headers.get('location') || '', /erro=/);
+  });
+  const linha = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Convite sem vaga'");
+  assert.ok(linha);
+  assert.equal(linha.tipo_mensagem, 'convite_grupo');
+  assert.equal(linha.job_id, null);
+});
+
+test('admin: POST / cria divulgacao_vaga COM vaga-alvo valida e ativa (sucesso)', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const { tid } = montarCenario();
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Divulgacao valida',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'divulgacao_vaga',
+        job_id: String(j),
+      }),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.doesNotMatch(res.headers.get('location') || '', /erro=/);
+  });
+  const linha = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Divulgacao valida'");
+  assert.ok(linha);
+  assert.equal(linha.tipo_mensagem, 'divulgacao_vaga');
+  assert.equal(linha.job_id, j);
+});
+
+test('admin: POST / divulgacao_vaga SEM job_id -> erro claro, nada gravado', async () => {
+  zerar();
+  const { tid } = montarCenario();
+  await comAdmin(async (base, h) => {
+    const antes = uma('SELECT COUNT(*) n FROM campanhas_whatsapp').n;
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Divulgacao sem vaga',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'divulgacao_vaga',
+        // job_id ausente de proposito
+      }),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /erro=vaga(?!_invalida)/);
+    assert.equal(uma('SELECT COUNT(*) n FROM campanhas_whatsapp').n, antes);
+  });
+});
+
+test('admin: POST / divulgacao_vaga com job_id de vaga INEXISTENTE -> erro claro, nada gravado', async () => {
+  zerar();
+  const { tid } = montarCenario();
+  await comAdmin(async (base, h) => {
+    const antes = uma('SELECT COUNT(*) n FROM campanhas_whatsapp').n;
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Divulgacao vaga fantasma',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'divulgacao_vaga',
+        job_id: '999999',
+      }),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /erro=vaga_invalida/);
+    assert.equal(uma('SELECT COUNT(*) n FROM campanhas_whatsapp').n, antes);
+  });
+});
+
+test('admin: POST / divulgacao_vaga com job_id de vaga INATIVA -> erro claro, nada gravado', async () => {
+  zerarSeg();
+  const jInativa = vagaCom('Joinville');
+  exec('UPDATE jobs SET ativo = 0 WHERE id = ?', jInativa);
+  const { tid } = montarCenario();
+
+  await comAdmin(async (base, h) => {
+    const antes = uma('SELECT COUNT(*) n FROM campanhas_whatsapp').n;
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Divulgacao vaga inativa',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'divulgacao_vaga',
+        job_id: String(jInativa),
+      }),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /erro=vaga_invalida/);
+    assert.equal(uma('SELECT COUNT(*) n FROM campanhas_whatsapp').n, antes);
+  });
+});
+
+test('admin: POST / convite_grupo IGNORA job_id perdido no body (form mal preenchido/adulterado)', async () => {
+  // O JS desabilita o campo quando escondido, mas o servidor nao pode confiar so nisso —
+  // este teste manda job_id de proposito com tipo_mensagem=convite_grupo (simulando um
+  // POST direto, sem passar pelo form) e confirma que a campanha nasce SEM vaga-alvo.
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const { tid } = montarCenario();
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Convite com job_id perdido',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'convite_grupo',
+        job_id: String(j),
+      }),
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.doesNotMatch(res.headers.get('location') || '', /erro=/);
+  });
+  const linha = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Convite com job_id perdido'");
+  assert.ok(linha);
+  assert.equal(linha.job_id, null, 'job_id nao pode vazar para uma campanha convite_grupo');
+});
+
+test('POST /previa: divulgacao_vaga sem job_id devolve erro JSON claro (nao 500)', async () => {
+  zerar();
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/previa`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ tipo_mensagem: 'divulgacao_vaga' }),
+    });
+    assert.equal(res.status, 400);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, false);
+    assert.match(corpo.erro, /job_id valido/);
+  });
+});
+
+test('POST /previa: divulgacao_vaga com job_id valido devolve total (mesmo caminho do motor)', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  candidatura(vagaCom('Joinville'), 'Fora da vaga alvo', '+55 47 90000-0500');
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/previa`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ tipo_mensagem: 'divulgacao_vaga', job_id: String(j) }),
+    });
+    assert.equal(res.status, 200);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, true);
+    assert.equal(corpo.tipo, 'divulgacao_vaga');
+    assert.equal(corpo.total, 1);
+  });
+});
+
+test('POST /:id/disparar: materializa divulgacao_vaga corretamente a partir do que foi persistido na criacao', async () => {
+  zerarSeg();
+  const alvo = vagaCom('Joinville');
+  candidatura(alvo, 'Ja Candidatou', '+55 47 90000-0501'); // excluido pela invariante
+  candidatura(vagaCom('Joinville'), 'Candidato Valido', '+55 47 90000-0502');
+  const { tid } = montarCenario();
+
+  await comAdmin(async (base, h) => {
+    await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        nome: 'Divulgacao para disparar',
+        template_id: String(tid),
+        base_alvo: 'ambos',
+        tipo_mensagem: 'divulgacao_vaga',
+        job_id: String(alvo),
+      }),
+      redirect: 'manual',
+    });
+    const nova = uma("SELECT * FROM campanhas_whatsapp WHERE nome = 'Divulgacao para disparar'");
+    assert.equal(nova.tipo_mensagem, 'divulgacao_vaga');
+    assert.equal(nova.job_id, alvo);
+
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/${nova.id}/disparar`, {
+      method: 'POST',
+      headers: h,
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.doesNotMatch(res.headers.get('location') || '', /erro=/);
+
+    const fila = todas('SELECT * FROM campanha_whatsapp_envios WHERE campanha_id = ?', nova.id);
+    assert.equal(fila.length, 1);
+    assert.equal(fila[0].telefone, '5547900000502');
   });
 });
 
