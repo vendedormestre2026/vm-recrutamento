@@ -18,6 +18,30 @@
 
 const db = require('../db');
 
+// ── KILL-SWITCH DEDICADO (Incremento B3) ──
+//
+// Mesmo padrao de TODAS as outras varreduras do projeto (limpezaAudio.js, emailRecusa.js,
+// sequenciaOutbox.js, dispararPromocao.js, campanhaWhatsapp.js): uma chave em
+// `configuracoes` (tabela key/value: chave TEXT PRIMARY KEY, valor TEXT — '1'/'0'), lida
+// via db.obterConfigBool(chave, padrao) e escrita via db.definirConfigBool. Nao exige
+// migracao nenhuma: uma chave ausente devolve o `padrao` sozinha, ja com o comportamento
+// de "desligado" antes mesmo de a linha existir na tabela.
+//
+// PROPOSITALMENTE UMA CHAVE PROPRIA — NAO reutiliza WHATSAPP_BAILEYS_ATIVO (env) nem
+// whatsapp_sequencia_ativa (config de banco do WA1/WA2). As duas ja estao LIGADAS em
+// producao para a sequencia existente; usa-las aqui faria esta automacao NOVA, ainda sem
+// copy aprovada nem validacao nenhuma, nascer ativa por acidente no mesmo instante do
+// deploy. `automacao_reprovacao_whatsapp_ativa` comeca 'false' e so o Rafael liga, quando
+// decidir — e o INTERRUPTOR CHECADO em agendarMensagemReprovacao, no momento do
+// AGENDAMENTO (nao do envio; o envio em si continua atras de whatsapp_sequencia_ativa e
+// WHATSAPP_BAILEYS_ATIVO tambem, exatamente como wa1/wa2 ja funcionam).
+const CHAVE_ATIVO = 'automacao_reprovacao_whatsapp_ativa';
+
+function ativo(deps = {}) {
+  const dbRef = deps.db || db;
+  return dbRef.obterConfigBool(CHAVE_ATIVO, false);
+}
+
 // ── 'aprovado': NENHUMA escrita adicional, de proposito ──
 //
 // A supressao de disparo automatico/em massa (WA1/WA2, campanha, esta propria automacao de
@@ -42,12 +66,13 @@ function aplicarDecisaoRecrutador(applicationId, novoValor) {
   return gravado;
 }
 
-// TODO (Incremento B4): corpo real ainda por vir — kill-switch dedicado (Incremento B3) +
-// insercao idempotente em whatsapp_sequencia_envios (etapa='reprovacao'), mesmo padrao de
-// agendarSequencia em whatsapp/sequenciaOutbox.js. Por ora e um no-op: aplicarDecisaoRecrutador
-// ja chama esta funcao (o CALL SITE nasce certo desde este incremento), so o EFEITO ainda
-// nao existe — gravar o status continua sendo, ate o B4 entrar, a unica coisa que acontece
-// de verdade quando o recrutador marca 'reprovado'.
+// TODO (Incremento B4): corpo real ainda por vir — checar ativo() (kill-switch acima,
+// Incremento B3) e, se ligado, insercao idempotente em whatsapp_sequencia_envios
+// (etapa='reprovacao'), mesmo padrao de agendarSequencia em whatsapp/sequenciaOutbox.js.
+// Por ora e um no-op incondicional (nem chega a checar ativo() ainda): o CALL SITE ja
+// existe (Incremento B2), a chave ja existe (Incremento B3), so a LIGACAO entre as duas
+// falta — gravar o status continua sendo, ate o B4 entrar, a unica coisa que acontece de
+// verdade quando o recrutador marca 'reprovado'.
 function agendarMensagemReprovacao(applicationId) {
   return { agendado: false, motivo: 'agendamento ainda nao implementado (Incremento B4)' };
 }
@@ -55,4 +80,6 @@ function agendarMensagemReprovacao(applicationId) {
 module.exports = {
   aplicarDecisaoRecrutador,
   agendarMensagemReprovacao,
+  ativo,
+  CHAVE_ATIVO,
 };
