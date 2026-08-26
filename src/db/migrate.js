@@ -7,6 +7,7 @@
 const { config } = require('../config');
 const { aplicarSchema, getDb } = require('./sqlite');
 const { chave } = require('../lib/cidades');
+const { normalizarSlug } = require('../lib/slug');
 
 // Vocabulario ORIGINAL de lib/cidades.CIDADES_VALIDAS antes da migracao (Incremento 4) do
 // array congelado para a tabela `cidades`. Preservado aqui, e SO aqui, como semente
@@ -450,12 +451,64 @@ function migrar() {
     }
   }
 
+  // ── regioes_grupos_whatsapp.slug — link curto de convite (GET /grupo/:slug) ──
+  //
+  // Coluna nasce TEXT solta (nao "TEXT UNIQUE" no ADD COLUMN): SQLite recusa isso —
+  // "Cannot add a UNIQUE column" — a mesma restricao que reports.token, poucas linhas
+  // abaixo, ja contorna. A unicidade real vem do indice unico criado no bloco de indices
+  // logo depois deste, mesmo padrao de idx_reports_token.
+  adicionarColunaSeFaltar('regioes_grupos_whatsapp', 'slug', 'TEXT');
+
+  // Backfill idempotente: so toca linha SEM slug (coluna recem-criada acima, ou praca
+  // cadastrada por um binario anterior a este incremento). normalizarSlug vem de
+  // lib/slug.js — a MESMA normalizacao do slug de vaga, e a razao de existir aquele
+  // modulo compartilhado em vez de reescrever a regra aqui.
+  //
+  // Colisao (duas cidades cujo nome normaliza pro mesmo slug) e tratada igual a
+  // gerarSlugUnico de routes/admin.js: anexa -2, -3... A checagem e contra o Set
+  // `existentes`, que acumula tanto os slugs ja gravados quanto os que este proprio loop
+  // acabou de atribuir — sem isso, duas linhas novas colidindo entre si passariam pelo
+  // teste (nenhuma das duas estava no banco ainda) e o UNIQUE do indice abaixo derrubaria
+  // o boot.
+  {
+    const conexaoSlug = getDb();
+    const semSlug = conexaoSlug
+      .prepare('SELECT id, cidade FROM regioes_grupos_whatsapp WHERE slug IS NULL')
+      .all();
+    if (semSlug.length) {
+      const existentes = new Set(
+        conexaoSlug
+          .prepare('SELECT slug FROM regioes_grupos_whatsapp WHERE slug IS NOT NULL')
+          .all()
+          .map((linha) => linha.slug),
+      );
+      const atualizar = conexaoSlug.prepare('UPDATE regioes_grupos_whatsapp SET slug = ? WHERE id = ?');
+      for (const linha of semSlug) {
+        const base = normalizarSlug(linha.cidade) || `praca-${linha.id}`;
+        let candidato = base;
+        let n = 2;
+        while (existentes.has(candidato)) {
+          candidato = `${base}-${n}`;
+          n += 1;
+        }
+        existentes.add(candidato);
+        atualizar.run(candidato, linha.id);
+      }
+      console.log(
+        `[migrate] regioes_grupos_whatsapp: slug preenchido para ${semSlug.length} linha(s).`,
+      );
+    }
+  }
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();
   db.exec('CREATE INDEX IF NOT EXISTS idx_vaga_acessos_utm ON vaga_acessos(utm_source)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_token ON reports(token)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_reports_interview ON reports(interview_id)');
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_regioes_grupos_whatsapp_slug ON regioes_grupos_whatsapp(slug)',
+  );
 
   return config.caminhoBanco;
 }

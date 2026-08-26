@@ -17,6 +17,9 @@ const { config } = require('../config');
 // e pode passar a depender de ../db amanha, fechando um ciclo db -> lib -> db que, em
 // CommonJS, nao falha no require e sim em runtime.
 const { normalizarEmail } = require('../lib/normalizarEmail');
+// Mesmo raciocinio do require acima: lib/slug e modulo-FOLHA (nenhum require proprio),
+// entao importa-lo aqui nao abre ciclo nenhum.
+const { normalizarSlug } = require('../lib/slug');
 
 let _db = null;
 
@@ -3181,10 +3184,32 @@ function criarCidade(nome, chaveNorm) {
 // e nao o link estar preenchido, que faz a praca aparecer em /admin/campanhas-whatsapp
 // como pendente. Sem esta linha, uma campanha de convite para a praca nova falharia com
 // "sem link de grupo" sem que o admin tivesse onde ver ou preencher isso.
+// Slug URL-safe da praca (GET /grupo/:slug, routes/pages.js), unico por linha. Colisao
+// (duas cidades cujo nome normaliza pro mesmo slug) resolve como gerarSlugUnico de
+// routes/admin.js: anexa -2, -3... Mesma logica do backfill em migrate.js, repetida aqui
+// (e nao extraida) porque as duas rodam contra tabelas/momentos diferentes — uma insere
+// UMA linha nova, a outra corrige um banco inteiro no boot.
+function slugUnicoRegiaoGrupo(cidade, idExcluido) {
+  const base = normalizarSlug(cidade) || 'praca';
+  const jaExiste = (candidato) => {
+    const linha = idExcluido
+      ? getDb().prepare('SELECT 1 FROM regioes_grupos_whatsapp WHERE slug = ? AND id != ?').get(candidato, idExcluido)
+      : getDb().prepare('SELECT 1 FROM regioes_grupos_whatsapp WHERE slug = ?').get(candidato);
+    return Boolean(linha);
+  };
+  let candidato = base;
+  let n = 2;
+  while (jaExiste(candidato)) {
+    candidato = `${base}-${n}`;
+    n += 1;
+  }
+  return candidato;
+}
+
 function criarRegiaoGrupo(cidade, link) {
   const info = getDb()
-    .prepare('INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, ativo) VALUES (?, ?, 1)')
-    .run(cidade, String(link || '').trim() || null);
+    .prepare('INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, ativo, slug) VALUES (?, ?, 1, ?)')
+    .run(cidade, String(link || '').trim() || null, slugUnicoRegiaoGrupo(cidade));
   return Number(info.lastInsertRowid);
 }
 
@@ -3199,6 +3224,18 @@ function obterLinkGrupo(cidade) {
   const linha = getDb()
     .prepare('SELECT link_convite_grupo FROM regioes_grupos_whatsapp WHERE cidade = ? AND ativo = 1')
     .get(cidade);
+  const link = linha && String(linha.link_convite_grupo || '').trim();
+  return link || null;
+}
+
+// Mesmo contrato de obterLinkGrupo (link ou null; praca inexistente, inativa ou sem link
+// colapsam no mesmo null), so que por `slug` em vez de `cidade` — e a consulta de
+// GET /grupo/:slug (routes/pages.js). A rota nao precisa distinguir "slug nao existe" de
+// "existe mas sem link": os dois casos respondem 404 do mesmo jeito.
+function obterLinkGrupoPorSlug(slug) {
+  const linha = getDb()
+    .prepare('SELECT link_convite_grupo FROM regioes_grupos_whatsapp WHERE slug = ? AND ativo = 1')
+    .get(slug);
   const link = linha && String(linha.link_convite_grupo || '').trim();
   return link || null;
 }
@@ -3490,6 +3527,7 @@ module.exports = {
   criarRegiaoGrupo,
   listarRegioesGrupos,
   obterLinkGrupo,
+  obterLinkGrupoPorSlug,
   definirLinkGrupo,
   criarCampanhaWhatsapp,
   listarCampanhasWhatsapp,

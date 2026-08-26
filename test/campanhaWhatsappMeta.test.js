@@ -123,7 +123,8 @@ test('as cinco tabelas existem com as colunas esperadas', () => {
   const esperado = {
     // botao_parametro_fixo entrou com o botao estrutural exigido pela Graph API.
     templates_whatsapp: ['id', 'nome_meta', 'idioma', 'categoria', 'variaveis', 'botao_parametro_fixo', 'ativo', 'criado_em', 'atualizado_em'],
-    regioes_grupos_whatsapp: ['id', 'cidade', 'link_convite_grupo', 'ativo', 'criado_em', 'atualizado_em'],
+    // slug entrou com o link curto de convite (GET /grupo/:slug).
+    regioes_grupos_whatsapp: ['id', 'cidade', 'link_convite_grupo', 'slug', 'ativo', 'criado_em', 'atualizado_em'],
     // tipo_mensagem/job_id/total_estimado entraram na extensao de dois tipos de campanha.
     campanhas_whatsapp: ['id', 'nome', 'template_id', 'base_alvo', 'tipo_mensagem', 'job_id', 'total_estimado', 'criterios_json', 'status', 'criado_em', 'iniciada_em', 'concluida_em'],
     campanha_whatsapp_envios: ['id', 'campanha_id', 'telefone', 'nome', 'origem_tipo', 'origem_id', 'cidade', 'status', 'wamid', 'enviado_em', 'erro', 'tentativas', 'criado_em'],

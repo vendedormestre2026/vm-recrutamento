@@ -580,10 +580,18 @@ CREATE TABLE IF NOT EXISTS cidades (
 -- `link_convite_grupo` e NULLABLE de proposito: as linhas nascem vazias e o operador
 -- preenche pela tela. Praca sem link nao pode receber campanha, e o job trata isso como
 -- erro DAQUELE envio (nao do ciclo) — ver lib/campanhaWhatsapp.
+--
+-- `slug` e o identificador URL-safe da praca (GET /grupo/:slug, routes/pages.js): gerado a
+-- partir de `cidade` via lib/slug.normalizarSlug no momento em que a linha nasce
+-- (routes/admin.js) e, para linhas anteriores a esta coluna, no backfill idempotente de
+-- migrate.js. TEXT solto aqui (nao "TEXT UNIQUE") porque SQLite recusa UNIQUE em ADD
+-- COLUMN — a unicidade de verdade vem do indice criado em migrate.js (mesmo padrao de
+-- reports.token, poucas tabelas acima).
 CREATE TABLE IF NOT EXISTS regioes_grupos_whatsapp (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   cidade             TEXT NOT NULL UNIQUE,
   link_convite_grupo TEXT,
+  slug               TEXT,
   ativo              INTEGER NOT NULL DEFAULT 1,
   criado_em          TEXT NOT NULL DEFAULT (datetime('now')),
   atualizado_em      TEXT

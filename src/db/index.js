@@ -193,6 +193,7 @@ module.exports = {
   criarRegiaoGrupo: driver.criarRegiaoGrupo,
   listarRegioesGrupos: driver.listarRegioesGrupos,
   obterLinkGrupo: driver.obterLinkGrupo,
+  obterLinkGrupoPorSlug: driver.obterLinkGrupoPorSlug,
   definirLinkGrupo: driver.definirLinkGrupo,
   criarCampanhaWhatsapp: driver.criarCampanhaWhatsapp,
   listarCampanhasWhatsapp: driver.listarCampanhasWhatsapp,
