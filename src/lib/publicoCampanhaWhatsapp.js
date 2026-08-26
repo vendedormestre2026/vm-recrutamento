@@ -44,8 +44,22 @@ const { telefoneUtilizavel } = require('./publicoDisparoWhatsapp');
 //   2. sem cidade resolvivel  -> nao ha praca, logo nao ha link de grupo nem recorte;
 //   3. sentinela 'Todas as cidades' -> ver a nota abaixo;
 //   4. em whatsapp_opt_out;
-//   5. duplicata por telefone;
-//   6. (so em divulgacao_vaga) ja se candidatou AQUELA vaga.
+//   5. suprimido por aprovacao (ETAPA B, Incremento B6) — telefone cuja candidatura MAIS
+//      RECENTE foi aprovada (db.telefoneSuprimidoPorAprovacao, mesma logica do Incremento
+//      B1/B5). Quem ja foi aprovado nao deve receber convite de grupo nem divulgacao de
+//      OUTRA vaga;
+//   6. duplicata por telefone;
+//   7. (so em divulgacao_vaga) ja se candidatou AQUELA vaga.
+//
+// ── POR QUE ISTO NAO ENTRA NO OBJETIVO 3 (STATUS DA CANDIDATURA) ──
+// listarPublicoStatusCandidatura, mais abaixo, tem a SUA PROPRIA logica de publico e
+// DELIBERADAMENTE nao chama aplicarInvariantes. Suprimir por aprovacao ali seria o oposto
+// do que a funcao existe para fazer: aquele objetivo de campanha e exatamente o mecanismo
+// de avisar "sua candidatura foi aprovada" a quem foi aprovado — aplicar a mesma supressao
+// la tornaria IMPOSSIVEL notificar qualquer aprovacao, o unico status_recrutador capaz de
+// suprimir alguem em primeiro lugar. As invariantes desta secao (1-7) valem so para os
+// objetivos 1 e 2 (convite de grupo, divulgacao de vaga) — mensagens genericas, nao a
+// comunicacao do proprio resultado.
 
 // ── POR QUE O SENTINELA NAO ENTRA ──
 // 'Todas as cidades' marca uma PESSOA presente em qualquer praca (531 no legado). No motor de
@@ -161,9 +175,18 @@ function coletarPessoas(deps = {}) {
 function aplicarInvariantes(pessoas, deps = {}) {
   const db = deps.db || dbPadrao;
   const optOut = db.listarTelefonesOptOutWhatsapp();
+  // Mapa telefone -> status_recrutador MAIS RECENTE, UMA varredura pra chamada inteira —
+  // nao telefoneSuprimidoPorAprovacao por pessoa (que reconstruiria o mesmo mapa a cada
+  // chamada: O(pessoas x candidaturas) em vez de O(candidaturas) uma vez). `p.telefone` ja
+  // vem NORMALIZADO de coletarPessoas (normalizarTelefoneWhatsapp), mesma chave que o mapa
+  // usa — ver o comentario de mapaStatusRecrutadorPorTelefone em sqlite.js.
+  const statusPorTelefone = db.mapaStatusRecrutadorPorTelefone();
 
   return pessoas.filter((p) => {
     if (optOut.has(p.telefone)) return false;
+    // Suprimido por aprovacao (ETAPA B, Incremento B6): mesma logica do Incremento B1/B5,
+    // agora batida em lote — ver o comentario acima.
+    if (statusPorTelefone.get(p.telefone) === 'aprovado') return false;
     // Sentinela fora, e "sem cidade" fora: os dois impedem resolver uma praca, e sem praca
     // nao ha recorte nem link. Sem checkbox de "incluir sem cidade" — aqui isso nao e uma
     // preferencia, e a diferenca entre poder e nao poder montar a mensagem.

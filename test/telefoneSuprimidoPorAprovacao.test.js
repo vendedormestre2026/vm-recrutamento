@@ -79,3 +79,24 @@ test('desempate por id quando duas candidaturas tem o MESMO criado_em: a de id m
   aplicacao({ telefone: tel, statusRecrutador: 'aprovado', criadoEm: mesmoInstante });
   assert.equal(db.telefoneSuprimidoPorAprovacao(tel), true);
 });
+
+// Regressao: a primeira versao desta funcao (antes do Incremento B6) comparava por
+// IGUALDADE EXATA da string gravada em applications.telefone, sem normalizar. Bateu um bug
+// real quando lib/publicoCampanhaWhatsapp.js (que agrupa pessoas por telefone JA
+// NORMALIZADO) passou a chamar esta funcao — o valor normalizado nunca batia com o bruto
+// gravado, e ninguem era suprimido nunca. Estes dois testes fixam o comportamento correto:
+// a funcao aceita QUALQUER formato reconhecido por normalizarTelefoneRecebido — bruto OU
+// ja normalizado.
+test('aceita telefone gravado com formatacao (espacos/parenteses/hifen), consultado por qualquer formato equivalente', () => {
+  const tel = '+55 (47) 90000-0006';
+  aplicacao({ telefone: tel, statusRecrutador: 'aprovado', criadoEm: '2026-08-01 10:00:00' });
+  // Mesmo numero, formato DIFERENTE do gravado (normalizado, sem +, sem formatacao) — o
+  // formato que lib/publicoCampanhaWhatsapp.js realmente usa pra consultar.
+  assert.equal(db.telefoneSuprimidoPorAprovacao('5547900000006'), true);
+});
+
+test('candidatura gravada em formato normalizado, consultada com o telefone bruto/formatado: ainda bate', () => {
+  const telNormalizado = '5547900000007';
+  aplicacao({ telefone: telNormalizado, statusRecrutador: 'aprovado', criadoEm: '2026-08-01 10:00:00' });
+  assert.equal(db.telefoneSuprimidoPorAprovacao('+55 47 90000-0007'), true);
+});

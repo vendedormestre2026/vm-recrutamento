@@ -20,6 +20,18 @@ const { normalizarEmail } = require('../lib/normalizarEmail');
 // Mesmo raciocinio do require acima: lib/slug e modulo-FOLHA (nenhum require proprio),
 // entao importa-lo aqui nao abre ciclo nenhum.
 const { normalizarSlug } = require('../lib/slug');
+// lib/whatsapp tambem e modulo-FOLHA (nenhum require proprio) — usado por
+// mapaStatusRecrutadorPorTelefone/statusRecrutadorMaisRecente pra normalizar telefone
+// antes de comparar (ver o comentario extenso naquelas funcoes).
+//
+// normalizarTelefoneRecebido, e NAO normalizarTelefoneWhatsapp: esta ultima NAO e
+// idempotente sobre o proprio resultado (um valor JA normalizado, sem '+', leva um DDI 55
+// extra na frente — "5547999582500" -> "555547999582500"). normalizarTelefoneRecebido
+// detecta "ja tem DDI 55" antes de decidir se prefixa, entao aceita tanto um telefone JA
+// normalizado (o que lib/publicoCampanhaWhatsapp.js usa) quanto um bruto com formatacao (o
+// que applications.telefone guarda, com '+') e devolve o MESMO resultado pros dois — mesmo
+// padrao ja usado pra ler a fila em whatsapp/sequenciaOutbox.js.
+const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 
 let _db = null;
 
@@ -753,26 +765,51 @@ function definirStatusRecrutador(applicationId, valor) {
   return final;
 }
 
-// status_recrutador da candidatura MAIS RECENTE de UM telefone (maior criado_em; `id`
-// como desempate para duas linhas gravadas no mesmo segundo). null quando o telefone nao
-// tem nenhuma candidatura — nao e "reprovado" nem "aprovado", e ausencia de dado.
+// Mapa NORMALIZADO telefone -> status_recrutador da candidatura MAIS RECENTE daquele
+// telefone (maior criado_em; `id` como desempate para duas linhas gravadas no mesmo
+// segundo). UMA varredura da tabela inteira (nao uma consulta por telefone) — pensado pra
+// quem precisa checar VARIOS telefones de uma vez (aplicarInvariantes, em
+// lib/publicoCampanhaWhatsapp.js): uma chamada por pessoa custaria uma consulta O(pessoas
+// x candidaturas); isto e O(candidaturas) uma vez, depois lookup O(1) por pessoa.
 //
-// Comparacao e por IGUALDADE EXATA de `telefone` (a string tal como esta gravada em
-// applications) — sem normalizar aqui. Cada chamador ja tem o valor no mesmo formato de
-// applications.telefone (a propria linha, no caso de telefoneSuprimidoPorAprovacao abaixo;
-// `a.telefone` da linha ja joinada, nos chamadores em SQL) — normalizar de novo aqui so
-// arriscaria criar um SEGUNDO criterio de "mesmo numero" divergente do que a coluna guarda.
+// ── POR QUE NORMALIZADO, E NAO IGUALDADE EXATA DE applications.telefone ──
+// A primeira versao desta funcao (Incremento B1) comparava por igualdade EXATA da string
+// gravada, assumindo que todo chamador ja tinha o telefone no mesmo formato da coluna. Isso
+// quebrou no Incremento B6: lib/publicoCampanhaWhatsapp.js agrupa pessoas por telefone
+// NORMALIZADO (normalizarTelefoneWhatsapp) de proposito — e a chave de dedup do modulo
+// inteiro, unificando "+55 47 99958-2500" e "5547999582500" como a MESMA pessoa — e nao
+// existe mais NENHUM telefone bruto guardado ali para comparar igual-a-igual. Normalizar os
+// dois lados aqui e o unico jeito de as tres consultas desta ETAPA (esta, a subquery SQL de
+// listarPendentesSequenciaWhatsapp e aplicarInvariantes) concordarem sobre "mesmo numero".
+function mapaStatusRecrutadorPorTelefone() {
+  const linhas = getDb()
+    .prepare('SELECT id, telefone, status_recrutador, criado_em FROM applications WHERE telefone IS NOT NULL')
+    .all();
+  const maisRecentePorTelefone = new Map();
+  for (const linha of linhas) {
+    const normalizado = normalizarTelefoneRecebido(linha.telefone);
+    if (!normalizado) continue;
+    const atual = maisRecentePorTelefone.get(normalizado);
+    const estaMaisRecente =
+      !atual ||
+      linha.criado_em > atual.criado_em ||
+      (linha.criado_em === atual.criado_em && linha.id > atual.id);
+    if (estaMaisRecente) maisRecentePorTelefone.set(normalizado, linha);
+  }
+  const porStatus = new Map();
+  for (const [telefone, linha] of maisRecentePorTelefone) porStatus.set(telefone, linha.status_recrutador);
+  return porStatus;
+}
+
+// null quando o telefone nao normaliza ou nao tem nenhuma candidatura — nao e "reprovado"
+// nem "aprovado", e ausencia de dado. Aceita telefone bruto (com/sem +, com/sem
+// formatacao) OU ja normalizado (o formato que lib/publicoCampanhaWhatsapp.js usa) —
+// normalizarTelefoneRecebido e idempotente sobre o proprio resultado, ver o require acima.
 function statusRecrutadorMaisRecente(telefone) {
-  if (!telefone) return null;
-  const linha = getDb()
-    .prepare(
-      `SELECT status_recrutador FROM applications
-        WHERE telefone = ?
-        ORDER BY criado_em DESC, id DESC
-        LIMIT 1`,
-    )
-    .get(telefone);
-  return linha ? linha.status_recrutador : null;
+  const alvo = normalizarTelefoneRecebido(telefone);
+  if (!alvo) return null;
+  const valor = mapaStatusRecrutadorPorTelefone().get(alvo);
+  return valor === undefined ? null : valor;
 }
 
 // ── SUPRESSAO POR APROVACAO (ETAPA B) ──
@@ -3724,6 +3761,7 @@ module.exports = {
   obterStatusIaPorApplication,
   definirStatusRecrutador,
   statusRecrutadorMaisRecente,
+  mapaStatusRecrutadorPorTelefone,
   telefoneSuprimidoPorAprovacao,
   STATUS_RECRUTADOR_VALIDOS,
   atualizarAplicacao,
