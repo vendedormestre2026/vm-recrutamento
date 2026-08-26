@@ -190,6 +190,7 @@ module.exports = {
   definirTotalEstimadoCampanhaWhatsapp: driver.definirTotalEstimadoCampanhaWhatsapp,
   listarTemplatesWhatsapp: driver.listarTemplatesWhatsapp,
   obterTemplateWhatsapp: driver.obterTemplateWhatsapp,
+  sincronizarTemplateWhatsapp: driver.sincronizarTemplateWhatsapp,
   listarCidades: driver.listarCidades,
   obterCidadePorChave: driver.obterCidadePorChave,
   criarCidade: driver.criarCidade,

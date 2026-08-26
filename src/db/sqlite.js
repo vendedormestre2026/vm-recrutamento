@@ -3277,6 +3277,120 @@ function obterTemplateWhatsapp(id) {
   return getDb().prepare('SELECT * FROM templates_whatsapp WHERE id = ?').get(id);
 }
 
+// ── SINCRONIZACAO DE TEMPLATES (ETAPA C) ──
+//
+// Extrai o texto do componente BODY e devolve o mapa de posicoes {{n}} presentes nele, no
+// MESMO formato ja usado pelos templates existentes (ver seed-campanha-whatsapp.js):
+// [{posicao, campo}, ...], JSON-stringified na coluna `variaveis`.
+//
+// ⚠️ `campo` E SEMPRE UM PLACEHOLDER AQUI, NUNCA O VALOR REAL — e a limitacao central desta
+// sincronizacao. A API do Central Whats sabe QUANTAS variaveis existem e ONDE (posicao),
+// mas nao sabe qual DADO NOSSO cada uma representa (nome_primeiro? cargo_vaga?
+// link_grupo_regiao?) — isso e conhecimento de dominio que so existe deste lado, e nenhuma
+// API de terceiro pode fornecer. `PLACEHOLDER_CAMPO_<n>` e proposital: aparece no log de
+// resolverVariaveis ("variavel 'PLACEHOLDER_CAMPO_1' sem valor; enviando vazia") na hora que
+// alguem tentar montar um envio com o mapeamento ainda nao configurado, e e facil de achar
+// por grep. Configurar o mapeamento real continua sendo um passo MANUAL depois do sync —
+// ver a nota de sincronizarTemplateWhatsapp abaixo sobre por que UPDATE nunca toca aqui.
+function extrairVariaveisDoBody(components) {
+  const body = (Array.isArray(components) ? components : []).find((c) => c && c.type === 'BODY');
+  const texto = body ? String(body.text || '') : '';
+  const posicoes = new Set();
+  const re = /\{\{\s*(\d+)\s*\}\}/g;
+  let m = re.exec(texto);
+  while (m) {
+    posicoes.add(Number(m[1]));
+    m = re.exec(texto);
+  }
+  return [...posicoes]
+    .sort((a, b) => a - b)
+    .map((posicao) => ({ posicao, campo: `PLACEHOLDER_CAMPO_${posicao}` }));
+}
+
+// Valor do componente BUTTON, se houver. null quando nao ha botao no template.
+//
+// ⚠️ NOME DO CAMPO — SUPOSICAO DOCUMENTADA, NAO CONFIRMADA: o payload de exemplo fornecido
+// (GET /api/instances/{id}/templates) so mostrou componentes BODY e FOOTER, nenhum BUTTON —
+// mesma situacao (e mesmo tratamento) do campo `language` no payload de ENVIO, documentada
+// em montarPayload de centralWhats.js. Tenta os nomes mais plausiveis, na ordem `url` ->
+// `value` -> `text`. Se isto se provar errado quando o primeiro template com botao de
+// verdade for sincronizado, o sintoma vai ser botao_parametro_fixo continuando NULL mesmo
+// com um componente BUTTON presente — reabra este comentario antes de tentar de novo.
+function extrairBotaoDoComponente(components) {
+  const botao = (Array.isArray(components) ? components : []).find((c) => c && c.type === 'BUTTON');
+  if (!botao) return null;
+  const valor = botao.url || botao.value || botao.text || null;
+  const limpo = valor == null ? '' : String(valor).trim();
+  return limpo || null;
+}
+
+// Upsert de UM template vindo de centralWhats.listarTemplatesCentralWhats. Devolve
+// `{ ignorado: true, motivo }` (status != APPROVED, ou dado essencial ausente) ou
+// `{ ignorado: false, novo, nomeMeta }` (novo=true em INSERT, false em UPDATE).
+//
+// ── O QUE E SEMPRE SOBRESCRITO PELO VALOR DA API: idioma, categoria ──
+// Sao propriedades do template aprovado NA META — a Meta e a fonte da verdade pra elas, e
+// um sync que nao as atualiza ficaria divergente do que esta aprovado de verdade.
+//
+// ── O QUE NUNCA E TOCADO NUM UPDATE (so no INSERT inicial): ativo, variaveis ──
+// `ativo`: e uma escolha OPERACIONAL local (o operador decide se aquele template pode ser
+// oferecido nas telas de envio), nao uma propriedade do template na Meta — reativar/desativar
+// e acao humana deliberada (ver o comentario de listarTemplatesWhatsapp), e um sync
+// reativaria sozinho um template que alguem desligou de proposito.
+// `variaveis`: pela razao documentada em extrairVariaveisDoBody — o mapeamento posicao->campo
+// e conhecimento de dominio que so um humano preenche, nunca a API. Sobrescrever a cada sync
+// apagaria um mapeamento real ja configurado e o trocaria por PLACEHOLDER_CAMPO_N, quebrando
+// silenciosamente todo envio daquele template ate alguem notar.
+//
+// ── botao_parametro_fixo: EXCECAO — COALESCE, nao preservacao pura ──
+// Ao contrario de ativo/variaveis, este campo prefere o valor NOVO da API quando ela traz um
+// (COALESCE(novo, antigo)): um botao e propriedade do template aprovado, entao um valor novo
+// vindo de la e informacao mais atual que a nossa. So NAO apaga o valor local quando a API
+// simplesmente nao lista nenhum componente BUTTON desta vez — ausencia na resposta nao pode
+// significar "botao foi removido", porque o template continua exigindo o parametro na hora do
+// envio (erro 131008, ver o comentario extenso em centralWhats.js:montarPayload) independente
+// do que este sync particular trouxe.
+function sincronizarTemplateWhatsapp(templateCentralWhats) {
+  const t = templateCentralWhats || {};
+
+  const status = String(t.status || '').trim().toUpperCase();
+  if (status !== 'APPROVED') {
+    return { ignorado: true, motivo: `status '${t.status || '(ausente)'}' diferente de APPROVED` };
+  }
+
+  const nomeMeta = String(t.name || '').trim();
+  if (!nomeMeta) {
+    return { ignorado: true, motivo: 'template sem "name"' };
+  }
+
+  const categoria = String(t.category || '').trim().toLowerCase();
+  if (!['marketing', 'utility', 'authentication'].includes(categoria)) {
+    return { ignorado: true, motivo: `categoria '${t.category || '(ausente)'}' fora do enum aceito` };
+  }
+
+  const idioma = String(t.language || '').trim() || 'pt_BR';
+  const variaveis = JSON.stringify(extrairVariaveisDoBody(t.components));
+  const botaoDaApi = extrairBotaoDoComponente(t.components);
+
+  const jaExistia = Boolean(
+    getDb().prepare('SELECT 1 FROM templates_whatsapp WHERE nome_meta = ?').get(nomeMeta),
+  );
+
+  getDb()
+    .prepare(
+      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo, ativo)
+       VALUES (@nomeMeta, @idioma, @categoria, @variaveis, @botaoDaApi, 1)
+       ON CONFLICT(nome_meta) DO UPDATE SET
+         idioma = excluded.idioma,
+         categoria = excluded.categoria,
+         botao_parametro_fixo = COALESCE(excluded.botao_parametro_fixo, templates_whatsapp.botao_parametro_fixo),
+         atualizado_em = datetime('now')`,
+    )
+    .run({ nomeMeta, idioma, categoria, variaveis, botaoDaApi });
+
+  return { ignorado: false, novo: !jaExistia, nomeMeta };
+}
+
 // ── Cidades (vocabulario de pracas — ETAPA B, Incremento 4) ──
 //
 // Leitura pura, sem normalizacao/ordenacao: quem decide o que e "canonico" e ordem pt-BR e
@@ -3646,6 +3760,7 @@ module.exports = {
   definirTotalEstimadoCampanhaWhatsapp,
   listarTemplatesWhatsapp,
   obterTemplateWhatsapp,
+  sincronizarTemplateWhatsapp,
   listarCidades,
   obterCidadePorChave,
   criarCidade,
