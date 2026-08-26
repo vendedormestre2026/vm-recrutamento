@@ -753,6 +753,48 @@ function definirStatusRecrutador(applicationId, valor) {
   return final;
 }
 
+// status_recrutador da candidatura MAIS RECENTE de UM telefone (maior criado_em; `id`
+// como desempate para duas linhas gravadas no mesmo segundo). null quando o telefone nao
+// tem nenhuma candidatura — nao e "reprovado" nem "aprovado", e ausencia de dado.
+//
+// Comparacao e por IGUALDADE EXATA de `telefone` (a string tal como esta gravada em
+// applications) — sem normalizar aqui. Cada chamador ja tem o valor no mesmo formato de
+// applications.telefone (a propria linha, no caso de telefoneSuprimidoPorAprovacao abaixo;
+// `a.telefone` da linha ja joinada, nos chamadores em SQL) — normalizar de novo aqui so
+// arriscaria criar um SEGUNDO criterio de "mesmo numero" divergente do que a coluna guarda.
+function statusRecrutadorMaisRecente(telefone) {
+  if (!telefone) return null;
+  const linha = getDb()
+    .prepare(
+      `SELECT status_recrutador FROM applications
+        WHERE telefone = ?
+        ORDER BY criado_em DESC, id DESC
+        LIMIT 1`,
+    )
+    .get(telefone);
+  return linha ? linha.status_recrutador : null;
+}
+
+// ── SUPRESSAO POR APROVACAO (ETAPA B) ──
+//
+// Sem coluna nova, sem tabela nova. "Suprimido" nao e um estado gravado em lugar nenhum —
+// e SEMPRE derivado, em tempo real, de qual e a candidatura mais recente daquele telefone.
+// Isso da reversibilidade automatica de graca: quando a pessoa se candidata de novo, a
+// linha NOVA (criado_em mais recente) nasce com status_recrutador NULL, vira a "mais
+// recente" e o telefone deixa de estar suprimido no instante em que a candidatura nova e
+// gravada — nenhum job de limpeza, nenhum UPDATE adicional, nenhuma janela de
+// inconsistencia entre "a pessoa reaplicou" e "o sistema percebeu".
+//
+// A MESMA logica (telefone -> candidatura mais recente -> status_recrutador) e reaproveitada
+// de tres formas nesta ETAPA: aqui (JS, um telefone por vez), embutida como subquery
+// correlacionada no SQL de listarPendentesSequenciaWhatsapp (Incremento B5 — evita N
+// consultas extras por ciclo) e chamada direta daqui em lib/publicoCampanhaWhatsapp.js
+// (Incremento B6, volume baixo o bastante para nao justificar outra subquery). As tres
+// tem que concordar sempre — se um dia divergirem, um teste tem que pegar.
+function telefoneSuprimidoPorAprovacao(telefone) {
+  return statusRecrutadorMaisRecente(telefone) === 'aprovado';
+}
+
 // Edita SOMENTE os campos de contato do candidato. NUNCA toca em id/job_id/token/status/
 // curriculo_path/timestamps. Vazio ('' apos trim) vira NULL. Tudo parametrizado (?).
 function atualizarAplicacao(id, campos = {}) {
@@ -3655,6 +3697,8 @@ module.exports = {
   definirStatusIaSeVazio,
   obterStatusIaPorApplication,
   definirStatusRecrutador,
+  statusRecrutadorMaisRecente,
+  telefoneSuprimidoPorAprovacao,
   STATUS_RECRUTADOR_VALIDOS,
   atualizarAplicacao,
   arquivarAplicacao,

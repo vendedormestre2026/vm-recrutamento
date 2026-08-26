@@ -62,6 +62,8 @@ module.exports = {
   definirStatusIaSeVazio: driver.definirStatusIaSeVazio,
   obterStatusIaPorApplication: driver.obterStatusIaPorApplication,
   definirStatusRecrutador: driver.definirStatusRecrutador,
+  statusRecrutadorMaisRecente: driver.statusRecrutadorMaisRecente,
+  telefoneSuprimidoPorAprovacao: driver.telefoneSuprimidoPorAprovacao,
   STATUS_RECRUTADOR_VALIDOS: driver.STATUS_RECRUTADOR_VALIDOS,
   atualizarAplicacao: driver.atualizarAplicacao,
   arquivarAplicacao: driver.arquivarAplicacao,
