@@ -2,6 +2,10 @@
 
 // db.sincronizarTemplateWhatsapp (ETAPA C, Incremento 2): upsert de UM template no formato
 // devolvido por centralWhats.listarTemplatesCentralWhats em templates_whatsapp.
+//
+// Nome do fixture padrao (`templateApi()`) termina em "_vm" DE PROPOSITO — bate a convencao
+// de nome da Vendedor Mestre (ver src/lib/templatesWhatsapp.js), pra nao ser pego pelo
+// filtro de padrao coberto na secao dedicada mais abaixo.
 
 const os = require('node:os');
 const path = require('node:path');
@@ -26,7 +30,7 @@ function templateApi(overrides = {}) {
   return {
     id: 'tpl_abc123',
     instance_id: 'inst_xyz',
-    name: 'confirmacao_pedido',
+    name: 'confirmacao_pedido_vm',
     category: 'UTILITY',
     language: 'pt_BR',
     status: 'APPROVED',
@@ -47,8 +51,8 @@ test('insert de template novo: grava categoria minuscula, ativo=1, variaveis ext
   zerar();
   const r = db.sincronizarTemplateWhatsapp(templateApi());
 
-  assert.deepEqual(r, { ignorado: false, novo: true, nomeMeta: 'confirmacao_pedido' });
-  const t = linha('confirmacao_pedido');
+  assert.deepEqual(r, { ignorado: false, novo: true, nomeMeta: 'confirmacao_pedido_vm' });
+  const t = linha('confirmacao_pedido_vm');
   assert.equal(t.idioma, 'pt_BR');
   assert.equal(t.categoria, 'utility'); // veio UTILITY (maiusculo) da API
   assert.equal(t.ativo, 1);
@@ -62,7 +66,7 @@ test('insert, template SEM nenhum componente de botao: botao_parametro_fixo nasc
   zerar();
   const r = db.sincronizarTemplateWhatsapp(templateApi());
   assert.equal(r.ignorado, false);
-  assert.equal(linha('confirmacao_pedido').botao_parametro_fixo, null);
+  assert.equal(linha('confirmacao_pedido_vm').botao_parametro_fixo, null);
 });
 
 // Regressao: ate a sessao anterior, esta funcao tentava extrair um valor de botao do
@@ -99,8 +103,9 @@ test("status diferente de APPROVED e ignorado silenciosamente (sem lancar, sem g
   zerar();
   const r = db.sincronizarTemplateWhatsapp(templateApi({ status: 'PENDING' }));
   assert.equal(r.ignorado, true);
+  assert.equal(r.razao, 'status_nao_aprovado');
   assert.match(r.motivo, /PENDING/);
-  assert.equal(linha('confirmacao_pedido'), undefined);
+  assert.equal(linha('confirmacao_pedido_vm'), undefined);
 });
 
 test('update de template existente: idioma/categoria atualizam, ativo e variaveis sao PRESERVADOS', () => {
@@ -109,14 +114,14 @@ test('update de template existente: idioma/categoria atualizam, ativo e variavei
   // configurado a mao (nao o placeholder que um sync geraria).
   exec(
     `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo, botao_parametro_fixo)
-     VALUES ('confirmacao_pedido', 'en_US', 'marketing', ?, 0, 'valor-manual-antigo')`,
+     VALUES ('confirmacao_pedido_vm', 'en_US', 'marketing', ?, 0, 'valor-manual-antigo')`,
     JSON.stringify([{ posicao: 1, campo: 'nome_primeiro' }, { posicao: 2, campo: 'numero_pedido' }]),
   );
 
   const r = db.sincronizarTemplateWhatsapp(templateApi()); // pt_BR / UTILITY / sem BUTTON
 
-  assert.deepEqual(r, { ignorado: false, novo: false, nomeMeta: 'confirmacao_pedido' });
-  const t = linha('confirmacao_pedido');
+  assert.deepEqual(r, { ignorado: false, novo: false, nomeMeta: 'confirmacao_pedido_vm' });
+  const t = linha('confirmacao_pedido_vm');
   assert.equal(t.idioma, 'pt_BR', 'idioma vem da API, sempre');
   assert.equal(t.categoria, 'utility', 'categoria vem da API, sempre');
   assert.equal(t.ativo, 0, 'ativo=0 (desligado a mao) tem que sobreviver ao sync');
@@ -131,7 +136,7 @@ test('update: botao_parametro_fixo NUNCA e escrito pelo sync, mesmo quando o pay
   zerar();
   exec(
     `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo)
-     VALUES ('confirmacao_pedido', 'pt_BR', 'utility', '[]', 'valor-configurado-a-mao')`,
+     VALUES ('confirmacao_pedido_vm', 'pt_BR', 'utility', '[]', 'valor-configurado-a-mao')`,
   );
   db.sincronizarTemplateWhatsapp(
     templateApi({
@@ -142,7 +147,7 @@ test('update: botao_parametro_fixo NUNCA e escrito pelo sync, mesmo quando o pay
     }),
   );
   assert.equal(
-    linha('confirmacao_pedido').botao_parametro_fixo,
+    linha('confirmacao_pedido_vm').botao_parametro_fixo,
     'valor-configurado-a-mao',
     'o sync nao pode sobrescrever um valor configurado a mao, nunca — nem com botao presente no payload',
   );
@@ -152,31 +157,33 @@ test('update: SEM nenhum componente de botao no payload, o valor local tambem e 
   zerar();
   exec(
     `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo)
-     VALUES ('confirmacao_pedido', 'pt_BR', 'utility', '[]', 'url-que-tem-que-sobreviver')`,
+     VALUES ('confirmacao_pedido_vm', 'pt_BR', 'utility', '[]', 'url-que-tem-que-sobreviver')`,
   );
   db.sincronizarTemplateWhatsapp(templateApi()); // sem nenhum componente de botao
-  assert.equal(linha('confirmacao_pedido').botao_parametro_fixo, 'url-que-tem-que-sobreviver');
+  assert.equal(linha('confirmacao_pedido_vm').botao_parametro_fixo, 'url-que-tem-que-sobreviver');
 });
 
 test('categoria fora do enum aceito (marketing/utility/authentication) e ignorado, nao lanca', () => {
   zerar();
   const r = db.sincronizarTemplateWhatsapp(templateApi({ category: 'ALGO_NOVO_DA_META' }));
   assert.equal(r.ignorado, true);
+  assert.equal(r.razao, 'categoria_invalida');
   assert.match(r.motivo, /ALGO_NOVO_DA_META/);
-  assert.equal(linha('confirmacao_pedido'), undefined);
+  assert.equal(linha('confirmacao_pedido_vm'), undefined);
 });
 
 test('categoria AUTHENTICATION (terceiro valor do enum) sincroniza normalmente', () => {
   zerar();
-  const r = db.sincronizarTemplateWhatsapp(templateApi({ category: 'AUTHENTICATION', name: 'codigo_verificacao' }));
+  const r = db.sincronizarTemplateWhatsapp(templateApi({ category: 'AUTHENTICATION', name: 'codigo_verificacao_vm' }));
   assert.equal(r.ignorado, false);
-  assert.equal(linha('codigo_verificacao').categoria, 'authentication');
+  assert.equal(linha('codigo_verificacao_vm').categoria, 'authentication');
 });
 
 test('template sem "name": ignorado, nao lanca', () => {
   zerar();
   const r = db.sincronizarTemplateWhatsapp(templateApi({ name: '' }));
   assert.equal(r.ignorado, true);
+  assert.equal(r.razao, 'sem_nome');
 });
 
 test('body sem nenhuma variavel {{n}}: variaveis vira array vazio, nao quebra', () => {
@@ -185,5 +192,57 @@ test('body sem nenhuma variavel {{n}}: variaveis vira array vazio, nao quebra', 
     templateApi({ components: [{ type: 'BODY', text: 'Mensagem sem variavel nenhuma.' }] }),
   );
   assert.equal(r.ignorado, false);
-  assert.deepEqual(JSON.parse(linha('confirmacao_pedido').variaveis), []);
+  assert.deepEqual(JSON.parse(linha('confirmacao_pedido_vm').variaveis), []);
+});
+
+// ══════════════════ Filtro por padrao de nome (ETAPA C, Incremento 2 da correcao) ══════════════════
+//
+// A mesma conta Central Whats serve outros usos (ex.: convite_bni_workshop_ady, do workshop
+// do BNI de Joinville) — o filtro garante que a sincronizacao so toca templates da Vendedor
+// Mestre. Ver src/lib/templatesWhatsapp.js para a regra completa (sufixo "_vm" + excecoes).
+
+test('nome com sufixo "_vm": sincroniza normalmente (insert)', () => {
+  zerar();
+  const r = db.sincronizarTemplateWhatsapp(templateApi({ name: 'qualquer_coisa_vm' }));
+  assert.equal(r.ignorado, false);
+  assert.equal(r.novo, true);
+  assert.ok(linha('qualquer_coisa_vm'));
+});
+
+test('nome SEM sufixo "_vm" e fora da lista de excecao: ignorado (nao aparece como novo, nao grava linha)', () => {
+  zerar();
+  const r = db.sincronizarTemplateWhatsapp(templateApi({ name: 'convite_bni_workshop_ady' }));
+  assert.equal(r.ignorado, true);
+  assert.equal(r.razao, 'fora_do_padrao');
+  assert.match(r.motivo, /convite_bni_workshop_ady/);
+  assert.equal(linha('convite_bni_workshop_ady'), undefined, 'nao pode gravar NENHUMA linha pra um nome fora do padrao');
+});
+
+test('nome fora do padrao, mas ja existente localmente: sync NAO atualiza (nao aparece como atualizado)', () => {
+  zerar();
+  exec(
+    `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo)
+     VALUES ('convite_bni_workshop_ady', 'pt_BR', 'marketing', '[]', 1)`,
+  );
+  const r = db.sincronizarTemplateWhatsapp(
+    templateApi({ name: 'convite_bni_workshop_ady', category: 'MARKETING', language: 'en_US' }),
+  );
+  assert.equal(r.ignorado, true);
+  assert.equal(r.razao, 'fora_do_padrao');
+  // idioma NAO pode ter mudado pra en_US — o sync nem chegou a tocar a linha.
+  assert.equal(linha('convite_bni_workshop_ady').idioma, 'pt_BR');
+});
+
+test('EXCECAO explicita: nova_vaga_v1 sincroniza mesmo sem terminar em "_vm"', () => {
+  zerar();
+  const r = db.sincronizarTemplateWhatsapp(templateApi({ name: 'nova_vaga_v1', category: 'MARKETING' }));
+  assert.equal(r.ignorado, false);
+  assert.ok(linha('nova_vaga_v1'));
+});
+
+test('EXCECAO explicita: nova_vaga_v2 sincroniza mesmo sem terminar em "_vm"', () => {
+  zerar();
+  const r = db.sincronizarTemplateWhatsapp(templateApi({ name: 'nova_vaga_v2', category: 'MARKETING' }));
+  assert.equal(r.ignorado, false);
+  assert.ok(linha('nova_vaga_v2'));
 });

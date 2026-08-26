@@ -32,6 +32,10 @@ const { normalizarSlug } = require('../lib/slug');
 // que applications.telefone guarda, com '+') e devolve o MESMO resultado pros dois — mesmo
 // padrao ja usado pra ler a fila em whatsapp/sequenciaOutbox.js.
 const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
+// Modulo-FOLHA (nenhum require proprio) — usado por sincronizarTemplateWhatsapp pra decidir
+// quais templates da mesma conta Central Whats sao da Vendedor Mestre. Mesma justificativa
+// dos demais requires de lib/ nesta secao.
+const { pertenceVendedorMestre } = require('../lib/templatesWhatsapp');
 
 let _db = null;
 
@@ -3346,17 +3350,40 @@ function sincronizarTemplateWhatsapp(templateCentralWhats) {
 
   const status = String(t.status || '').trim().toUpperCase();
   if (status !== 'APPROVED') {
-    return { ignorado: true, motivo: `status '${t.status || '(ausente)'}' diferente de APPROVED` };
+    return {
+      ignorado: true,
+      razao: 'status_nao_aprovado',
+      motivo: `status '${t.status || '(ausente)'}' diferente de APPROVED`,
+    };
   }
 
   const nomeMeta = String(t.name || '').trim();
   if (!nomeMeta) {
-    return { ignorado: true, motivo: 'template sem "name"' };
+    return { ignorado: true, razao: 'sem_nome', motivo: 'template sem "name"' };
+  }
+
+  // ── FILTRO POR PADRAO DE NOME (a mesma conta Central Whats serve outros usos) ──
+  // pertenceVendedorMestre (lib/templatesWhatsapp.js): sufixo "_vm" OU lista de excecao
+  // explicita (nova_vaga_v1/v2 — templates legitimos que nasceram antes da convencao
+  // existir). Quem nao bate — ex.: convite_bni_workshop_ady, do workshop do BNI, outro uso
+  // da mesma instancia — e ignorado aqui, ANTES de tocar o banco: nunca chega a ser
+  // inserido nem atualizado. `razao: 'fora_do_padrao'` e distinta das outras (o chamador,
+  // a rota de sync, conta isso separado no resumo — ver admin_campanha_whatsapp.js).
+  if (!pertenceVendedorMestre(nomeMeta)) {
+    return {
+      ignorado: true,
+      razao: 'fora_do_padrao',
+      motivo: `nome '${nomeMeta}' nao pertence a Vendedor Mestre (nem termina em '_vm' nem esta na lista de excecao)`,
+    };
   }
 
   const categoria = String(t.category || '').trim().toLowerCase();
   if (!['marketing', 'utility', 'authentication'].includes(categoria)) {
-    return { ignorado: true, motivo: `categoria '${t.category || '(ausente)'}' fora do enum aceito` };
+    return {
+      ignorado: true,
+      razao: 'categoria_invalida',
+      motivo: `categoria '${t.category || '(ausente)'}' fora do enum aceito`,
+    };
   }
 
   const idioma = String(t.language || '').trim() || 'pt_BR';

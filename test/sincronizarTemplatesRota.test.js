@@ -64,7 +64,7 @@ function zerar() {
 }
 
 const TEMPLATE_A = {
-  name: 'confirmacao_pedido',
+  name: 'confirmacao_pedido_vm',
   category: 'UTILITY',
   language: 'pt_BR',
   status: 'APPROVED',
@@ -76,6 +76,14 @@ const TEMPLATE_B = {
   language: 'pt_BR',
   status: 'APPROVED',
   components: [{ type: 'BODY', text: 'Confira {{1}} vagas em {{2}}.' }],
+};
+// Fora do padrao _vm (nao e da Vendedor Mestre) — mesmo caso real de convite_bni_workshop_ady.
+const TEMPLATE_FORA_DO_PADRAO = {
+  name: 'convite_bni_workshop_ady',
+  category: 'MARKETING',
+  language: 'pt_BR',
+  status: 'APPROVED',
+  components: [{ type: 'BODY', text: 'Olá {{1}}, participe do workshop.' }],
 };
 
 test('caminho feliz: persiste os templates devolvidos e reporta novos/atualizados na query de redirect', async () => {
@@ -92,7 +100,7 @@ test('caminho feliz: persiste os templates devolvidos e reporta novos/atualizado
   });
 
   const linhas = db.getDb().prepare('SELECT nome_meta FROM templates_whatsapp ORDER BY nome_meta').all();
-  assert.deepEqual(linhas.map((l) => l.nome_meta), ['confirmacao_pedido', 'convite_grupo_vagas_vm']);
+  assert.deepEqual(linhas.map((l) => l.nome_meta), ['confirmacao_pedido_vm', 'convite_grupo_vagas_vm']);
 });
 
 test('caminho feliz, segunda chamada: os mesmos dois templates agora contam como atualizados, nao novos', async () => {
@@ -123,6 +131,27 @@ test('template com status nao aprovado entra em sync_ignorados, sem virar erro',
     assert.match(location, /sync_novos=1/);
     assert.match(location, /sync_ignorados=1/);
   });
+});
+
+test('template fora do padrao de nome (outro uso da mesma conta) entra em sync_ignorados_fora_do_padrao, separado dos demais ignorados', async () => {
+  zerar();
+  const transportePartial = {
+    listarTemplatesCentralWhats: async () => ({ ok: true, templates: [TEMPLATE_A, TEMPLATE_FORA_DO_PADRAO] }),
+  };
+
+  await comRotaSincronizar(transportePartial, async (base) => {
+    const res = await post(base);
+    const location = res.headers.get('location');
+    assert.match(location, /sync_novos=1/);
+    assert.match(location, /sync_ignorados=0/);
+    assert.match(location, /sync_ignorados_fora_do_padrao=1/);
+  });
+
+  assert.equal(
+    db.getDb().prepare('SELECT 1 FROM templates_whatsapp WHERE nome_meta = ?').get('convite_bni_workshop_ady'),
+    undefined,
+    'template fora do padrao nao pode ser gravado',
+  );
 });
 
 test('Central Whats indisponivel: redireciona com sync_erro, NAO lanca, NAO toca o banco', async () => {
@@ -180,6 +209,15 @@ test('view: banner de erro aparece quando a query tem sync_erro, com o texto esc
   });
   assert.match(html, /Não foi possível sincronizar/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/, 'erro vindo de fora tem que passar por escapeHtml');
+});
+
+test('view: banner de sucesso menciona os ignorados fora do padrao quando houver', () => {
+  const html = montarConteudoCampanhaWhatsapp({
+    escapeHtml,
+    fmtInt: String,
+    query: { sync_novos: '1', sync_atualizados: '0', sync_ignorados: '0', sync_ignorados_fora_do_padrao: '1' },
+  });
+  assert.match(html, /1 fora do padrão de nome/);
 });
 
 test('view: botao "Sincronizar templates" existe na tela, com a action certa', () => {

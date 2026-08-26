@@ -175,6 +175,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
   const nSyncNovos = Number(query.sync_novos);
   const nSyncAtualizados = Number(query.sync_atualizados);
   const nSyncIgnorados = Number(query.sync_ignorados);
+  const nSyncForaDoPadrao = Number(query.sync_ignorados_fora_do_padrao);
   const flashSync =
     query.sync_erro != null
       ? `<div class="aviso-alerta">Não foi possível sincronizar com o Central Whats: ${escapeHtml(String(query.sync_erro))}</div>`
@@ -182,6 +183,10 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
         ? `<div class="aviso-ok">Sincronização concluída: ${nSyncNovos} template(s) novo(s), ${nSyncAtualizados} atualizado(s)${
             Number.isInteger(nSyncIgnorados) && nSyncIgnorados > 0
               ? `, ${nSyncIgnorados} ignorado(s) (status diferente de aprovado ou dado incompleto)`
+              : ''
+          }${
+            Number.isInteger(nSyncForaDoPadrao) && nSyncForaDoPadrao > 0
+              ? `, ${nSyncForaDoPadrao} fora do padrão de nome (não é da Vendedor Mestre, ignorado(s) de propósito)`
               : ''
           }.</div>`
         : '';
@@ -648,15 +653,22 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
       let novos = 0;
       let atualizados = 0;
       let ignorados = 0;
+      // Contado A PARTE dos demais ignorados (status/categoria/nome ausente): sao templates
+      // de OUTRO uso da mesma conta Central Whats (ex.: convite_bni_workshop_ady, do
+      // workshop do BNI) — nao e um problema de dado, e o filtro funcionando como esperado.
+      // Ver razao: 'fora_do_padrao' em sincronizarTemplateWhatsapp (sqlite.js).
+      let ignoradosForaDoPadrao = 0;
       for (const t of resultado.templates) {
         const r = db.sincronizarTemplateWhatsapp(t);
-        if (r.ignorado) ignorados += 1;
+        if (r.ignorado && r.razao === 'fora_do_padrao') ignoradosForaDoPadrao += 1;
+        else if (r.ignorado) ignorados += 1;
         else if (r.novo) novos += 1;
         else atualizados += 1;
       }
 
       return res.redirect(
-        `/admin/campanhas-whatsapp?sync_novos=${novos}&sync_atualizados=${atualizados}&sync_ignorados=${ignorados}`,
+        `/admin/campanhas-whatsapp?sync_novos=${novos}&sync_atualizados=${atualizados}` +
+          `&sync_ignorados=${ignorados}&sync_ignorados_fora_do_padrao=${ignoradosForaDoPadrao}`,
       );
     } catch (err) {
       console.error(`[campanha-wa] sincronizacao de templates falhou inesperadamente: ${err.message}`);
