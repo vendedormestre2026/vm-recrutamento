@@ -188,9 +188,50 @@ function montarTextoWA2(application, job) {
   return linhas.map((l) => limparEspacos(l)).join('\n');
 }
 
+// ── REPROVACAO — corpo base sempre presente + convite condicional (ETAPA B) ──
+//
+// Terceira etapa da fila Baileys (alem de wa1/wa2, ver whatsapp/sequenciaOutbox.js),
+// disparada quando o recrutador marca status_recrutador='reprovado' (lib/decisaoRecrutador.js).
+//
+// ⚠️ COPY AINDA NAO APROVADA PELO RAFAEL — os dois textos abaixo sao PLACEHOLDER, de
+// proposito faceis de achar (grep por PLACEHOLDER) e substituir quando a copy definitiva
+// chegar. NAO e o texto que deve sair em producao.
+//
+// TODO: copy final pendente de aprovação do Rafael.
+const TEXTO_REPROVACAO_BASE_PLACEHOLDER =
+  '[PLACEHOLDER] Agradecemos sua candidatura e o tempo dedicado ao nosso processo seletivo. ' +
+  'Neste momento optamos por seguir com outros candidatos. (copy final pendente de aprovação)';
+
+// {{link_grupo}} e substituido pelo link real dentro de montarTextoReprovacao — nunca
+// aparece literal na mensagem que sai. So entra na mensagem quando ha link cadastrado para
+// a cidade da vaga (ver textoDaEtapa em sequenciaOutbox.js, que resolve o link NO MOMENTO
+// DO ENVIO e so passa linkGrupo truthy quando ha um).
+const TEXTO_REPROVACAO_CONVITE_PLACEHOLDER =
+  '[PLACEHOLDER] Enquanto isso, convidamos você a entrar no nosso grupo de alertas de vagas ' +
+  'da sua região: {{link_grupo}} (copy final pendente de aprovação)';
+
+// Monta o texto da reprovacao: corpo base SEMPRE presente + paragrafo de convite SOMENTE
+// quando `linkGrupo` e truthy (vaga remota sem cidade, ou cidade sem link cadastrado, caem
+// no MESMO caso — corpo base sozinho, sem distincao entre os dois motivos).
+//
+// `job` fica sem uso real por enquanto — os placeholders nao interpolam nada da vaga.
+// Mantido no parametro (mesma razao de montarTextoWA2, acima): a copy final deve usar
+// dados da vaga (ex.: titulo), e o call site nao precisa mudar quando ela chegar.
+function montarTextoReprovacao(job, linkGrupo) {
+  const linhas = [TEXTO_REPROVACAO_BASE_PLACEHOLDER];
+  if (linkGrupo) {
+    linhas.push('');
+    linhas.push(TEXTO_REPROVACAO_CONVITE_PLACEHOLDER.replace('{{link_grupo}}', linkGrupo));
+  }
+  return linhas.map((l) => limparEspacos(l)).join('\n');
+}
+
 module.exports = {
   montarTextoWA1,
   montarTextoWA2,
+  montarTextoReprovacao,
+  TEXTO_REPROVACAO_BASE_PLACEHOLDER,
+  TEXTO_REPROVACAO_CONVITE_PLACEHOLDER,
   // Exportados para teste e para quem precisar do mesmo formato em outro lugar.
   saudacao,
   trechoVaga,

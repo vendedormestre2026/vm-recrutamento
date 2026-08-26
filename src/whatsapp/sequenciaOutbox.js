@@ -29,7 +29,7 @@
 const dbPadrao = require('../db');
 const conexao = require('./connection');
 const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('../lib/whatsapp');
-const { montarTextoWA1, montarTextoWA2 } = require('../lib/whatsappSequencia');
+const { montarTextoWA1, montarTextoWA2, montarTextoReprovacao } = require('../lib/whatsappSequencia');
 
 // Interruptor de DISPARO, no mesmo store `configuracoes` das outras cinco varreduras.
 // Confirmado no diagnostico: e config de banco (obterConfigBool), nao variavel de ambiente —
@@ -167,7 +167,13 @@ function agendarSequencia(application, deps = {}) {
 // B. CICLO — roda a cada 5 min
 // ──────────────────────────────────────────────────────────────
 
-function textoDaEtapa(linha) {
+// `db` e parametro (nao dbPadrao direto) so por causa da etapa 'reprovacao': ela precisa
+// consultar obterLinkGrupo NO MOMENTO DO ENVIO (nao no agendamento), pra refletir um link
+// cadastrado/editado entre a decisao do recrutador e o ciclo que efetivamente manda a
+// mensagem. wa1/wa2 nao tocam `db` aqui (o texto delas so usa colunas ja trazidas pelo
+// JOIN de listarPendentesSequenciaWhatsapp) — o parametro fica disponivel pras tres por
+// uniformidade de assinatura, nao porque as outras duas precisem.
+function textoDaEtapa(linha, db) {
   const app = { nome: linha.app_nome };
   const job = {
     titulo: linha.job_titulo, empresa: linha.job_empresa, perfil: linha.job_perfil,
@@ -175,7 +181,14 @@ function textoDaEtapa(linha) {
     potencial_ganhos: linha.job_potencial_ganhos, endereco: linha.job_endereco,
     cidade: linha.job_cidade, modalidade: linha.job_modalidade, regime: linha.job_regime,
   };
-  return linha.etapa === 'wa1' ? montarTextoWA1(app, job) : montarTextoWA2(app, job);
+  if (linha.etapa === 'wa1') return montarTextoWA1(app, job);
+  if (linha.etapa === 'wa2') return montarTextoWA2(app, job);
+
+  // 'reprovacao': vaga remota (job_cidade NULL) e cidade sem link cadastrado caem no MESMO
+  // caso aqui — linkGrupo fica null/undefined pros dois, e montarTextoReprovacao ja trata
+  // "sem link" como "manda so o corpo base" sem distinguir o motivo (ver o comentario dela).
+  const linkGrupo = job.cidade ? db.obterLinkGrupo(job.cidade) : null;
+  return montarTextoReprovacao(job, linkGrupo);
 }
 
 // Contrato de ida-e-volta: um telefone so e aceito se, normalizado e depois re-normalizado
@@ -288,7 +301,7 @@ async function processarCicloSequencia(deps = {}) {
       continue;
     }
 
-    const texto = textoDaEtapa(linha);
+    const texto = textoDaEtapa(linha, db);
 
     if (mock) {
       // MOCK: registra o que SAIRIA e marca como enviado, sem tocar o socket. E o default —
@@ -396,6 +409,7 @@ module.exports = {
   agendarSequencia,
   processarCicloSequencia,
   varrerSeOcioso,
+  textoDaEtapa,
   ativo,
   modoMock,
   mascarar,

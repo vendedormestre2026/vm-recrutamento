@@ -17,6 +17,7 @@
 // NUNCA lanca por causa do agendamento — ver o comentario de agendarMensagemReprovacao.
 
 const db = require('../db');
+const { normalizarTelefoneWhatsapp } = require('./whatsapp');
 
 // ── KILL-SWITCH DEDICADO (Incremento B3) ──
 //
@@ -66,15 +67,63 @@ function aplicarDecisaoRecrutador(applicationId, novoValor) {
   return gravado;
 }
 
-// TODO (Incremento B4): corpo real ainda por vir — checar ativo() (kill-switch acima,
-// Incremento B3) e, se ligado, insercao idempotente em whatsapp_sequencia_envios
-// (etapa='reprovacao'), mesmo padrao de agendarSequencia em whatsapp/sequenciaOutbox.js.
-// Por ora e um no-op incondicional (nem chega a checar ativo() ainda): o CALL SITE ja
-// existe (Incremento B2), a chave ja existe (Incremento B3), so a LIGACAO entre as duas
-// falta — gravar o status continua sendo, ate o B4 entrar, a unica coisa que acontece de
-// verdade quando o recrutador marca 'reprovado'.
-function agendarMensagemReprovacao(applicationId) {
-  return { agendado: false, motivo: 'agendamento ainda nao implementado (Incremento B4)' };
+// 'YYYY-MM-DD HH:MM:SS' UTC — mesmo formato que datetime('now') do SQLite produz, pra
+// agendado_para de reprovacao ser comparavel com o de wa1/wa2 na mesma query
+// (listarPendentesSequenciaWhatsapp). Mesma logica de iso(new Date()) em
+// whatsapp/sequenciaOutbox.js — reimplementada aqui (3 linhas) em vez de importada,
+// porque aquele helper e privado do modulo (nao exportado) e abrir uma segunda saida
+// publica so pra isto nao vale o acoplamento extra entre os dois arquivos.
+function agendadoParaAgora() {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19);
+}
+
+// Agenda a etapa 'reprovacao' na MESMA fila de wa1/wa2 (whatsapp_sequencia_envios) — mesmo
+// padrao de agendarSequencia em whatsapp/sequenciaOutbox.js: idempotente via
+// UNIQUE(application_id, etapa) + DO NOTHING (db.agendarEnvioWhatsapp), e NUNCA lanca — a
+// decisao do recrutador ja foi gravada quando isto roda (ver aplicarDecisaoRecrutador
+// acima); falhar aqui nao pode reverter isso nem derrubar a resposta da rota.
+//
+// SEM checagem de cidade/link da praca aqui, DE PROPOSITO: essa parte e responsabilidade
+// de whatsapp/sequenciaOutbox.textoDaEtapa, no MOMENTO DO ENVIO (nao do agendamento) — o
+// link pode ser cadastrado ou editado entre a decisao do recrutador e o ciclo que
+// efetivamente manda a mensagem (Incremento B4), e a mensagem tem que refletir o estado
+// mais atual, nao uma foto de quando foi agendada.
+function agendarMensagemReprovacao(applicationId, deps = {}) {
+  const dbRef = deps.db || db;
+  try {
+    if (!ativo({ db: dbRef })) {
+      return { agendado: false, motivo: `${CHAVE_ATIVO} desligado` };
+    }
+
+    const aplicacao = dbRef.obterAplicacao(applicationId);
+    if (!aplicacao) {
+      return { agendado: false, motivo: 'application nao encontrada' };
+    }
+
+    const telefone = normalizarTelefoneWhatsapp(aplicacao.telefone);
+    if (!telefone) {
+      console.warn(
+        `[decisao-recrutador] application ${applicationId} sem telefone utilizavel; ` +
+          'reprovacao NAO agendada.',
+      );
+      return { agendado: false, motivo: 'telefone invalido' };
+    }
+
+    const inserido = dbRef.agendarEnvioWhatsapp({
+      applicationId,
+      etapa: 'reprovacao',
+      telefone,
+      agendadoPara: agendadoParaAgora(),
+      templateNome: 'reprovacao',
+    });
+    return { agendado: inserido, motivo: inserido ? null : 'ja existia (idempotente)' };
+  } catch (err) {
+    console.error(
+      `[decisao-recrutador] falha ao agendar mensagem de reprovacao (candidatura segue ` +
+        `normal): ${err.message}`,
+    );
+    return { agendado: false, motivo: `erro: ${err.message}` };
+  }
 }
 
 module.exports = {

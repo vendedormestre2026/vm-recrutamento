@@ -475,7 +475,7 @@ CREATE TABLE IF NOT EXISTS baileys_auth (
 CREATE TABLE IF NOT EXISTS whatsapp_sequencia_envios (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   application_id INTEGER NOT NULL,
-  etapa          TEXT NOT NULL,          -- 'wa1' | 'wa2'
+  etapa          TEXT NOT NULL,          -- 'wa1' | 'wa2' | 'reprovacao' (ETAPA B)
   telefone_e164  TEXT NOT NULL,          -- normalizado (so digitos, com DDI)
   template_nome  TEXT,
   status         TEXT NOT NULL DEFAULT 'pendente',
