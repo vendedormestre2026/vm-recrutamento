@@ -2951,6 +2951,26 @@ function agendarEnvioWhatsapp({ applicationId, etapa, telefone, agendadoPara, te
 //
 // O JOIN traz o que o texto precisa (nome, vaga, empresa) — sao poucos por ciclo, mas uma
 // consulta por linha seria N+1 por nada, e o motor ja tem tudo aqui.
+// ── SUPRESSAO POR APROVACAO (ETAPA B, Incremento B5) ──
+//
+// Subquery correlacionada embutida no SQL, e NAO telefoneSuprimidoPorAprovacao aplicada
+// linha a linha em JS: esta query ja roda uma vez por CICLO (a cada 5 min, ate 50 linhas),
+// nao uma vez por candidato — aplicar a funcao JS aqui custaria uma consulta extra POR
+// LINHA da fila (N+1). A subquery abaixo e a MESMA logica de
+// db.telefoneSuprimidoPorAprovacao (mesma tabela, mesmo ORDER BY, mesmo desempate por id),
+// so que embutida direto na query pra rodar uma vez por linha sem sair do motor SQL. Os
+// testes de ambas tem que continuar concordando — se um dia divergirem, e bug.
+//
+// `IS NOT 'aprovado'` (e nao `!= 'aprovado'`) de proposito: e NULL-safe. Telefone sem
+// nenhuma candidatura aprovada (a subquery devolve NULL, seja por status_recrutador NULL
+// na mais recente, seja por applications.telefone tambem ser NULL) tem que PASSAR no
+// filtro — `!=` contra NULL sempre da NULL (nem true nem false) e a linha sairia da lista
+// por engano.
+//
+// Vale para as TRES etapas que passam por esta fila (wa1, wa2, reprovacao): um telefone
+// aprovado numa candidatura MAIS RECENTE que a que agendou a mensagem tambem suprime uma
+// 'reprovacao' ja enfileirada e ainda pendente — o mesmo raciocinio de reversibilidade do
+// Incremento B1, so que pego ANTES do envio em vez de depois.
 function listarPendentesSequenciaWhatsapp({ limite = 50, agora = null } = {}) {
   const teto = Number.isInteger(limite) && limite > 0 ? limite : 50;
   return getDb()
@@ -2966,6 +2986,12 @@ function listarPendentesSequenciaWhatsapp({ limite = 50, agora = null } = {}) {
          LEFT JOIN jobs j ON j.id = a.job_id
         WHERE s.status = 'pendente'
           AND s.agendado_para <= COALESCE(?, datetime('now'))
+          AND (
+            SELECT ap2.status_recrutador FROM applications ap2
+             WHERE ap2.telefone = a.telefone
+             ORDER BY ap2.criado_em DESC, ap2.id DESC
+             LIMIT 1
+          ) IS NOT 'aprovado'
         ORDER BY s.agendado_para ASC
         LIMIT ?`,
     )
