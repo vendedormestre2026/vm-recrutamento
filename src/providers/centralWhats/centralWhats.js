@@ -395,6 +395,72 @@ function classificarErroCentralWhats(erro) {
   return { categoria: 'retentavel', teto: TETO_RETENTAVEL, motivo: 'erro nao classificado' };
 }
 
+// ── SINCRONIZACAO DE TEMPLATES (ETAPA C) ──
+//
+// Lista os templates JA CADASTRADOS no Central Whats para a instancia configurada —
+// GET /api/instances/{id}/templates, liberado pra mesma chave de servico que ja usamos pra
+// enviar (CENTRALWHATS_API_KEY). Substitui o processo manual de hoje (INSERT direto via
+// railway ssh toda vez que um template novo e aprovado na Meta).
+//
+// LEITURA, e nao envio: por isso NAO passa por modoMock()/forcarEnvioReal. Nao existe "modo
+// mock de consultar uma lista" — nao ha custo nem reputacao de numero em jogo aqui, so uma
+// chamada GET. O kill-switch de mock protege o ENVIO (enviarTemplate), nao a leitura.
+//
+// NUNCA LANCA — diferente de enviarTemplate (que lanca de proposito, ver o cabecalho do
+// arquivo). O chamador daqui e uma rota de admin (POST /admin/campanhas-whatsapp/
+// sincronizar-templates) que precisa devolver uma mensagem clara pro operador em caso de
+// falha, sem precisar de try/catch pra isso: erro de credencial, rede ou HTTP volta como
+// `{ ok: false, erro }`, sucesso como `{ ok: true, templates }`.
+async function listarTemplatesCentralWhats({ httpClient } = {}) {
+  const faltando = credenciaisFaltando();
+  if (faltando.length) {
+    return {
+      ok: false,
+      erro: `Credenciais do Central Whats ausentes: ${faltando.join(', ')}.`,
+    };
+  }
+
+  const c = cfg();
+  const http = httpClient || fetch;
+  const url = `${c.baseUrl}/api/instances/${c.instanceId}/templates`;
+
+  let resposta;
+  try {
+    resposta = await http(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${c.apiKey}` },
+    });
+  } catch (err) {
+    // Falha de TRANSPORTE (DNS, TLS, socket, timeout) — mesma distincao de enviarTemplate:
+    // a chamada nao chegou nem ao Central Whats.
+    return {
+      ok: false,
+      erro: `Falha de rede ao chamar o Central Whats: ${String(err && err.message).slice(0, MAX_DETALHE_ERRO)}`,
+    };
+  }
+
+  if (!resposta || !resposta.ok) {
+    const status = resposta ? resposta.status : 'sem resposta';
+    return {
+      ok: false,
+      erro: `Central Whats retornou HTTP ${status} — ${await detalheDoErro(resposta)}`,
+    };
+  }
+
+  let dados;
+  try {
+    dados = await resposta.json();
+  } catch {
+    return { ok: false, erro: 'Resposta do Central Whats nao e JSON valido.' };
+  }
+
+  if (!Array.isArray(dados)) {
+    return { ok: false, erro: 'Resposta do Central Whats em formato inesperado (esperava um array de templates).' };
+  }
+
+  return { ok: true, templates: dados };
+}
+
 module.exports = {
   enviarTemplate,
   montarPayload,
@@ -404,4 +470,5 @@ module.exports = {
   wamidMock,
   extrairWamid,
   TETO_RETENTAVEL,
+  listarTemplatesCentralWhats,
 };
