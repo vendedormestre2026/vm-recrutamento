@@ -476,9 +476,14 @@ function badgeStatus(status) {
 const STATUS_IA_VALIDOS = ['avancar', 'talvez', 'descartar', 'processando', 'indefinido', 'erro'];
 
 // Valores aceitos no FILTRO de Status Recrutador da listagem: o enum de escrita
-// (db.STATUS_RECRUTADOR_VALIDOS) mais o sentinela 'sem_decisao', que nao e gravavel —
-// representa "coluna NULL" e vira IS NULL na query (listarAplicacoesComContexto).
-const STATUS_RECRUTADOR_FILTRAVEIS = [...db.STATUS_RECRUTADOR_VALIDOS, 'sem_decisao'];
+// (db.STATUS_RECRUTADOR_VALIDOS) mais dois sentinelas que NAO sao status_recrutador
+// gravavel — 'sem_decisao' (coluna NULL) e 'em_entrevista' (estagio automatico de
+// applications.status, nao decisao humana; ver o comentario extenso em
+// condicoesFiltroCandidatos, sqlite.js). So o FILTRO ganha a opcao nova — os demais
+// selects de status_recrutador (edicao individual, inline, lote, checkboxes de campanha)
+// continuam com as mesmas 3 opcoes de sempre, de proposito: aqueles representam decisao
+// do recrutador, e "Em Entrevista" nao e uma decisao para gravar.
+const STATUS_RECRUTADOR_FILTRAVEIS = [...db.STATUS_RECRUTADOR_VALIDOS, 'sem_decisao', 'em_entrevista'];
 
 // Modos de visibilidade de arquivados na listagem (parametro `visibilidade`). O nome do
 // parametro NAO e 'arquivados' porque este ja significa outra coisa na query string: e a
@@ -1016,6 +1021,7 @@ router.get('/', (req, res) => {
         <select name="status_recrutador">
           <option value=""${statusRecrutador ? '' : ' selected'}>Todos</option>
           <option value="sem_decisao"${selRec('sem_decisao')}>Sem decisão</option>
+          <option value="em_entrevista"${selRec('em_entrevista')}>Em entrevista</option>
           <option value="em_analise"${selRec('em_analise')}>Em análise</option>
           <option value="aprovado"${selRec('aprovado')}>Aprovado</option>
           <option value="reprovado"${selRec('reprovado')}>Reprovado</option>

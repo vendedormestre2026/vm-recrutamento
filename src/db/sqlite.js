@@ -1483,12 +1483,32 @@ function condicoesFiltroCandidatos({
     where.push('a.status_ia = ?');
     params.push(statusIa);
   }
-  // Decisao do recrutador. Alem do enum (STATUS_RECRUTADOR_VALIDOS), aceita o valor
-  // SENTINELA 'sem_decisao', que nao e um status gravavel: vira "IS NULL" (a coluna
-  // nasce NULL e definirStatusRecrutador grava NULL para qualquer valor fora do enum).
-  // O OR com '' e defensivo, para bancos que porventura tenham string vazia gravada.
-  if (statusRecrutador === 'sem_decisao') {
-    where.push("(a.status_recrutador IS NULL OR a.status_recrutador = '')");
+  // Decisao do recrutador. Alem do enum (STATUS_RECRUTADOR_VALIDOS), aceita dois valores
+  // que NAO sao status_recrutador gravavel:
+  //
+  //   'em_entrevista' — NAO consulta status_recrutador. "Em Entrevista" nao e uma decisao
+  //   humana (nao ha CHECK, nao ha coluna nova): e o ESTAGIO automatico que ja vive em
+  //   applications.status (escrito sozinho em POST /api/interview/start e na conclusao —
+  //   ver api.js/lib/entrevista.js), reaproveitado aqui como um VALOR do dropdown "Status
+  //   Recrutador" sem duplicar o dado em lugar nenhum. Decisao registrada no diagnostico
+  //   anterior: adicionar coluna/valor novo em status_recrutador misturaria "estagio do
+  //   processo" com "julgamento do recrutador" no mesmo enum — duas naturezas diferentes.
+  //
+  //   'sem_decisao' — SENTINELA que nao e um status gravavel: vira "IS NULL" (a coluna
+  //   nasce NULL e definirStatusRecrutador grava NULL para qualquer valor fora do enum).
+  //   O OR com '' e defensivo, para bancos que porventura tenham string vazia gravada.
+  //
+  //   ── POR QUE 'sem_decisao' AGORA EXCLUI QUEM ESTA EM ENTREVISTA ──
+  //   Antes desta mudanca, "Sem decisao" misturava dois grupos operacionalmente diferentes:
+  //   quem AINDA NAO TERMINOU a entrevista (nem daria para avaliar) e quem JA TERMINOU e
+  //   esta esperando o recrutador decidir. Com 'em_entrevista' virando filtro proprio, o
+  //   grupo "Sem decisao" fica mais preciso — so quem JA PODE ser avaliado e ainda nao foi.
+  //   `a.status != 'em_entrevista'` inclui quem esta 'aplicado' (nem comecou) de proposito:
+  //   aquele tambem nao tem decisao ainda, e nunca esteve em entrevista para ser excluido daqui.
+  if (statusRecrutador === 'em_entrevista') {
+    where.push("a.status = 'em_entrevista'");
+  } else if (statusRecrutador === 'sem_decisao') {
+    where.push("(a.status_recrutador IS NULL OR a.status_recrutador = '') AND a.status != 'em_entrevista'");
   } else if (STATUS_RECRUTADOR_VALIDOS.includes(statusRecrutador)) {
     where.push('a.status_recrutador = ?');
     params.push(statusRecrutador);
