@@ -238,6 +238,35 @@ function montarConteudoVaga(vaga) {
     </article>`;
 }
 
+// ── Convite ao grupo de WhatsApp da praca (link curto por slug) ──
+//
+// Redirect puro: diferente das rotas de vaga, esta NAO faz parte do funil do candidato
+// (sem sessao, sem UTM, sem registro de acesso) — so leva quem clicou no botao do
+// template de WhatsApp direto pro grupo da cidade dele. `slug` vem de
+// regioes_grupos_whatsapp.slug (lib/slug.normalizarSlug sobre `cidade`, atribuido na
+// criacao da praca ou, para linhas anteriores a essa coluna, no backfill de migrate.js).
+//
+// db.obterLinkGrupoPorSlug ja colapsa em null os tres casos "slug nao existe", "praca
+// inativa" e "praca sem link cadastrado" — a rota nao precisa (nem deve) diferencia-los
+// pra quem clicou: os tres respondem o MESMO 404 generico, sem vazar qual dos tres era.
+router.get('/grupo/:slug', (req, res) => {
+  const link = db.obterLinkGrupoPorSlug(req.params.slug);
+  if (!link) {
+    return res.status(404).send(
+      pagina({
+        titulo: 'Grupo não encontrado',
+        tema: 'claro',
+        conteudo: placeholder({
+          titulo: 'Grupo não encontrado',
+          descricao: 'O link do grupo pode estar incorreto ou expirado.',
+          acao: botao('/', 'Voltar ao início', 'secundario'),
+        }),
+      }),
+    );
+  }
+  return res.redirect(302, link);
+});
+
 // ── Tela 1: Vaga ──
 router.get('/vaga/:slug', (req, res) => {
   const vaga = carregarVagaOuNull(req, res, req.params.slug);
