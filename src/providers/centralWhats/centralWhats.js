@@ -22,9 +22,11 @@
 // registra o opt-out A MAO. A tabela whatsapp_opt_out continua sendo consultada a cada envio
 // — o que sumiu foi a escrita automatica nela, nao a leitura.
 //
-//   enviarTemplate({ telefone, template, variaveis, httpClient }) -> { wamid, mock }
+//   enviarTemplate({ telefone, template, variaveis, httpClient, parametrosBotao }) ->
+//     { wamid, mock }
 // LANCA em qualquer falha. O chamador (o job) classifica com classificarErroCentralWhats e
-// decide entre retentar, desistir ou abortar o ciclo.
+// decide entre retentar, desistir ou abortar o ciclo. `parametrosBotao` e opcional e ainda
+// nao usado por nenhum chamador — ver o JSDoc de enviarTemplate, mais abaixo.
 
 const { mascarar } = require('../../whatsapp/sequenciaOutbox');
 
@@ -83,7 +85,10 @@ function wamidMock(telefone, nomeTemplate) {
 // "2", "3" sao as variaveis posicionais do corpo, na MESMA ordem que o job ja resolve — o
 // {{n}} do template aprovado. Quem traduz posicao -> chave e este modulo; o job continua
 // entregando um array.
-function montarPayload({ telefone, template, variaveis }) {
+//
+// `parametrosBotao` (opcional, ver JSDoc completo em enviarTemplate): mapa { indice: valor }
+// de parametro(s) de botao POR ENVIO, sobrepondo botao_parametro_fixo no(s) mesmo(s) indice(s).
+function montarPayload({ telefone, template, variaveis, parametrosBotao }) {
   const vars = {};
   (variaveis || []).forEach((v, i) => {
     vars[String(i + 1)] = String(v == null ? '' : v);
@@ -106,6 +111,29 @@ function montarPayload({ telefone, template, variaveis }) {
   // tem que ser "nao manda".
   const parametroBotao = String((template && template.botao_parametro_fixo) || '').trim();
   if (parametroBotao) vars.button0 = parametroBotao;
+
+  // ── BOTAO DINAMICO POR ENVIO (parametrosBotao) ──
+  //
+  // Aditivo e retrocompativel: quando `parametrosBotao` nao e passado (o caso de TODO
+  // chamador existente hoje — o job de campanha e o envio avulso de teste, nenhum dos dois
+  // muda de comportamento), este bloco e um no-op e o payload sai identico ao de antes,
+  // com o botao estrutural fixo acima (se houver).
+  //
+  // Quando passado, cada entrada SOBRESCREVE vars.button<indice> — inclusive o indice 0 que
+  // o bloco anterior acabou de preencher com botao_parametro_fixo. E o caso de uso previsto:
+  // um template com botao de URL dinamica cujo VALOR varia por destinatario (ex.: slug da
+  // cidade no link "Entrar no grupo"), diferente de botao_parametro_fixo, que e o MESMO
+  // valor para todo envio daquele template — ver o comentario do botao estrutural acima.
+  //
+  // Valor vazio/null NAO sobrescreve (mesma disciplina de "nao manda o que nao tem" do
+  // resto deste modulo): um `parametrosBotao: { 0: '' }` deixa o indice 0 como o bloco
+  // anterior o deixou, em vez de apagar um botao_parametro_fixo valido por engano.
+  if (parametrosBotao && typeof parametrosBotao === 'object') {
+    for (const [indice, valorBruto] of Object.entries(parametrosBotao)) {
+      const valor = String(valorBruto == null ? '' : valorBruto).trim();
+      if (valor) vars[`button${indice}`] = valor;
+    }
+  }
 
   // ── LANGUAGE (ETAPA B, Incremento 14) ──
   //
@@ -177,6 +205,24 @@ async function detalheDoErro(resposta) {
 // IDENTICO ao de sempre — nenhuma chamada existente (o job de disparo, em particular) passa
 // este parametro, entao nenhuma delas muda de comportamento.
 //
+// `parametrosBotao` (opcional): { <indice>: <valor> } — parametro(s) de botao POR ENVIO,
+// index 0 = primeiro botao do template (mesma posicao que templates_whatsapp.botao_parametro_fixo
+// preenche hoje, via `template.botao_parametro_fixo`). Default `undefined`, comportamento
+// IDENTICO ao de sempre: nenhum chamador existente passa isto ainda — ver montarPayload
+// para o detalhe de precedencia (parametrosBotao sobrescreve botao_parametro_fixo no mesmo
+// indice; indice ausente ou valor vazio cai no comportamento de sempre).
+//
+// Pensado para o botao de URL dinamica cujo VALOR muda por destinatario (ex.: slug da
+// cidade no link "Entrar no grupo" — ver src/lib/slug.js e GET /grupo/:slug), diferente
+// de botao_parametro_fixo, que e uma propriedade do TEMPLATE (mesmo valor pra todo envio
+// daquele template, independente de quem recebe).
+//
+// ⚠️ SO A CAPACIDADE: nenhum chamador (lib/campanhaWhatsapp.js, o job de campanha, o envio
+// avulso de teste em routes/admin_campanha_whatsapp.js) passa parametrosBotao ainda. Ligar
+// isto a um envio real fica para depois que o template com botao dinamico de verdade for
+// aprovado pela Meta — a integracao decide DE ONDE o valor por destinatario vem (a linha
+// da fila ja tem `cidade`, ver lib/campanhaWhatsapp.js:226) e nao e escopo deste incremento.
+//
 // ── POR QUE ISTO EXISTE, EM VEZ DE SETAR META_CAMPANHA_MOCK NO PROCESSO ──
 // src/scripts/teste-envio-unico-central-whats.js:14-19 ja documenta a saida que ESTE modulo
 // nao tinha: `process.env.META_CAMPANHA_MOCK = 'false'` funciona ali porque o script roda
@@ -186,11 +232,18 @@ async function detalheDoErro(resposta) {
 // pedido isso. `forcarEnvioReal` resolve o mesmo problema (furar o mock para UM envio) sem
 // tocar em estado global: o override vale so para ESTA chamada, e o processo continua em
 // mock para todo o resto (inclusive o proximo ciclo do job, rodando no mesmo processo).
-async function enviarTemplate({ telefone, template, variaveis, httpClient, forcarEnvioReal = false } = {}) {
+async function enviarTemplate({
+  telefone,
+  template,
+  variaveis,
+  httpClient,
+  forcarEnvioReal = false,
+  parametrosBotao,
+} = {}) {
   if (!telefone) throw new Error('Destinatario de WhatsApp ausente.');
   if (!template || !template.nome_meta) throw new Error('Template sem nome_meta: nada a enviar.');
 
-  const payload = montarPayload({ telefone, template, variaveis });
+  const payload = montarPayload({ telefone, template, variaveis, parametrosBotao });
 
   // ── MODO MOCK: nenhuma chamada de rede ──
   // Registra o que SAIRIA, com o telefone MASCARADO (o stdout do Railway e lido por mais

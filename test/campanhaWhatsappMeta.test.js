@@ -548,6 +548,76 @@ test('botao: template com a coluna NULL nao recebe botao no envio real', async (
   assert.equal('button0' in p.vars, false);
 });
 
+// ══════════════════ parametrosBotao: botao dinamico POR ENVIO (capacidade, ainda sem uso) ══════════════════
+//
+// Ainda nao ha template aprovado com botao de URL dinamica de verdade; estes testes cobrem
+// so a CAPACIDADE nova de montarPayload/enviarTemplate, sem tocar lib/campanhaWhatsapp.js —
+// a integracao fica para depois (ver o comentario de enviarTemplate em centralWhats.js).
+
+test('parametrosBotao: omitido -> comportamento identico ao de antes (regressao)', () => {
+  // Nenhum chamador existente passa parametrosBotao. O payload tem que sair BYTE a BYTE
+  // igual ao que os testes de "botao estrutural" acima ja verificam.
+  const semParametro = transporte.montarPayload({
+    telefone: '5547999582500',
+    template: { ...TEMPLATE, botao_parametro_fixo: 'indisponivel' },
+    variaveis: ['Ana'],
+  });
+  const comUndefined = transporte.montarPayload({
+    telefone: '5547999582500',
+    template: { ...TEMPLATE, botao_parametro_fixo: 'indisponivel' },
+    variaveis: ['Ana'],
+    parametrosBotao: undefined,
+  });
+  assert.deepEqual(semParametro, comUndefined);
+  assert.equal(semParametro.vars.button0, 'indisponivel');
+});
+
+test('parametrosBotao: preenchido sobrescreve o button0 que botao_parametro_fixo teria posto', () => {
+  const p = transporte.montarPayload({
+    telefone: '5547999582500',
+    // botao_parametro_fixo continua 'indisponivel' (o botao estrutural morto) — o valor de
+    // VERDADE (por destinatario) chega por parametrosBotao e tem que ganhar.
+    template: { ...TEMPLATE, botao_parametro_fixo: 'indisponivel' },
+    variaveis: ['Ana'],
+    parametrosBotao: { 0: 'sao-paulo' },
+  });
+  assert.equal(p.vars.button0, 'sao-paulo');
+});
+
+test('parametrosBotao: funciona tambem quando o template NAO tem botao_parametro_fixo', () => {
+  const p = transporte.montarPayload({
+    telefone: '5547999582500',
+    template: { ...TEMPLATE, botao_parametro_fixo: null },
+    variaveis: ['Ana'],
+    parametrosBotao: { 0: 'joinville' },
+  });
+  assert.equal(p.vars.button0, 'joinville');
+});
+
+test('parametrosBotao: indice vazio/null nao sobrescreve (nao apaga um botao_parametro_fixo valido)', () => {
+  const p = transporte.montarPayload({
+    telefone: '5547999582500',
+    template: { ...TEMPLATE, botao_parametro_fixo: 'indisponivel' },
+    variaveis: ['Ana'],
+    parametrosBotao: { 0: '' },
+  });
+  assert.equal(p.vars.button0, 'indisponivel');
+});
+
+test('parametrosBotao: enviarTemplate aceita o parametro sem lancar (mock, sem rede)', async () => {
+  const { r } = await semRuido(() =>
+    transporte.enviarTemplate({
+      telefone: '5547999582500',
+      template: { ...TEMPLATE, botao_parametro_fixo: null },
+      variaveis: ['Ana'],
+      parametrosBotao: { 0: 'joinville' },
+    }));
+  // Em mock nao ha payload observavel de fora (nao ha chamada de rede) — a garantia aqui e
+  // so que passar parametrosBotao nao lanca nem muda o contrato de retorno.
+  assert.equal(r.mock, true);
+  assert.ok(r.wamid);
+});
+
 // ══════════════════ Language explicito no payload (ETAPA B, Incremento 14) ══════════════════
 //
 // Ate aqui o payload nao levava idioma nenhum, por decisao deliberada — um envio real de
