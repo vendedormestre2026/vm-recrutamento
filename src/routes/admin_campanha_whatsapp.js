@@ -166,8 +166,25 @@ function checkboxes(escapeHtml, nome, pares, marcados) {
     .join('');
 }
 
-function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
+function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
   const inteiro = (v) => (fmtInt ? fmtInt(v) : String(v));
+
+  // ── Aviso pos-sincronizacao de templates, sinalizado por query string apos o redirect ──
+  // Mesmo padrao de admin.js (flashLista: arquivados/restaurados/status_recrutador_aplicados
+  // — numero na query string, lido e formatado aqui).
+  const nSyncNovos = Number(query.sync_novos);
+  const nSyncAtualizados = Number(query.sync_atualizados);
+  const nSyncIgnorados = Number(query.sync_ignorados);
+  const flashSync =
+    query.sync_erro != null
+      ? `<div class="aviso-alerta">Não foi possível sincronizar com o Central Whats: ${escapeHtml(String(query.sync_erro))}</div>`
+      : query.sync_novos != null && Number.isInteger(nSyncNovos) && Number.isInteger(nSyncAtualizados)
+        ? `<div class="aviso-ok">Sincronização concluída: ${nSyncNovos} template(s) novo(s), ${nSyncAtualizados} atualizado(s)${
+            Number.isInteger(nSyncIgnorados) && nSyncIgnorados > 0
+              ? `, ${nSyncIgnorados} ignorado(s) (status diferente de aprovado ou dado incompleto)`
+              : ''
+          }.</div>`
+        : '';
 
   const templates = db.listarTemplatesWhatsapp();
   // ETAPA B, Incremento 9: os DOIS <select> de escolha (Nova campanha, Testar envio avulso)
@@ -278,6 +295,13 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt }) {
         Templates vivem na Meta e são aprovados lá. Esta tabela é um espelho — editar aqui
         não mudaria o que a Meta envia, por isso é somente leitura.
       </p>
+      ${flashSync}
+      <form method="post" action="/admin/campanhas-whatsapp/sincronizar-templates" style="margin:0 0 .75rem;">
+        <button type="submit" class="btn btn--ghost">Sincronizar templates</button>
+        <span style="color:var(--cinza);font-size:.8rem;margin-left:.5rem;">
+          Busca os templates aprovados na Meta (via Central Whats) e atualiza esta tabela.
+        </span>
+      </form>
       <div class="admin-tab-scroll">
         <table class="admin-tab" style="min-width:auto">
           <thead><tr><th>Nome na Meta</th><th>Idioma</th><th>Categoria</th><th>Variáveis</th></tr></thead>
@@ -598,8 +622,46 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
 
   // ── GET / ── a tela ──
   router.get('/', (req, res) => {
-    const conteudo = montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt });
+    const conteudo = montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query: req.query || {} });
     res.send(paginaAdmin({ titulo: 'Campanha por WhatsApp', conteudo }));
+  });
+
+  // ── POST /sincronizar-templates ── busca os templates aprovados no Central Whats e faz
+  // upsert local (templates_whatsapp) — substitui o INSERT manual via railway ssh usado ate
+  // hoje toda vez que um template novo e aprovado na Meta.
+  //
+  // NAO reusa a materializacao de campanha nem nenhuma fila: e uma acao SINCRONA e RARA
+  // (um clique manual, no maximo algumas vezes por mes), disparada pelo operador — nao ha
+  // motivo para passar por um ciclo periodico so pra isto. listarTemplatesCentralWhats NAO
+  // lanca por contrato (devolve { ok: false, erro }, ver centralWhats.js) — mas o try/catch
+  // abaixo e defesa em profundidade, mesmo padrao de POST /enviar-teste neste arquivo: o
+  // Express 4 NAO captura sozinho uma rejeicao de handler async, e se algum dia o contrato
+  // de "nunca lanca" for violado (aqui ou num transporte injetado em teste), a rota
+  // continua respondendo com um redirect claro em vez de derrubar a requisicao sem resposta.
+  router.post('/sincronizar-templates', async (req, res) => {
+    try {
+      const resultado = await transporte.listarTemplatesCentralWhats();
+      if (!resultado.ok) {
+        return res.redirect(`/admin/campanhas-whatsapp?sync_erro=${encodeURIComponent(resultado.erro)}`);
+      }
+
+      let novos = 0;
+      let atualizados = 0;
+      let ignorados = 0;
+      for (const t of resultado.templates) {
+        const r = db.sincronizarTemplateWhatsapp(t);
+        if (r.ignorado) ignorados += 1;
+        else if (r.novo) novos += 1;
+        else atualizados += 1;
+      }
+
+      return res.redirect(
+        `/admin/campanhas-whatsapp?sync_novos=${novos}&sync_atualizados=${atualizados}&sync_ignorados=${ignorados}`,
+      );
+    } catch (err) {
+      console.error(`[campanha-wa] sincronizacao de templates falhou inesperadamente: ${err.message}`);
+      return res.redirect(`/admin/campanhas-whatsapp?sync_erro=${encodeURIComponent(err.message)}`);
+    }
   });
 
   // ── POST /regiao ── salva o link de UMA praca ──
