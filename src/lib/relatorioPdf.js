@@ -15,6 +15,7 @@
 const PDFDocument = require('pdfkit');
 const { rotuloNivel, textoGap, rotuloVeredito, estiloRecomendacao, calcularPontuacaoGeral } =
   require('./relatorio');
+const { normalizarSlug } = require('./slug');
 
 // ── Paleta da marca ──
 // Preto para titulo e corpo; laranja SO em acento (regra de recomendacao e fio de secao),
@@ -53,17 +54,11 @@ function nomeDoCandidato(candidato) {
 
 // Slug para o nome do arquivo baixado: sem acento, minusculo, so [a-z0-9-].
 // Exportado porque quem monta o Content-Disposition e a rota.
-// (Existe um gerarSlugBase em routes/admin.js, mas ele e local aquela camada e tem
-// fallback 'vaga'; uma lib nao deve importar de uma rota.)
+// normalizarSlug vem de lib/slug.js (modulo compartilhado, sem dependencia de rota \u2014
+// a razao pela qual isto vivia duplicado aqui deixou de existir). Fallback 'candidato'
+// (diferente do 'vaga' de gerarSlugBase) continua aqui, especifico deste consumidor.
 function slugNome(texto) {
-  const base = String(texto || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // remove diacriticos
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-  return base || 'candidato';
+  return normalizarSlug(texto) || 'candidato';
 }
 
 // ── Blocos de desenho ──
