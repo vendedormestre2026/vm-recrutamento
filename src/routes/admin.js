@@ -29,6 +29,9 @@ const { removerAudioDaEntrevista } = require('../lib/audioEntrevista');
 const dispararPromocao = require('../lib/dispararPromocao');
 const emailTestePromocao = require('../lib/emailTestePromocao');
 const { listarCidadesValidas, normalizarCidade, chave: chaveCidade } = require('../lib/cidades');
+// gerarSlugBase: mesma normalizacao usada aqui (slug de vaga) e em qualquer outro
+// consumidor futuro (slug de cidade, em regioes_grupos_whatsapp) — ver src/lib/slug.js.
+const { gerarSlugBase } = require('../lib/slug');
 const { mimetypePorExtensao } = require('../lib/curriculo');
 const {
   normalizarTelefoneWhatsapp,
@@ -3123,18 +3126,6 @@ const REGIMES = [
 // que e o oposto do objetivo. Chamada de dentro de camposVagaHtml, a cada render do form.
 function opcoesCidade() {
   return listarCidadesValidas().map((c) => [c, c]);
-}
-
-// Gera um slug-base a partir do titulo: sem acentos, minusculo, so [a-z0-9-].
-function gerarSlugBase(titulo) {
-  const base = String(titulo || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // remove diacriticos (acentos)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-  return base || 'vaga';
 }
 
 // Garante unicidade do slug (coluna UNIQUE): se ja existir, anexa -2, -3, ...
