@@ -23,6 +23,7 @@ const { extrairYoutubeId } = require('../lib/youtube');
 const { modoEntrevistaAtivo } = require('../lib/modo');
 const followup = require('../lib/followupEntrevista');
 const emailRecusa = require('../lib/emailRecusa');
+const decisaoRecrutador = require('../lib/decisaoRecrutador');
 const lembreteInicio = require('../lib/lembreteInicio');
 const limpezaAudio = require('../lib/limpezaAudio');
 const { removerAudioDaEntrevista } = require('../lib/audioEntrevista');
@@ -2423,9 +2424,11 @@ router.post('/candidato/:id/status-recrutador', (req, res) => {
   }
 
   const valor = (req.body && req.body.status_recrutador) || null;
-  // definirStatusRecrutador devolve o valor FINAL gravado (null quando fora do enum) —
-  // e ele que volta no JSON, para a lista refletir o que o banco tem, nao o que pediu.
-  const gravado = db.definirStatusRecrutador(id, valor);
+  // aplicarDecisaoRecrutador (lib/decisaoRecrutador.js) grava e, se o valor final for
+  // 'reprovado', aciona o agendamento da mensagem automatica — mesmo contrato de retorno
+  // de db.definirStatusRecrutador (valor FINAL gravado, null quando fora do enum), e ele
+  // que volta no JSON, para a lista refletir o que o banco tem, nao o que pediu.
+  const gravado = decisaoRecrutador.aplicarDecisaoRecrutador(id, valor);
   if (ehJson) {
     return res.json({ ok: true, status_recrutador: gravado });
   }
@@ -2590,7 +2593,7 @@ router.post('/candidatos/status-recrutador-lote', (req, res) => {
   let aplicados = 0;
   for (const id of ids) {
     if (!db.obterAplicacao(id)) continue;
-    db.definirStatusRecrutador(id, valor);
+    decisaoRecrutador.aplicarDecisaoRecrutador(id, valor);
     aplicados += 1;
   }
   params.set('status_recrutador_aplicados', String(aplicados));
