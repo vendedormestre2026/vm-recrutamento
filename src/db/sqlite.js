@@ -3307,23 +3307,6 @@ function extrairVariaveisDoBody(components) {
     .map((posicao) => ({ posicao, campo: `PLACEHOLDER_CAMPO_${posicao}` }));
 }
 
-// Valor do componente BUTTON, se houver. null quando nao ha botao no template.
-//
-// ⚠️ NOME DO CAMPO — SUPOSICAO DOCUMENTADA, NAO CONFIRMADA: o payload de exemplo fornecido
-// (GET /api/instances/{id}/templates) so mostrou componentes BODY e FOOTER, nenhum BUTTON —
-// mesma situacao (e mesmo tratamento) do campo `language` no payload de ENVIO, documentada
-// em montarPayload de centralWhats.js. Tenta os nomes mais plausiveis, na ordem `url` ->
-// `value` -> `text`. Se isto se provar errado quando o primeiro template com botao de
-// verdade for sincronizado, o sintoma vai ser botao_parametro_fixo continuando NULL mesmo
-// com um componente BUTTON presente — reabra este comentario antes de tentar de novo.
-function extrairBotaoDoComponente(components) {
-  const botao = (Array.isArray(components) ? components : []).find((c) => c && c.type === 'BUTTON');
-  if (!botao) return null;
-  const valor = botao.url || botao.value || botao.text || null;
-  const limpo = valor == null ? '' : String(valor).trim();
-  return limpo || null;
-}
-
 // Upsert de UM template vindo de centralWhats.listarTemplatesCentralWhats. Devolve
 // `{ ignorado: true, motivo }` (status != APPROVED, ou dado essencial ausente) ou
 // `{ ignorado: false, novo, nomeMeta }` (novo=true em INSERT, false em UPDATE).
@@ -3332,7 +3315,7 @@ function extrairBotaoDoComponente(components) {
 // Sao propriedades do template aprovado NA META — a Meta e a fonte da verdade pra elas, e
 // um sync que nao as atualiza ficaria divergente do que esta aprovado de verdade.
 //
-// ── O QUE NUNCA E TOCADO NUM UPDATE (so no INSERT inicial): ativo, variaveis ──
+// ── O QUE NUNCA E TOCADO NUM UPDATE (so no INSERT inicial): ativo, variaveis, botao_parametro_fixo ──
 // `ativo`: e uma escolha OPERACIONAL local (o operador decide se aquele template pode ser
 // oferecido nas telas de envio), nao uma propriedade do template na Meta — reativar/desativar
 // e acao humana deliberada (ver o comentario de listarTemplatesWhatsapp), e um sync
@@ -3342,14 +3325,22 @@ function extrairBotaoDoComponente(components) {
 // apagaria um mapeamento real ja configurado e o trocaria por PLACEHOLDER_CAMPO_N, quebrando
 // silenciosamente todo envio daquele template ate alguem notar.
 //
-// ── botao_parametro_fixo: EXCECAO — COALESCE, nao preservacao pura ──
-// Ao contrario de ativo/variaveis, este campo prefere o valor NOVO da API quando ela traz um
-// (COALESCE(novo, antigo)): um botao e propriedade do template aprovado, entao um valor novo
-// vindo de la e informacao mais atual que a nossa. So NAO apaga o valor local quando a API
-// simplesmente nao lista nenhum componente BUTTON desta vez — ausencia na resposta nao pode
-// significar "botao foi removido", porque o template continua exigindo o parametro na hora do
-// envio (erro 131008, ver o comentario extenso em centralWhats.js:montarPayload) independente
-// do que este sync particular trouxe.
+// ── botao_parametro_fixo: NUNCA lido do payload da Meta (revertido apos teste real) ──
+// Ate a sessao anterior, este campo tentava extrair um valor de um componente `type: 'BUTTON'`
+// no payload. Testado contra o Central Whats de verdade, isso se provou duplamente errado:
+//   1. o formato real e `type: 'BUTTONS'` (PLURAL), com um array `buttons: [...]` aninhado —
+//      `components.find(c => c.type === 'BUTTON')` nunca casava com nada;
+//   2. mesmo corrigindo o nome do tipo, o campo `url` desses botoes contem o PADRAO da URL
+//      do template, com o placeholder `{{1}}` ainda LITERAL dentro da string (ex.:
+//      "https://entrevista.vendedormestre.com.br/grupo/{{1}}") — nao e um valor pronto pra
+//      usar como parametro fixo, e um botao de URL DINAMICA por definicao (a Meta so aprova
+//      o PADRAO; o valor real e preenchido por envio — ver `parametrosBotao` em
+//      centralWhats.js, feito exatamente pra esse caso). Gravar essa string literal, com
+//      "{{1}}" embutido, em botao_parametro_fixo teria corrompido templates que ja funcionam.
+// Nao existe, neste payload, NENHUM campo que sirva como "valor fixo utilizavel" — por isso a
+// coluna passa a ser preenchida exclusivamente A MAO por quem cadastra/ajusta o template
+// (mesmo fluxo de sempre, via SQL direto), e o sync nunca escreve nela, nem no INSERT (nasce
+// NULL) nem no UPDATE (fora do SET, igual a ativo/variaveis agora).
 function sincronizarTemplateWhatsapp(templateCentralWhats) {
   const t = templateCentralWhats || {};
 
@@ -3370,23 +3361,23 @@ function sincronizarTemplateWhatsapp(templateCentralWhats) {
 
   const idioma = String(t.language || '').trim() || 'pt_BR';
   const variaveis = JSON.stringify(extrairVariaveisDoBody(t.components));
-  const botaoDaApi = extrairBotaoDoComponente(t.components);
 
   const jaExistia = Boolean(
     getDb().prepare('SELECT 1 FROM templates_whatsapp WHERE nome_meta = ?').get(nomeMeta),
   );
 
+  // botao_parametro_fixo FORA do INSERT (nasce NULL, o default da coluna) e FORA do
+  // DO UPDATE SET (preservado, igual a ativo/variaveis) — o sync nunca escreve nele.
   getDb()
     .prepare(
-      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo, ativo)
-       VALUES (@nomeMeta, @idioma, @categoria, @variaveis, @botaoDaApi, 1)
+      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo)
+       VALUES (@nomeMeta, @idioma, @categoria, @variaveis, 1)
        ON CONFLICT(nome_meta) DO UPDATE SET
          idioma = excluded.idioma,
          categoria = excluded.categoria,
-         botao_parametro_fixo = COALESCE(excluded.botao_parametro_fixo, templates_whatsapp.botao_parametro_fixo),
          atualizado_em = datetime('now')`,
     )
-    .run({ nomeMeta, idioma, categoria, variaveis, botaoDaApi });
+    .run({ nomeMeta, idioma, categoria, variaveis });
 
   return { ignorado: false, novo: !jaExistia, nomeMeta };
 }

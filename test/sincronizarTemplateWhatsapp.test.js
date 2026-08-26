@@ -58,24 +58,41 @@ test('insert de template novo: grava categoria minuscula, ativo=1, variaveis ext
   ]);
 });
 
-test('template SEM componente BUTTON: nao quebra, botao_parametro_fixo fica NULL', () => {
+test('insert, template SEM nenhum componente de botao: botao_parametro_fixo nasce NULL', () => {
   zerar();
   const r = db.sincronizarTemplateWhatsapp(templateApi());
   assert.equal(r.ignorado, false);
   assert.equal(linha('confirmacao_pedido').botao_parametro_fixo, null);
 });
 
-test('template COM componente BUTTON: extrai o valor pro botao_parametro_fixo', () => {
+// Regressao: ate a sessao anterior, esta funcao tentava extrair um valor de botao do
+// payload — removido apos teste real (ver o comentario extenso de sincronizarTemplateWhatsapp
+// em sqlite.js sobre os dois motivos). Este teste usa o formato REAL observado contra o
+// Central Whats de producao (type: "BUTTONS", plural, com array `buttons` aninhado, url com
+// o placeholder "{{1}}" literal) — nao mais o formato hipotetico "type: BUTTON" de antes.
+test('insert, payload REAL com botao de URL dinamica (type: BUTTONS): botao_parametro_fixo continua NULL', () => {
   zerar();
   db.sincronizarTemplateWhatsapp(
     templateApi({
+      name: 'convite_grupo_vagas_vm',
       components: [
-        { type: 'BODY', text: 'Olá {{1}}.' },
-        { type: 'BUTTON', sub_type: 'URL', url: 'https://chat.whatsapp.com/exemplo' },
+        { type: 'BODY', text: 'Oi {{1}}! Confira vagas em {{2}}.' },
+        { type: 'FOOTER', text: 'Vendedor Mestre' },
+        {
+          type: 'BUTTONS',
+          buttons: [
+            {
+              type: 'URL',
+              text: 'Entrar no Grupo',
+              url: 'https://entrevista.vendedormestre.com.br/grupo/{{1}}',
+              example: ['https://entrevista.vendedormestre.com.br/grupo/joinville'],
+            },
+          ],
+        },
       ],
     }),
   );
-  assert.equal(linha('confirmacao_pedido').botao_parametro_fixo, 'https://chat.whatsapp.com/exemplo');
+  assert.equal(linha('convite_grupo_vagas_vm').botao_parametro_fixo, null);
 });
 
 test("status diferente de APPROVED e ignorado silenciosamente (sem lancar, sem gravar linha)", () => {
@@ -110,30 +127,34 @@ test('update de template existente: idioma/categoria atualizam, ativo e variavei
   );
 });
 
-test('update: botao_parametro_fixo usa o valor NOVO da API quando ela traz um componente BUTTON', () => {
+test('update: botao_parametro_fixo NUNCA e escrito pelo sync, mesmo quando o payload tem um botao de URL dinamica (formato real)', () => {
   zerar();
   exec(
     `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo)
-     VALUES ('confirmacao_pedido', 'pt_BR', 'utility', '[]', 'url-antiga')`,
+     VALUES ('confirmacao_pedido', 'pt_BR', 'utility', '[]', 'valor-configurado-a-mao')`,
   );
   db.sincronizarTemplateWhatsapp(
     templateApi({
       components: [
         { type: 'BODY', text: 'Olá {{1}}.' },
-        { type: 'BUTTON', url: 'https://novo-link-da-meta' },
+        { type: 'BUTTONS', buttons: [{ type: 'URL', url: 'https://outro-template.com/{{1}}' }] },
       ],
     }),
   );
-  assert.equal(linha('confirmacao_pedido').botao_parametro_fixo, 'https://novo-link-da-meta');
+  assert.equal(
+    linha('confirmacao_pedido').botao_parametro_fixo,
+    'valor-configurado-a-mao',
+    'o sync nao pode sobrescrever um valor configurado a mao, nunca — nem com botao presente no payload',
+  );
 });
 
-test('update: SEM componente BUTTON na resposta, o valor local existente e PRESERVADO (ausencia != remocao)', () => {
+test('update: SEM nenhum componente de botao no payload, o valor local tambem e PRESERVADO', () => {
   zerar();
   exec(
     `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo)
      VALUES ('confirmacao_pedido', 'pt_BR', 'utility', '[]', 'url-que-tem-que-sobreviver')`,
   );
-  db.sincronizarTemplateWhatsapp(templateApi()); // sem BUTTON nos components
+  db.sincronizarTemplateWhatsapp(templateApi()); // sem nenhum componente de botao
   assert.equal(linha('confirmacao_pedido').botao_parametro_fixo, 'url-que-tem-que-sobreviver');
 });
 
