@@ -548,11 +548,13 @@ test('botao: template com a coluna NULL nao recebe botao no envio real', async (
   assert.equal('button0' in p.vars, false);
 });
 
-// ══════════════════ parametrosBotao: botao dinamico POR ENVIO (capacidade, ainda sem uso) ══════════════════
+// ══════════════════ parametrosBotao: botao dinamico POR ENVIO (capacidade) ══════════════════
 //
-// Ainda nao ha template aprovado com botao de URL dinamica de verdade; estes testes cobrem
-// so a CAPACIDADE nova de montarPayload/enviarTemplate, sem tocar lib/campanhaWhatsapp.js —
-// a integracao fica para depois (ver o comentario de enviarTemplate em centralWhats.js).
+// Estes testes cobrem a CAPACIDADE de montarPayload/enviarTemplate isolada (sem tocar rota
+// nem ciclo real). A integracao com os dois chamadores de verdade — convite_grupo_vagas_vm,
+// o primeiro template aprovado com botao de URL dinamica — tem os proprios testes mais
+// abaixo: "POST /enviar-teste: convite_grupo_vagas_vm..." (envio avulso) e "ciclo: convite_grupo
+// com botao dinamico..." (campanha real).
 
 test('parametrosBotao: omitido -> comportamento identico ao de antes (regressao)', () => {
   // Nenhum chamador existente passa parametrosBotao. O payload tem que sair BYTE a BYTE
@@ -3149,4 +3151,60 @@ test('POST /enviar-teste: template fora da lista de botao dinamico NAO recebe pa
 
   assert.equal(chamadas.length, 1);
   assert.equal(chamadas[0].parametrosBotao, undefined);
+});
+
+// ══════════════════ button0 dinamico no CICLO REAL (Incremento 3) ══════════════════
+//
+// Mesmo caso do Incremento 2, agora no caminho de campanha materializada
+// (processarCicloCampanhaWhatsapp) — nao no envio avulso. Mesmo fake construido sobre
+// montarPayload de verdade, reproduzindo a validacao real da Central Whats.
+//
+// BUG-PRA-CONFIRMAR: com `parametrosBotao` removido de lib/campanhaWhatsapp.js, este teste
+// FALHA (resumo.enviados fica 0, resumo.falhas vira 1, e a linha da fila registra o erro
+// 400 real) — testado manualmente comentando a linha antes de reaplicar o fix. Com o fix,
+// passa.
+test('ciclo: convite_grupo com botao dinamico manda o link do grupo como button0', async () => {
+  zerar();
+  db.definirConfigBool(job.CHAVE_ATIVO, true);
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo) VALUES (?, ?, ?, ?, NULL)',
+      'convite_grupo_vagas_vm', 'pt_BR', 'marketing',
+      JSON.stringify([
+        { posicao: 1, campo: 'nome_primeiro' },
+        { posicao: 2, campo: 'cargo_vaga' },
+        { posicao: 3, campo: 'cidade' },
+      ]),
+    ).lastInsertRowid,
+  );
+  exec(
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo) VALUES (?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/CICLOBOTAODINAMICO',
+  );
+  const cid = db.criarCampanhaWhatsapp({ nome: 'Convite grupo botao dinamico', templateId: tid, baseAlvo: 'ambos' });
+  db.definirStatusCampanhaWhatsapp(cid, 'ativa');
+  adicionar(cid, '5547999582500', 'Ana Paula', 'Joinville');
+
+  const recebido = [];
+  const enviarTemplateFalso = async (args) => {
+    recebido.push(args);
+    const payload = transporte.montarPayload(args);
+    if (args.template.nome_meta === 'convite_grupo_vagas_vm' && !payload.vars.button0) {
+      throw new Error(
+        'Central Whats retornou HTTP 400 — {"error":"Template \\"convite_grupo_vagas_vm\\": o ' +
+          'botão de índice 0 tem URL dinâmica e exige a variável \\"button0\\", que não foi ' +
+          'informada."}',
+      );
+    }
+    return { wamid: 'wamid-ciclo-botao-ok' };
+  };
+
+  const { r: resumo } = await semRuido(() =>
+    job.processarCicloCampanhaWhatsapp(deps({ enviarTemplate: enviarTemplateFalso })));
+
+  assert.equal(recebido.length, 1);
+  assert.equal(resumo.enviados, 1, JSON.stringify(resumo));
+  assert.equal(resumo.falhas, 0, JSON.stringify(resumo));
+  assert.equal(fila(cid)[0].status, 'enviado');
+  assert.equal(fila(cid)[0].wamid, 'wamid-ciclo-botao-ok');
 });

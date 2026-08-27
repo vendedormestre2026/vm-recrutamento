@@ -27,6 +27,7 @@ const transporte = require('../providers/centralWhats/centralWhats');
 const { normalizarTelefoneRecebido } = require('./whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
 const { montarUrlVaga, UTM_SOURCE_WHATSAPP } = require('./ctaCampanha');
+const { precisaBotaoDinamico } = require('./templatesWhatsapp');
 
 // Interruptor de DISPARO, no store `configuracoes` — mesmo padrao de promocao_ativa e
 // whatsapp_sequencia_ativa. Config de BANCO, com checkbox no painel; nao e env.
@@ -226,6 +227,16 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
       cidade: linha.cidade || '',
     });
 
+    // ── BOTAO DINAMICO (Incremento 3, mesmo caso do envio avulso em admin_campanha_whatsapp.js)
+    // precisaBotaoDinamico(nome_meta) e a mesma lista fechada de lib/templatesWhatsapp.js — o
+    // `link` desta linha (ja calculado acima, so pra convite_grupo) e o MESMO valor que
+    // alimenta a variavel de corpo link_grupo_regiao; aqui ele tambem vira o parametro de
+    // botao que a Meta exige pra templates com URL dinamica. Sem link (`link` = '') fica
+    // undefined de proposito: a linha ja foi recusada acima (passo 2, "praca sem link
+    // cadastrado") ANTES de chegar aqui, entao este `if` so importa quando link e verdadeiro.
+    const parametrosBotao =
+      precisaBotaoDinamico(linha.template_nome) && link ? { 0: link } : undefined;
+
     try {
       const { wamid } = await enviar({
         telefone,
@@ -239,6 +250,7 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
           botao_parametro_fixo: linha.template_botao_parametro_fixo,
         },
         variaveis,
+        parametrosBotao,
         httpClient: deps.httpClient,
       });
       db.marcarEnvioWhatsappEnviado(linha.id, wamid);

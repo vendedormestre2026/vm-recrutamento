@@ -25,8 +25,10 @@
 //   enviarTemplate({ telefone, template, variaveis, httpClient, parametrosBotao }) ->
 //     { wamid, mock }
 // LANCA em qualquer falha. O chamador (o job) classifica com classificarErroCentralWhats e
-// decide entre retentar, desistir ou abortar o ciclo. `parametrosBotao` e opcional e ainda
-// nao usado por nenhum chamador — ver o JSDoc de enviarTemplate, mais abaixo.
+// decide entre retentar, desistir ou abortar o ciclo. `parametrosBotao` e opcional — usado
+// pelos dois chamadores (envio avulso e ciclo real) so para templates com botao de URL
+// dinamica, ver precisaBotaoDinamico em lib/templatesWhatsapp.js e o JSDoc de enviarTemplate,
+// mais abaixo.
 
 const { mascarar } = require('../../whatsapp/sequenciaOutbox');
 
@@ -208,20 +210,21 @@ async function detalheDoErro(resposta) {
 // `parametrosBotao` (opcional): { <indice>: <valor> } — parametro(s) de botao POR ENVIO,
 // index 0 = primeiro botao do template (mesma posicao que templates_whatsapp.botao_parametro_fixo
 // preenche hoje, via `template.botao_parametro_fixo`). Default `undefined`, comportamento
-// IDENTICO ao de sempre: nenhum chamador existente passa isto ainda — ver montarPayload
-// para o detalhe de precedencia (parametrosBotao sobrescreve botao_parametro_fixo no mesmo
-// indice; indice ausente ou valor vazio cai no comportamento de sempre).
+// IDENTICO ao de sempre pra quem nao passa — ver montarPayload para o detalhe de precedencia
+// (parametrosBotao sobrescreve botao_parametro_fixo no mesmo indice; indice ausente ou valor
+// vazio cai no comportamento de sempre).
 //
-// Pensado para o botao de URL dinamica cujo VALOR muda por destinatario (ex.: slug da
-// cidade no link "Entrar no grupo" — ver src/lib/slug.js e GET /grupo/:slug), diferente
-// de botao_parametro_fixo, que e uma propriedade do TEMPLATE (mesmo valor pra todo envio
+// Pensado para o botao de URL dinamica cujo VALOR muda por destinatario, diferente de
+// botao_parametro_fixo, que e uma propriedade do TEMPLATE (mesmo valor pra todo envio
 // daquele template, independente de quem recebe).
 //
-// ⚠️ SO A CAPACIDADE: nenhum chamador (lib/campanhaWhatsapp.js, o job de campanha, o envio
-// avulso de teste em routes/admin_campanha_whatsapp.js) passa parametrosBotao ainda. Ligar
-// isto a um envio real fica para depois que o template com botao dinamico de verdade for
-// aprovado pela Meta — a integracao decide DE ONDE o valor por destinatario vem (a linha
-// da fila ja tem `cidade`, ver lib/campanhaWhatsapp.js:226) e nao e escopo deste incremento.
+// ── USADO POR (Incrementos 2 e 3, diagnostico da sessao 2026-08-26/27) ──
+// convite_grupo_vagas_vm foi o primeiro template aprovado com botao de URL dinamica de
+// verdade — a lista fechada precisaBotaoDinamico (lib/templatesWhatsapp.js) e quem decide
+// QUANDO passar; o VALOR e o link do grupo da praca, ja resolvido por db.obterLinkGrupo(cidade)
+// nos dois chamadores: routes/admin_campanha_whatsapp.js (POST /enviar-teste, a partir de
+// contexto.link_grupo_regiao) e lib/campanhaWhatsapp.js (o ciclo real, a partir da variavel
+// `link` — a MESMA que ja alimentava link_grupo_regiao no corpo da mensagem).
 //
 // ── POR QUE ISTO EXISTE, EM VEZ DE SETAR META_CAMPANHA_MOCK NO PROCESSO ──
 // src/scripts/teste-envio-unico-central-whats.js:14-19 ja documenta a saida que ESTE modulo
