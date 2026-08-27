@@ -3603,12 +3603,17 @@ function criarCampanhaWhatsapp({ nome, templateId, baseAlvo, tipoMensagem, jobId
   );
 }
 
+// `j.titulo AS vaga_titulo`: mesmo padrao de listarCampanhas (e-mail) — c.job_id e NULLABLE
+// aqui (convite_grupo nao tem vaga, ver o comentario da coluna em schema.sql), entao o JOIN
+// e LEFT e vaga_titulo vem NULL pras campanhas sem vaga associada; quem exibe decide o
+// texto default (ex.: "(sem vaga)"), esta funcao so traz o dado.
 function listarCampanhasWhatsapp() {
   return getDb()
     .prepare(
-      `SELECT c.*, t.nome_meta AS template_nome
+      `SELECT c.*, t.nome_meta AS template_nome, j.titulo AS vaga_titulo
          FROM campanhas_whatsapp c
          LEFT JOIN templates_whatsapp t ON t.id = c.template_id
+         LEFT JOIN jobs j ON j.id = c.job_id
         ORDER BY c.id DESC`,
     )
     .all();
