@@ -535,3 +535,65 @@ test('jobIdAlvo de vaga inexistente devolve publico (nao lanca): ninguem se insc
   const r = promocao.listarPublicoCampanha({ jobIdAlvo: 999999 }, { db });
   assert.ok(r.total > 0);
 });
+
+// ── 12. criterios.tipo === 'convite_grupo' ──
+//
+// Sem vaga, sem a exclusao "ja se candidatou" (4a) — as duas coisas dependem de jobIdAlvo,
+// que campanha de grupo nao tem. O resto (descadastro, perfil, base, cidade, origem,
+// recomendacao, periodo) e IDENTICO aos dois tipos, por decisao de produto ja fechada.
+
+test('convite_grupo: NAO lanca sem jobIdAlvo (o tipo dispensa a vaga)', () => {
+  assert.doesNotThrow(() => promocao.listarPublicoCampanha({ tipo: 'convite_grupo' }, { db }));
+});
+
+test('convite_grupo: quem ja se candidatou a QUALQUER vaga entra normalmente (sem exclusao 4a)', () => {
+  const email = 'candidatou-mas-e-grupo@exemplo.com';
+  criarCandidatura({ jobId: vagaAlvo, email });
+
+  // No modo vaga, essa mesma pessoa seria excluida por ja estar inscrita na vaga alvo.
+  const modoVaga = promocao.listarPublicoCampanha({ jobIdAlvo: vagaAlvo }, { db });
+  assert.ok(!emails(modoVaga).includes(email), 'pre-condicao: excluida no modo vaga');
+
+  const modoGrupo = promocao.listarPublicoCampanha({ tipo: 'convite_grupo' }, { db });
+  assert.ok(emails(modoGrupo).includes(email), 'convite_grupo nao tem "ja se candidatou" para excluir');
+});
+
+test('convite_grupo: descadastrado continua excluido (a unica exclusao automatica que sobra)', () => {
+  const email = 'saiu-mas-e-grupo@exemplo.com';
+  criarCandidatura({ jobId: vagaOutraCloser, email });
+  db.registrarDescadastro(email, 'link_email');
+
+  const r = promocao.listarPublicoCampanha({ tipo: 'convite_grupo' }, { db });
+  assert.ok(!emails(r).includes(email));
+});
+
+test('convite_grupo: filtros opcionais (perfil, base, cidade) funcionam igual ao modo vaga', () => {
+  const email = 'closer-joinville-grupo@exemplo.com';
+  criarCandidatura({ jobId: vagaOutraCloser, email });
+  db.getDb().prepare('UPDATE applications SET cidade = ? WHERE email = ?').run('Joinville', email);
+
+  const comFiltro = promocao.listarPublicoCampanha(
+    { tipo: 'convite_grupo', perfil: 'CLOSER', cidades: ['Joinville'] },
+    { db },
+  );
+  assert.ok(emails(comFiltro).includes(email));
+
+  const filtroQueNaoCasa = promocao.listarPublicoCampanha(
+    { tipo: 'convite_grupo', perfil: 'SDR' },
+    { db },
+  );
+  assert.ok(!emails(filtroQueNaoCasa).includes(email));
+});
+
+test('tipo ausente ou "divulgacao_vaga": comportamento 100% identico ao de hoje (exige jobIdAlvo, mantem exclusao 4a)', () => {
+  assert.throws(
+    () => promocao.listarPublicoCampanha({}, { db }),
+    /jobIdAlvo invalido/,
+    'tipo ausente continua exigindo jobIdAlvo — nenhum chamador antigo muda de comportamento',
+  );
+
+  const email = 'explicito-divulgacao-vaga@exemplo.com';
+  criarCandidatura({ jobId: vagaAlvo, email });
+  const r = promocao.listarPublicoCampanha({ tipo: 'divulgacao_vaga', jobIdAlvo: vagaAlvo }, { db });
+  assert.ok(!emails(r).includes(email), 'tipo explicito divulgacao_vaga mantem a exclusao 4a');
+});

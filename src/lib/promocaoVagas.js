@@ -256,28 +256,43 @@ function listaSaneada(valor, validos) {
 
 // Publico de uma campanha.
 //
-//   criterios.jobIdAlvo  (obrigatorio) vaga sendo promovida
-//   criterios.perfil | utmSource | recomendacao | dataDe | dataAte  (opcionais)
+//   criterios.tipo        'divulgacao_vaga' (default) ou 'convite_grupo'
+//   criterios.jobIdAlvo   obrigatorio SO em 'divulgacao_vaga' — vaga sendo promovida
+//   criterios.perfil | utmSource | recomendacao | dataDe | dataAte  (opcionais, os dois tipos)
 //   criterios.<filtro>IncluirSemAtributo  (bool, default false)
 //
 //   deps.db  camada de dados injetavel (padrao de lib/importar_vaga.js), para o teste
 //            rodar contra um banco temporario sem tocar no modulo real.
 //
-// jobIdAlvo invalido LANCA, e nao devolve lista vazia. Ver a justificativa no erro.
+// jobIdAlvo invalido LANCA em 'divulgacao_vaga' (default quando criterios.tipo esta
+// ausente — nenhum chamador antigo, que nunca mandava `tipo`, muda de comportamento), e
+// nao devolve lista vazia. Ver a justificativa no erro, abaixo.
+//
+// ── 'convite_grupo': SEM jobIdAlvo, SEM a exclusao de "ja se candidatou" ──
+// Uma campanha de grupo nao promove vaga nenhuma — nao ha "candidatura aquela vaga" pra
+// excluir. listarEmailsInscritosNaVaga nem e chamada neste caminho (chamar com jobIdAlvo
+// ausente/invalido devolveria [] hoje, o que ja seria inofensivo, mas pular a chamada
+// deixa a intencao explicita: aqui a exclusao NAO EXISTE, nao "existe mas nao encontrou
+// ninguem"). O resto da funcao (perfil, base, cidade, origem, recomendacao, periodo,
+// descadastrados) e IDENTICO nos dois tipos — decisao de produto ja fechada.
 function listarPublicoCampanha(criterios = {}, deps = {}) {
   const db = deps.db || dbPadrao;
+  const tipo = criterios.tipo === 'convite_grupo' ? 'convite_grupo' : 'divulgacao_vaga';
 
-  const jobIdAlvo = Number(criterios.jobIdAlvo);
-  if (!Number.isInteger(jobIdAlvo) || jobIdAlvo <= 0) {
-    // LANCA de proposito, em vez de devolver publico vazio. Vazio seria indistinguivel de
-    // "nenhum elegivel" — um resultado plausivel, que esconderia a chamada malformada. E
-    // devolver o publico INTEIRO (tratando o alvo como ausente) seria pior ainda: mandaria
-    // a campanha para quem ja se candidatou aquela vaga. Sem vaga alvo nao ha pergunta
-    // bem-formada a responder.
-    throw new Error(
-      `jobIdAlvo invalido (${criterios.jobIdAlvo}): o publico de campanha depende dele ` +
-        'para excluir quem ja se candidatou a vaga que esta sendo promovida.',
-    );
+  let jobIdAlvo = null;
+  if (tipo === 'divulgacao_vaga') {
+    jobIdAlvo = Number(criterios.jobIdAlvo);
+    if (!Number.isInteger(jobIdAlvo) || jobIdAlvo <= 0) {
+      // LANCA de proposito, em vez de devolver publico vazio. Vazio seria indistinguivel de
+      // "nenhum elegivel" — um resultado plausivel, que esconderia a chamada malformada. E
+      // devolver o publico INTEIRO (tratando o alvo como ausente) seria pior ainda: mandaria
+      // a campanha para quem ja se candidatou aquela vaga. Sem vaga alvo nao ha pergunta
+      // bem-formada a responder.
+      throw new Error(
+        `jobIdAlvo invalido (${criterios.jobIdAlvo}): o publico de campanha depende dele ` +
+          'para excluir quem ja se candidatou a vaga que esta sendo promovida.',
+      );
+    }
   }
 
   const janela = { dataDe: criterios.dataDe, dataAte: criterios.dataAte };
@@ -285,8 +300,14 @@ function listarPublicoCampanha(criterios = {}, deps = {}) {
   // ── Exclusoes automaticas, montadas como conjuntos de e-mail NORMALIZADO ──
   // A comparacao acontece aqui (e nao no SQL) porque a normalizacao canonica do projeto e
   // Unicode-aware e o LOWER() do SQLite nao e; ver o comentario extenso em sqlite.js.
+  //
+  // jaInscritos fica vazio em 'convite_grupo' (nao ha vaga, nao ha "ja inscrito nela") —
+  // Set() vazio, e nao pular a linha inteira, pra `excluidos` continuar uma funcao so
+  // (descadastrados sempre valem, nos dois tipos).
   const jaInscritos = new Set(
-    db.listarEmailsInscritosNaVaga(jobIdAlvo).map(normalizarEmail).filter(Boolean),
+    tipo === 'divulgacao_vaga'
+      ? db.listarEmailsInscritosNaVaga(jobIdAlvo).map(normalizarEmail).filter(Boolean)
+      : [],
   );
   const descadastrados = new Set(
     db.listarEmailsDescadastrados().map(normalizarEmail).filter(Boolean),
