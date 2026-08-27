@@ -210,7 +210,22 @@ test('migrar() e idempotente: rodar de novo nao lanca nem duplica', () => {
 // ja existe, entao o unico jeito de exercitar de verdade a migracao de recriacao e simular
 // a mao o schema ANTIGO (job_id NOT NULL, sem coluna tipo) antes de chamar migrar().
 
+// Limpa campanhas E as filhas que apontam pra elas, em ORDEM DE FK (filha antes da mae),
+// antes de simular o schema antigo. SEM isto, o DROP TABLE campanhas abaixo apagaria so a
+// tabela — as linhas de campanha_envios/vaga_acessos gravadas por testes ANTERIORES deste
+// mesmo arquivo (que compartilham o mesmo banco temporario) sobreviveriam apontando para
+// ids que deixaram de existir, um artefato do ISOLAMENTO DO TESTE (nao de migrate.js) que
+// contaminaria a assercao de foreign_key_check() logo abaixo com violacoes que a migracao
+// de verdade nunca causou. Mesmo padrao de zerar() em campanhaWhatsappMeta.test.js.
+function limparCampanhasEFilhas() {
+  db.getDb().exec('DELETE FROM grupo_acessos');
+  db.getDb().exec('DELETE FROM vaga_acessos');
+  db.getDb().exec('DELETE FROM campanha_envios');
+  db.getDb().exec('DELETE FROM campanhas');
+}
+
 function simularSchemaAntigoDeCampanhas() {
+  limparCampanhasEFilhas();
   db.getDb().exec('PRAGMA foreign_keys = OFF');
   db.getDb().exec('DROP TABLE campanhas');
   db.getDb().exec(`
@@ -250,6 +265,24 @@ test('migrate: campanhas com job_id NOT NULL (schema antigo) e recriada com job_
     vagaId,
   );
 
+  // FILHAS que ja apontam pra essa campanha ANTES do rebuild — a garantia que falta sem
+  // isto: campanha_envios.campanha_id e vaga_acessos.campanha_id sao FK pra campanhas(id),
+  // e o rebuild faz DROP TABLE campanhas com foreign_keys OFF. Sem uma linha filha real no
+  // cenario, o teste provaria so que a CAMPANHA sobrevive — nao que ela continua sendo o
+  // MESMO id que as tabelas dependentes ja referenciavam, e que o RENAME nao deixa nenhuma
+  // orfa por trás. campanha_envios.campanha_id e NOT NULL (o caso mais estrito: uma FK
+  // pendurada ali vira erro na primeira leitura via JOIN, nao um NULL silencioso).
+  const envioExistente = run(
+    `INSERT INTO campanha_envios (campanha_id, email, nome, origem_tipo, origem_id)
+     VALUES (?, 'ja-tinha-envio@exemplo.com', 'Fulano', 'application', 1)`,
+    existente,
+  );
+  const acessoExistente = run(
+    'INSERT INTO vaga_acessos (job_id, campanha_id) VALUES (?, ?)',
+    vagaId,
+    existente,
+  );
+
   migrar(); // idempotente — chamada de novo aqui simula o proximo boot apos o deploy
 
   // A linha pre-existente sobreviveu a recriacao da tabela, com os mesmos valores.
@@ -260,6 +293,31 @@ test('migrate: campanhas com job_id NOT NULL (schema antigo) e recriada com job_
   // tipo nao existia na linha antiga (nao fazia parte do INSERT...SELECT de origem) — herda
   // o DEFAULT da coluna nova, e o default precisa ser o comportamento de sempre.
   assert.equal(linha.tipo, 'divulgacao_vaga');
+
+  // As FILHAS sobreviveram com o MESMO campanha_id — nao foram apagadas pelo DROP (que
+  // atinge so a tabela `campanhas`) nem ficaram orfas depois do RENAME. O JOIN e a prova
+  // forte: se o id tivesse mudado (ou a linha sumido), ele viria vazio.
+  const envioDepois = db
+    .getDb()
+    .prepare('SELECT e.*, c.assunto FROM campanha_envios e JOIN campanhas c ON c.id = e.campanha_id WHERE e.id = ?')
+    .get(envioExistente);
+  assert.ok(envioDepois, 'o envio pre-existente nao pode sumir nem ficar orfao apos o rebuild');
+  assert.equal(envioDepois.campanha_id, existente);
+  assert.equal(envioDepois.assunto, 'Campanha pre-existente');
+
+  const acessoDepois = db
+    .getDb()
+    .prepare('SELECT a.*, c.assunto FROM vaga_acessos a JOIN campanhas c ON c.id = a.campanha_id WHERE a.id = ?')
+    .get(acessoExistente);
+  assert.ok(acessoDepois, 'o acesso pre-existente nao pode sumir nem ficar orfao apos o rebuild');
+  assert.equal(acessoDepois.campanha_id, existente);
+  assert.equal(acessoDepois.assunto, 'Campanha pre-existente');
+
+  // Prova geral, no nivel do proprio SQLite: nenhuma violacao de FK sobrou no banco
+  // inteiro apos o rebuild (cobre qualquer outra tabela dependente que um teste futuro
+  // esqueca de citar aqui a mao).
+  const violacoes = db.getDb().pragma('foreign_key_check');
+  assert.deepEqual(violacoes, [], 'o rebuild de campanhas nao pode deixar nenhuma FK pendurada');
 
   // E agora job_id NULL e aceito — campanha de grupo nao tem vaga.
   assert.doesNotThrow(() =>
