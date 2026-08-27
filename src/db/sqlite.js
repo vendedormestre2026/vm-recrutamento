@@ -3635,6 +3635,95 @@ function definirStatusCampanhaWhatsapp(id, status) {
     .run(status, id).changes;
 }
 
+// Exclui uma campanha de WhatsApp em rascunho — MESMO contrato e MESMO raciocinio de
+// excluirCampanha (e-mail, acima neste arquivo): so um rascunho nunca produziu efeito no
+// mundo (nenhuma mensagem saiu, nenhum destinatario foi congelado), entao e o UNICO status
+// que pode sumir do banco.
+//
+// ── AS DUAS TRAVAS, e por que sao duas (mesmo raciocinio do lado e-mail) ──
+// 1. status === 'rascunho'. 'ativa'/'pausada'/'concluida' ja materializaram fila (ver
+//    POST /:id/disparar em admin_campanha_whatsapp.js) ou ja mandaram mensagem — nenhum
+//    pode sumir do banco.
+// 2. contagem de campanha_whatsapp_envios === 0. Redundante COM a primeira em teoria —
+//    rascunho nao tem envios, a materializacao so acontece ao disparar — e proposital
+//    mesmo assim: e o mesmo guard ENVIOS_PREEXISTENTES que a rota de disparo ja trata como
+//    anomalia real (banco editado a mao ou restore parcial). Diante de estado que "nao
+//    deveria existir", a resposta e recusar e pedir olho humano, nunca apagar por cima.
+//
+// A FK campanha_whatsapp_envios.campanha_id -> campanhas_whatsapp(id) (NOT NULL, sem ON
+// DELETE CASCADE, schema.sql) e a terceira linha de defesa, essa no banco.
+//
+// NAO reaproveita contarEnviosCampanhaWhatsapp: aquela funcao devolve um ARRAY agrupado por
+// status (pro painel mostrar "pendente: 3, enviado: 2"), formato diferente do total unico
+// que excluirCampanha usa aqui — uma contagem direta e mais simples que somar o array.
+//
+// Resultado DISCRIMINADO, nunca lanca (mesmo contrato de excluirCampanha):
+//   { ok: true }
+//   { ok: false, erroCodigo: 'CAMPANHA_NAO_ENCONTRADA' | 'STATUS_INVALIDO' | 'TEM_ENVIOS', mensagem }
+//
+// Transacao: a leitura do status, a contagem de envios e o DELETE precisam ver o MESMO
+// estado — mesmo motivo de excluirCampanha.
+function excluirCampanhaWhatsapp(id) {
+  const campanhaId = Number(id);
+  if (!Number.isInteger(campanhaId) || campanhaId <= 0) {
+    return {
+      ok: false,
+      erroCodigo: 'CAMPANHA_NAO_ENCONTRADA',
+      mensagem: 'Campanha não encontrada.',
+    };
+  }
+
+  const db = getDb();
+
+  const executar = db.transaction(() => {
+    const campanha = db.prepare('SELECT id, status FROM campanhas_whatsapp WHERE id = ?').get(campanhaId);
+    if (!campanha) {
+      return {
+        ok: false,
+        erroCodigo: 'CAMPANHA_NAO_ENCONTRADA',
+        mensagem: 'Campanha não encontrada.',
+      };
+    }
+
+    if (campanha.status !== 'rascunho') {
+      return {
+        ok: false,
+        erroCodigo: 'STATUS_INVALIDO',
+        status: campanha.status,
+        mensagem:
+          `Esta campanha está em "${campanha.status}" e só é possível excluir uma campanha ` +
+          'em rascunho. Uma campanha que já foi disparada é registro do que saiu, e não ' +
+          'pode ser apagada.',
+      };
+    }
+
+    const { total } = db
+      .prepare('SELECT COUNT(*) AS total FROM campanha_whatsapp_envios WHERE campanha_id = ?')
+      .get(campanhaId);
+    if (total > 0) {
+      console.error(
+        `[campanha-wa] ANOMALIA: campanha ${campanhaId} esta em 'rascunho' mas ja tem ` +
+          `${total} linha(s) em campanha_whatsapp_envios. Exclusao recusada.`,
+      );
+      return {
+        ok: false,
+        erroCodigo: 'TEM_ENVIOS',
+        mensagem:
+          `Esta campanha está em rascunho mas já tem ${total} destinatário(s) ` +
+          'materializados — um estado que não deveria existir. A exclusão foi recusada por ' +
+          'segurança. Verifique o banco antes de tentar de novo.',
+      };
+    }
+
+    db.prepare('DELETE FROM campanhas_whatsapp WHERE id = ?').run(campanhaId);
+    return { ok: true };
+  });
+
+  const r = executar();
+  if (r.ok) console.log(`[campanha-wa] campanha ${campanhaId} (rascunho, sem envios) excluida.`);
+  return r;
+}
+
 // Contagem por status, para o painel. Uma consulta agregada para TODAS as campanhas — a tela
 // lista varias, e uma consulta por linha seria N+1 no mesmo lugar onde ele ja e divida.
 function contarEnviosCampanhaWhatsapp(campanhaId = null) {
@@ -3876,6 +3965,7 @@ module.exports = {
   listarCampanhasWhatsapp,
   obterCampanhaWhatsapp,
   definirStatusCampanhaWhatsapp,
+  excluirCampanhaWhatsapp,
   contarEnviosCampanhaWhatsapp,
   materializarEnvioCampanhaWhatsapp,
   listarPendentesCampanhaWhatsapp,

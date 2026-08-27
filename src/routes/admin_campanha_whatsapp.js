@@ -192,6 +192,27 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
           }.</div>`
         : '';
 
+  // ── Aviso pos-exclusao de campanha, sinalizado por query string apos o redirect ──
+  // Mesmo padrao de flashSync (acima): numero/codigo na query string, lido e formatado
+  // aqui. Parametro DEDICADO (excluida/erro_exclusao), e nao o `erro` generico que ~10
+  // outros redirects deste arquivo ja usam (POST /, /regiao, /:id/disparar, /:id/status) —
+  // nenhum deles e lido em lugar nenhum hoje (sao redirects silenciosos), e reusar `erro`
+  // aqui faria todos eles passarem a exibir mensagem pela primeira vez, com fallback pro
+  // codigo cru pros que este mapa nao cobre. Fora de escopo mudar esse comportamento agora.
+  const MENSAGENS_ERRO_EXCLUSAO_WA = {
+    campanha_nao_encontrada: 'Campanha não encontrada.',
+    status_invalido: 'Só é possível excluir uma campanha em rascunho.',
+    tem_envios: 'Esta campanha já tem destinatários materializados — exclusão recusada por segurança.',
+  };
+  const flashExclusao =
+    query.excluida === '1'
+      ? '<div class="aviso-ok">Campanha excluída.</div>'
+      : query.erro_exclusao != null
+        ? `<div class="aviso-alerta">Não foi possível excluir: ${escapeHtml(
+            MENSAGENS_ERRO_EXCLUSAO_WA[String(query.erro_exclusao)] || String(query.erro_exclusao),
+          )}</div>`
+        : '';
+
   const templates = db.listarTemplatesWhatsapp();
   // ETAPA B, Incremento 9: os DOIS <select> de escolha (Nova campanha, Testar envio avulso)
   // so oferecem template ATIVO — `templates` (todos, inclusive placeholders com ativo=0)
@@ -265,6 +286,19 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
             // campanha foi disparada a primeira vez. /status e o caminho certo aqui.
             ? `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/status"><input type="hidden" name="status" value="ativa"><button class="btn">Retomar</button></form>`
             : `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/status"><input type="hidden" name="status" value="ativa"><button class="btn">Ativar</button></form>`}
+          ${c.status === 'rascunho'
+            // Excluir SO em rascunho — mesmo criterio de db.excluirCampanhaWhatsapp (a
+            // funcao recusaria de qualquer forma; a condicao aqui e so pra nao oferecer um
+            // botao que o servidor ja sabe que vai recusar). data-confirm e o modal
+            // reutilizavel (SCRIPT_MODAL_CONFIRMACAO, admin.js) — funciona aqui sem nenhuma
+            // wire-up extra porque toda pagina admin ja carrega aquele script.
+            ? `<form method="post" action="/admin/campanhas-whatsapp/${c.id}/excluir"
+                     data-confirm="Esta campanha em rascunho será apagada definitivamente. Não há desfazer."
+                     data-confirm-titulo="Excluir campanha" data-confirm-texto="Sim, excluir"
+                     data-confirm-destrutivo="1">
+                 <button type="submit" class="btn btn--ghost">Excluir</button>
+               </form>`
+            : ''}
         </td>
       </tr>`;
   };
@@ -277,6 +311,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
       veja <a href="/admin/whatsapp">WhatsApp (pareamento)</a>.
     </p>
 
+    ${flashExclusao}
     ${pendencias.length
       ? `<div class="aviso-alerta"><b>Nada sai enquanto houver:</b><ul class="lista">${pendencias.map((p) => `<li>${p}</li>`).join('')}</ul></div>`
       : '<div class="aviso-ok">Tudo configurado: o ciclo vai enviar de verdade.</div>'}
@@ -980,6 +1015,26 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     }
     db.definirStatusCampanhaWhatsapp(id, status);
     res.redirect('/admin/campanhas-whatsapp?salvo=1');
+  });
+
+  // ── POST /:id/excluir ── apaga uma campanha em rascunho ──
+  //
+  // Espelha POST /admin/promocao/:id/excluir (e-mail) na regra (db.excluirCampanhaWhatsapp
+  // tem o MESMO contrato de db.excluirCampanha — ver o comentario dela em sqlite.js), mas
+  // NAO tem tela de confirmacao propria: a listagem aqui ja e uma tabela inline (a de
+  // e-mail tem uma tela de detalhe por campanha, esta nao), entao a confirmacao e o modal
+  // reutilizavel (data-confirm no <form>, ver linhaCampanha acima) em vez de uma segunda
+  // pagina. `excluida`/`erro_exclusao` sao parametros DEDICADOS (ver o comentario de
+  // flashExclusao acima) — nao o `erro` generico que as demais rotas deste arquivo usam.
+  router.post('/:id/excluir', (req, res) => {
+    const id = Number(req.params.id);
+    const r = db.excluirCampanhaWhatsapp(id);
+    if (r.ok) {
+      return res.redirect('/admin/campanhas-whatsapp?excluida=1');
+    }
+    return res.redirect(
+      `/admin/campanhas-whatsapp?erro_exclusao=${encodeURIComponent(String(r.erroCodigo || '').toLowerCase())}`,
+    );
   });
 
   return router;

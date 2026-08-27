@@ -205,6 +205,7 @@ module.exports = {
   listarCampanhasWhatsapp: driver.listarCampanhasWhatsapp,
   obterCampanhaWhatsapp: driver.obterCampanhaWhatsapp,
   definirStatusCampanhaWhatsapp: driver.definirStatusCampanhaWhatsapp,
+  excluirCampanhaWhatsapp: driver.excluirCampanhaWhatsapp,
   contarEnviosCampanhaWhatsapp: driver.contarEnviosCampanhaWhatsapp,
   materializarEnvioCampanhaWhatsapp: driver.materializarEnvioCampanhaWhatsapp,
   listarPendentesCampanhaWhatsapp: driver.listarPendentesCampanhaWhatsapp,
