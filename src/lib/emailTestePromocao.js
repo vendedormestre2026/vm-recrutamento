@@ -43,7 +43,7 @@ const dbPadrao = require('../db');
 const emailCampanhaPadrao = require('../providers/emailCampanha');
 const { config } = require('../config');
 const { verificarPreCondicoesDisparo } = require('./dispararPromocao');
-const { montarCorpoFinal } = require('./ctaCampanha');
+const { montarCorpoFinal, montarCorpoFinalGrupo } = require('./ctaCampanha');
 // A MESMA funcao que o adaptador de envio usa para montar o cabecalho List-Unsubscribe.
 // Chamada aqui para que o link do rodape seja byte a byte o do cabecalho — ver a nota em
 // ctaCampanha.montarCorpoFinal sobre por que a URL chega pronta na montagem.
@@ -116,16 +116,23 @@ function segundosRestantesCooldown(deps = {}, agora = Date.now()) {
 // mensagem na tela e nao em 500.
 //   { ok: true,  destinatario, assunto }
 //   { ok: false, erroCodigo: 'SEM_DESTINATARIO' | 'DESTINATARIO_INVALIDO' | 'SEM_CONTEUDO'
-//                          | 'SEM_VAGA' | 'PRE_VOO' | 'COOLDOWN' | 'ENVIO_FALHOU', mensagem }
+//                          | 'SEM_VAGA' | 'SEM_GRUPO' | 'PRE_VOO' | 'COOLDOWN' | 'ENVIO_FALHOU',
+//                mensagem }
 //
 // ORDEM DAS CHECAGENS, que nao e arbitraria: primeiro o que o Jean resolve sozinho e de
 // graca (destinatario, conteudo), depois o que depende do servidor (pre-voo), e o cooldown
 // por ULTIMO entre as validacoes — recusar por cooldown um envio que ia falhar de qualquer
 // jeito esconderia o problema real atras de "espere 47 s".
-async function enviarEmailTeste({ assunto, corpoHtml, jobId } = {}, deps = {}) {
+//
+// `tipo`/`cidade`: par novo, mesmo par que a campanha de e-mail ja tem
+// (lib/promocaoVagas.listarPublicoCampanha). `tipo` default 'divulgacao_vaga' — chamador
+// antigo (nenhum manda `tipo`) preserva 100% o comportamento de sempre, exigindo `jobId`.
+// Com `tipo: 'convite_grupo'`, `jobId` fica irrelevante e `cidade` entra no lugar.
+async function enviarEmailTeste({ assunto, corpoHtml, jobId, tipo, cidade } = {}, deps = {}) {
   const db = deps.db || dbPadrao;
   const emailCampanha = deps.emailCampanha || emailCampanhaPadrao;
   const agora = deps.agora || Date.now();
+  const tipoCampanha = tipo === 'convite_grupo' ? 'convite_grupo' : 'divulgacao_vaga';
 
   const destinatario = enderecoTeste(deps);
   if (!destinatario) {
@@ -159,23 +166,48 @@ async function enviarEmailTeste({ assunto, corpoHtml, jobId } = {}, deps = {}) {
     };
   }
 
-  // ── A VAGA E OBRIGATORIA no e-mail de teste ──
+  // ── A VAGA (ou, em convite_grupo, o GRUPO) E OBRIGATORIO no e-mail de teste ──
   //
-  // MUDANCA DE COMPORTAMENTO consciente: antes o teste saia sem vaga selecionada. Agora nao,
-  // porque o e-mail real SEMPRE tem o bloco de candidatura montado a partir da vaga, e um
-  // teste sem esse bloco mostraria uma mensagem diferente da que a base vai receber — que e
-  // exatamente o que este botao existe para impedir. Melhor um erro claro pedindo para
-  // escolher a vaga do que um teste que valida o e-mail errado.
-  const id = Number(jobId);
-  const vaga = Number.isInteger(id) && id > 0 ? db.obterVaga(id) : null;
-  if (!vaga || !vaga.slug) {
-    return {
-      ok: false,
-      erroCodigo: 'SEM_VAGA',
-      mensagem:
-        'Escolha a vaga antes de enviar o teste — o e-mail leva o link de candidatura dela, ' +
-        'e sem a vaga o teste mostraria uma mensagem diferente da que sai de verdade.',
-    };
+  // MUDANCA DE COMPORTAMENTO consciente (divulgacao_vaga): antes o teste saia sem vaga
+  // selecionada. Agora nao, porque o e-mail real SEMPRE tem o bloco de candidatura montado
+  // a partir da vaga, e um teste sem esse bloco mostraria uma mensagem diferente da que a
+  // base vai receber — exatamente o que este botao existe para impedir. Melhor um erro
+  // claro pedindo para escolher a vaga do que um teste que valida o e-mail errado. MESMO
+  // raciocinio se aplica a convite_grupo: o e-mail real sempre tem o botao "ENTRAR NO
+  // GRUPO", e um teste sem ele nao provaria nada.
+  let vaga = null;
+  let slugGrupo = null;
+  if (tipoCampanha === 'divulgacao_vaga') {
+    const id = Number(jobId);
+    vaga = Number.isInteger(id) && id > 0 ? db.obterVaga(id) : null;
+    if (!vaga || !vaga.slug) {
+      return {
+        ok: false,
+        erroCodigo: 'SEM_VAGA',
+        mensagem:
+          'Escolha a vaga antes de enviar o teste — o e-mail leva o link de candidatura dela, ' +
+          'e sem a vaga o teste mostraria uma mensagem diferente da que sai de verdade.',
+      };
+    }
+  } else {
+    // Checa LINK (nao so slug): toda praca cadastrada ja nasce com slug (auto-gerado na
+    // criacao, lib/slug.js), mas o link_convite_grupo continua NULL ate alguem preencher
+    // em /admin/campanhas-whatsapp — um slug sem link clicaria em ".../grupo/<slug>" e
+    // cairia no 404 de GET /grupo/:slug (routes/pages.js). obterLinkGrupo e quem valida
+    // essa condicao de verdade; obterSlugGrupo so devolve o valor pra montar a URL.
+    const cidadeAparada = String(cidade || '').trim();
+    const linkGrupo = cidadeAparada ? db.obterLinkGrupo(cidadeAparada) : null;
+    slugGrupo = linkGrupo ? db.obterSlugGrupo(cidadeAparada) : null;
+    if (!slugGrupo) {
+      return {
+        ok: false,
+        erroCodigo: 'SEM_GRUPO',
+        mensagem:
+          `A praça "${cidade || '(nenhuma)'}" não tem grupo configurado (falta o link em ` +
+          '/admin/campanhas-whatsapp) — o e-mail leva o botão de entrar no grupo, e sem ' +
+          'ele o teste mostraria uma mensagem diferente da que sai de verdade.',
+      };
+    }
   }
 
   // MESMA checagem do disparo real, pela MESMA funcao. Nao ha copia local: se um dia o
@@ -229,25 +261,26 @@ async function enviarEmailTeste({ assunto, corpoHtml, jobId } = {}, deps = {}) {
     // modalidade, regime e horario. `vaga` aqui e a linha de db.obterVaga, e a varredura de
     // disparo monta um objeto com os MESMOS campos a partir do LEFT JOIN da fila — e isso
     // que faz os dois caminhos produzirem o mesmo cabecalho.
-    await emailCampanha.enviar(
-      destinatario,
-      PREFIXO_ASSUNTO + assuntoLimpo,
-      montarCorpoFinal(
-        corpoLimpo,
-        vaga.slug,
-        montarUrlDescadastro(destinatario, config.baseUrl),
-        vaga,
-        // campanhaId NULL de proposito: o botao de teste funciona a partir do formulario
-        // AINDA NAO SUBMETIDO — nao existe campanha, e portanto nao existe id. E o
-        // comportamento certo: um clique do Jean no proprio e-mail de teste nao pode
-        // entrar na contagem de desempenho de campanha nenhuma.
-        //
-        // E a UNICA divergencia deliberada entre este caminho e o disparo real, ao lado do
-        // prefixo [TESTE] no assunto. O teste de igualdade byte a byte compara os dois
-        // passando o MESMO campanhaId, entao ele continua guardando tudo o mais.
-        null,
-      ),
-    );
+    // campanhaId NULL de proposito nos dois caminhos: o botao de teste funciona a partir
+    // do formulario AINDA NAO SUBMETIDO — nao existe campanha, e portanto nao existe id. E
+    // o comportamento certo: um clique do Jean no proprio e-mail de teste nao pode entrar
+    // na contagem de desempenho (cliques de vaga OU de grupo) de campanha nenhuma.
+    //
+    // E a UNICA divergencia deliberada entre este caminho e o disparo real, ao lado do
+    // prefixo [TESTE] no assunto. O teste de igualdade byte a byte compara os dois
+    // passando o MESMO campanhaId, entao ele continua guardando tudo o mais.
+    const corpoFinal =
+      tipoCampanha === 'divulgacao_vaga'
+        ? montarCorpoFinal(corpoLimpo, vaga.slug, montarUrlDescadastro(destinatario, config.baseUrl), vaga, null)
+        : montarCorpoFinalGrupo(
+            corpoLimpo,
+            slugGrupo,
+            montarUrlDescadastro(destinatario, config.baseUrl),
+            cidade,
+            null,
+          );
+
+    await emailCampanha.enviar(destinatario, PREFIXO_ASSUNTO + assuntoLimpo, corpoFinal);
   } catch (err) {
     console.error(`[promocao/teste] falha ao enviar e-mail de teste: ${err.message}`);
     return {

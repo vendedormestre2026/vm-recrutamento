@@ -60,7 +60,7 @@ const fachadaCampanha = require('../src/providers/emailCampanha');
 const apiCampanha = require('../src/providers/emailCampanha/emailit_api');
 const emailTeste = require('../src/lib/emailTestePromocao');
 const disparo = require('../src/lib/dispararPromocao');
-const { montarCorpoFinal, montarUrlVaga } = require('../src/lib/ctaCampanha');
+const { montarCorpoFinal, montarUrlVaga, montarCorpoFinalGrupo } = require('../src/lib/ctaCampanha');
 
 migrar();
 
@@ -480,6 +480,97 @@ test('bloqueio de pre-voo NAO consome o cooldown (a recusa nao pode punir quem c
   });
 
   assert.equal(enviadas.length, antes + 1);
+});
+
+// ══════════════════════════════════════════════════════════════
+// tipo === 'convite_grupo' — mesma ferramenta, sem vaga
+// ══════════════════════════════════════════════════════════════
+
+const CIDADE_GRUPO = 'Joinville';
+db.criarRegiaoGrupo(CIDADE_GRUPO, 'https://chat.whatsapp.com/teste-grupo-joinville');
+
+const CONTEUDO_GRUPO = {
+  tipo: 'convite_grupo',
+  cidade_grupo: CIDADE_GRUPO,
+  assunto: 'Entre no grupo de vagas de Joinville',
+  corpo_html: '<p>Abrimos um grupo novo pra Joinville. Bora?</p>',
+};
+
+test('convite_grupo: envia com o botao ENTRAR NO GRUPO, sem bloco de vaga', async () => {
+  configurarDestino(DESTINO_TESTE);
+  zerarCooldown();
+  const enviosAntes = contarEnvios();
+  const antesEnviadas = enviadas.length;
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const res = await semRuido(() => fetch(`${base}/admin/promocao/teste`, form(CONTEUDO_GRUPO)));
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, new RegExp(`E-mail de teste enviado para ${DESTINO_TESTE}`));
+  });
+
+  assert.equal(enviadas.length, antesEnviadas + 1, 'exatamente um e-mail a mais');
+
+  const m = enviadas[enviadas.length - 1];
+  assert.equal(m.to, DESTINO_TESTE);
+  assert.equal(m.subject, `[TESTE] ${CONTEUDO_GRUPO.assunto}`);
+
+  // Igualdade exata contra montarCorpoFinalGrupo — a MESMA funcao que o disparo real usa
+  // para campanha de grupo. campanhaId NULL nos dois lados: nao ha campanha, e um clique
+  // do proprio Jean no teste nao pode contar como clique de campanha nenhuma.
+  assert.equal(
+    m.html,
+    montarCorpoFinalGrupo(
+      CONTEUDO_GRUPO.corpo_html,
+      db.obterSlugGrupo(CIDADE_GRUPO),
+      desc.montarUrlDescadastro(DESTINO_TESTE, config.baseUrl),
+      CIDADE_GRUPO,
+      null,
+    ),
+  );
+
+  assert.match(m.html, /ENTRAR NO GRUPO/, 'o botao do grupo precisa aparecer, nao o de vaga');
+  assert.doesNotMatch(m.html, /VER A VAGA E ME CANDIDATAR/, 'e-mail de grupo nao pode ter o CTA de vaga');
+  assert.match(m.html, new RegExp(`href="[^"]*/grupo/${db.obterSlugGrupo(CIDADE_GRUPO)}(\\?[^"]*)?"`));
+
+  // NENHUMA linha em campanha_envios — mesma garantia do modo vaga.
+  assert.equal(contarEnvios(), enviosAntes, 'o e-mail de teste de grupo tambem nao materializa destinatario');
+});
+
+test('convite_grupo: praca sem link de grupo cadastrado -> SEM_GRUPO, nao envia', async () => {
+  configurarDestino(DESTINO_TESTE);
+  zerarCooldown();
+  const antes = enviadas.length;
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const res = await fetch(
+      `${base}/admin/promocao/teste`,
+      form({ ...CONTEUDO_GRUPO, cidade_grupo: 'Praça Sem Grupo Nenhum' }),
+    );
+    assert.equal(res.status, 400);
+    const html = await res.text();
+    assert.match(html, /não tem grupo configurado/);
+  });
+
+  assert.equal(enviadas.length, antes, 'sem link de grupo configurado nada pode ser enviado');
+});
+
+test('convite_grupo: vaga selecionada no formulario e IRRELEVANTE (jobId nao entra na validacao)', async () => {
+  // Mesmo com um `vaga` no corpo do form (residuo de o Jean ter alternado de Objetivo na
+  // tela), o backend so olha jobId quando tipo === 'divulgacao_vaga' — ver lerCriteriosDoForm.
+  configurarDestino(DESTINO_TESTE);
+  zerarCooldown();
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const res = await semRuido(() =>
+      fetch(`${base}/admin/promocao/teste`, form({ ...CONTEUDO_GRUPO, vaga: String(vagaId) })),
+    );
+    assert.equal(res.status, 200, 'jobId presente e ignorado em convite_grupo, nao pode barrar o envio');
+  });
 });
 
 // ══════════════════════════════════════════════════════════════
