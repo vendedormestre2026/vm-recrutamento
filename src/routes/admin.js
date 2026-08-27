@@ -50,11 +50,11 @@ const {
   badgeVereditoHtml,
 } = require('../lib/relatorio');
 const { gerarRelatorioPdf, slugNome } = require('../lib/relatorioPdf');
-const { criarRouterPromocao, montarConteudoListagemPromocao } = require('./admin_promocao');
+const { criarRouterPromocao } = require('./admin_promocao');
 const { criarRouterWhatsapp } = require('./admin_whatsapp');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
 const campanhaWhatsapp = require('../lib/campanhaWhatsapp');
-const { criarRouterCampanhaWhatsapp, montarConteudoCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
+const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
 
@@ -5555,33 +5555,108 @@ router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmt
 router.use('/whatsapp', criarRouterWhatsapp({ paginaAdmin, escapeHtml }));
 router.use('/campanhas-whatsapp', criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBusca }));
 
-// ── GET /divulgacao-vagas ── Promoção de Vagas + Campanha por WhatsApp em abas ──
-// (Item 3 do ETAPA B "Ajustes no Admin", Commit 7). NAO substitui as rotas standalone
-// (/admin/promocao, /admin/campanhas-whatsapp) — elas continuam existindo e sao para onde
-// os formularios de cada aba fazem POST/redirect (efeito colateral aceito: uma acao dentro
-// da aba tira o operador desta pagina e o leva a tela antiga isolada; ver diagnostico).
-// Reaproveita os MESMOS fragmentos de HTML das telas standalone (montarConteudoListagem
-// Promocao/montarConteudoCampanhaWhatsapp, extraidos nos Commits 5-6) — sem duplicar logica
-// nem HTML. Cada fragmento ja traz seu proprio "Voltar ao painel" e titulo — por isso esta
-// pagina nao repete um <h1> proprio, so a barra de abas.
-router.get('/divulgacao-vagas', (req, res) => {
-  const aba = req.query.aba === 'whatsapp' ? 'whatsapp' : 'promocao';
+// ── ROTULO_STATUS_CAMPANHA_EMAIL_RESUMO / linhaResumoWhatsapp: badges replicados, nao
+// importados ──
+//
+// admin_promocao.js tem ROTULO_STATUS_CAMPANHA (rascunho/enfileirada/.../cancelada -> PT-BR)
+// e admin_campanha_whatsapp.js usa o STATUS CRU direto (rascunho/ativa/pausada/concluida, ja
+// sao palavras em portugues) com uma badge por ternaria inline — nenhum dos dois exporta o
+// que precisamos, e o redesenho deste incremento EXPLICITAMENTE nao altera nenhum dos dois
+// arquivos (continuam servindo so /admin/promocao e /admin/campanhas-whatsapp). Pra ~5
+// linhas de mapa e uma ternaria de 1 linha, duplicar aqui e mais barato e mais seguro que
+// abrir uma costura de export/import nova so pra este resumo.
+const ROTULO_STATUS_CAMPANHA_EMAIL_RESUMO = {
+  rascunho: 'Rascunho',
+  enfileirada: 'Enfileirada',
+  enviando: 'Enviando',
+  concluida: 'Concluída',
+  cancelada: 'Cancelada',
+};
 
-  const abaLink = (valor, rotulo) =>
-    `<a class="btn ${aba === valor ? '' : 'btn--ghost'}" href="/admin/divulgacao-vagas?aba=${valor}">${rotulo}</a>`;
+// ── GET /divulgacao-vagas ── resumo fixo de Promoção de Vagas (redesenho 2026-08-27) ──
+//
+// Substitui as ABAS que embutiam os fragmentos INTEIROS de /admin/promocao e
+// /admin/campanhas-whatsapp (Item 3 do ETAPA B "Ajustes no Admin", Commit 7 — ver o
+// historico deste arquivo). Aquele desenho tinha um efeito colateral incomodo: qualquer
+// POST dentro de uma aba (criar campanha, disparar, sincronizar templates) redireciona pra
+// rota STANDALONE, nunca de volta pra /divulgacao-vagas — a aba era so uma casca em cima
+// das telas de verdade. Esta versao assume isso: e um resumo FIXO e SOMENTE LEITURA (as 5
+// campanhas mais recentes de cada canal), e navegar pra agir de verdade e sempre explicito
+// — um link no menu do topo, e um botao ao fim de cada coluna.
+function montarResumoDivulgacaoVagas({ formatarDataHora, fmtInt }) {
+  // .slice(0,5): as duas funcoes ja vem ordenadas por id DESC (mais recente primeiro) —
+  // nenhum ORDER BY/paginacao nova, so um corte no que ja chega pronto.
+  const campanhasEmail = db.listarCampanhas().slice(0, 5);
+  const campanhasWa = db.listarCampanhasWhatsapp().slice(0, 5);
 
-  const conteudo = `
+  const linhaEmail = (c) => {
+    const rotulo = ROTULO_STATUS_CAMPANHA_EMAIL_RESUMO[c.status] || c.status;
+    const badge =
+      c.status === 'rascunho'
+        ? `<span class="badge badge--aplicado">${escapeHtml(rotulo)}</span>`
+        : `<span class="badge badge--ativa">${escapeHtml(rotulo)}</span>`;
+    return `
+      <tr>
+        <td>${escapeHtml(c.assunto || '(sem assunto)')}</td>
+        <td>${escapeHtml(c.vaga_titulo || '(sem vaga)')}</td>
+        <td>${badge}</td>
+        <td>${formatarDataHora(c.criado_em)}</td>
+      </tr>`;
+  };
+
+  const linhaWhatsapp = (c) => {
+    // Mesma ternaria de admin_campanha_whatsapp.js:linhaCampanha — status cru como rotulo
+    // (rascunho/ativa/pausada/concluida ja sao palavras em portugues, sem mapa a mais).
+    const badge = `<span class="badge badge--${c.status === 'ativa' ? 'ativa' : 'aplicado'}">${escapeHtml(c.status)}</span>`;
+    return `
+      <tr>
+        <td>${escapeHtml(c.nome || '(sem nome)')}</td>
+        <td>${escapeHtml(c.vaga_titulo || '(sem vaga)')}</td>
+        <td>${badge}</td>
+        <td>${formatarDataHora(c.criado_em)}</td>
+      </tr>`;
+  };
+
+  const coluna = ({ titulo, colunaNome, linhas, linkIr, textoIr }) => `
+    <section class="rel-sec">
+      <h2>${escapeHtml(titulo)} (${fmtInt(linhas.length)})</h2>
+      <div class="admin-tab-scroll">
+        <table class="admin-tab">
+          <thead><tr><th>${escapeHtml(colunaNome)}</th><th>Vaga</th><th>Status</th><th>Criada em</th></tr></thead>
+          <tbody>${linhas.join('') || '<tr><td colspan="4">Nenhuma campanha criada ainda.</td></tr>'}</tbody>
+        </table>
+      </div>
+      <p style="margin-top:.8rem;"><a class="btn" href="${linkIr}">${escapeHtml(textoIr)}</a></p>
+    </section>`;
+
+  return `
+    <h1>Promoção de Vagas</h1>
     <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.25rem;">
-      ${abaLink('promocao', 'Promoção de Vagas')}
-      ${abaLink('whatsapp', 'Campanha por WhatsApp')}
+      <a class="btn btn--ghost" href="/admin">← Voltar ao painel</a>
+      <a class="btn btn--ghost" href="/admin/promocao">Campanha por Email</a>
+      <a class="btn btn--ghost" href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>
     </div>
-    ${
-      aba === 'whatsapp'
-        ? montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt })
-        : montarConteudoListagemPromocao({ formatarDataHora, fmtInt })
-    }`;
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1.25rem;align-items:start;">
+      ${coluna({
+        titulo: 'Últimas campanhas por e-mail',
+        colunaNome: 'Assunto',
+        linhas: campanhasEmail.map(linhaEmail),
+        linkIr: '/admin/promocao',
+        textoIr: 'Ir para Campanhas de Email',
+      })}
+      ${coluna({
+        titulo: 'Últimas campanhas por WhatsApp',
+        colunaNome: 'Nome',
+        linhas: campanhasWa.map(linhaWhatsapp),
+        linkIr: '/admin/campanhas-whatsapp',
+        textoIr: 'Ir para Campanhas de Whatsapp',
+      })}
+    </div>`;
+}
 
-  res.send(paginaAdmin({ titulo: 'Divulgação de Vagas', conteudo }));
+router.get('/divulgacao-vagas', (req, res) => {
+  const conteudo = montarResumoDivulgacaoVagas({ formatarDataHora, fmtInt });
+  res.send(paginaAdmin({ titulo: 'Promoção de Vagas', conteudo }));
 });
 
 module.exports = router;
