@@ -29,6 +29,7 @@ const limpezaAudio = require('../lib/limpezaAudio');
 const { removerAudioDaEntrevista } = require('../lib/audioEntrevista');
 const dispararPromocao = require('../lib/dispararPromocao');
 const emailTestePromocao = require('../lib/emailTestePromocao');
+const formularioAplicacaoConfig = require('../lib/formularioAplicacaoConfig');
 const { listarCidadesValidas, normalizarCidade, chave: chaveCidade } = require('../lib/cidades');
 // gerarSlugBase: mesma normalizacao usada aqui (slug de vaga) e em qualquer outro
 // consumidor futuro (slug de cidade, em regioes_grupos_whatsapp) — ver src/lib/slug.js.
@@ -5146,6 +5147,13 @@ router.get('/config', (req, res) => {
     .toISOString()
     .slice(0, 10);
 
+  // Campos do formulario PUBLICO de candidatura (GET /aplicar/:slug) — default LIGADO nos
+  // dois (comportamento de sempre: os dois campos aparecem, currículo continua
+  // obrigatório). Toggle GLOBAL — ver o cabeçalho de lib/formularioAplicacaoConfig.js para
+  // o porquê de não ser por vaga.
+  const formExibirLinkedin = formularioAplicacaoConfig.exibirLinkedin();
+  const formExibirCurriculo = formularioAplicacaoConfig.exibirCurriculo();
+
   // Disparo das campanhas de Promocao de Vagas (default desligado).
   const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
   const whatsappSeqAtiva = db.obterConfigBool(CHAVE_WHATSAPP_SEQ, false);
@@ -5216,6 +5224,7 @@ router.get('/config', (req, res) => {
         <button type="button" class="btn" data-tab-btn="email">E-mail</button>
         <button type="button" class="btn btn--ghost" data-tab-btn="whatsapp">WhatsApp</button>
         <button type="button" class="btn btn--ghost" data-tab-btn="campanhas">Campanhas e Divulgação</button>
+        <button type="button" class="btn btn--ghost" data-tab-btn="formulario">Formulário de candidatura</button>
         <button type="button" class="btn btn--ghost" data-tab-btn="manutencao">Manutenção</button>
       </div>
 
@@ -5347,6 +5356,40 @@ router.get('/config', (req, res) => {
         </section>
       </div>
 
+      <div data-tab-painel="formulario" hidden>
+        <section class="rel-sec">
+          <h2>Formulário de candidatura</h2>
+          <p style="margin:.2rem 0 1rem;color:var(--cinza);font-size:.9rem;">
+            Controla os campos da tela pública <b>Candidate-se agora</b>
+            (<code>/aplicar/:slug</code>). Vale para <b>todas as vagas</b> — não é possível
+            configurar por vaga hoje.
+          </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="formulario_exibir_linkedin" value="1"${formExibirLinkedin ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Exibir campo <b>URL do LinkedIn</b>
+            </span>
+          </label>
+          <p style="margin:.2rem 0 .8rem 1.6rem;color:var(--cinza);font-size:.82rem;">
+            Já é opcional hoje. Desativado: o campo some do formulário — ninguém preenche.
+          </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="formulario_exibir_curriculo" value="1"${formExibirCurriculo ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              Exibir campo <b>Currículo</b> (obrigatório)
+            </span>
+          </label>
+          <p style="margin:.2rem 0 0 1.6rem;color:var(--cinza);font-size:.82rem;">
+            Ligado (padrão): o campo aparece e o envio é obrigatório, como sempre foi.
+            Desativado: o campo some do formulário e deixa de ser obrigatório — candidatura
+            sem currículo grava <code>curriculo_path</code>/<code>curriculo_texto</code>
+            vazios, e a entrevista usa o mesmo aviso "(currículo não disponível)" que já
+            existe hoje para currículo em imagem (JPG/PNG, sem extração de texto).
+          </p>
+          <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
+        </section>
+      </div>
+
       <div data-tab-painel="manutencao" hidden>
         <section class="rel-sec">
           <h2>Manutenção</h2>
@@ -5457,6 +5500,17 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
   db.definirConfigBool(CHAVE_WHATSAPP_SEQ, marcado('whatsapp_sequencia_ativa'));
   db.definirConfigBool(CHAVE_CAMPANHA_WA, marcado('campanha_whatsapp_ativa'));
+  // Formulario de candidatura (ETAPA B, Incremento 2) — default TRUE: checkbox
+  // desmarcado != "chave ausente", entao aqui e ALWAYS um definirConfigBool explicito
+  // (mesmo padrao das demais linhas acima), nunca "so grava se marcado".
+  db.definirConfigBool(
+    formularioAplicacaoConfig.CHAVE_EXIBIR_LINKEDIN,
+    marcado('formulario_exibir_linkedin'),
+  );
+  db.definirConfigBool(
+    formularioAplicacaoConfig.CHAVE_EXIBIR_CURRICULO,
+    marcado('formulario_exibir_curriculo'),
+  );
   res.redirect('/admin/config?salvo=1');
 });
 

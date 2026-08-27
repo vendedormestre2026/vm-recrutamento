@@ -18,6 +18,7 @@ const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
 const { extrairTextoCurriculo, extensaoDoArquivo, tipoCurriculoAceito } = require('../lib/curriculo');
 const entrevista = require('../lib/entrevista');
 const { modoEntrevistaAtivo } = require('../lib/modo');
+const formularioAplicacaoConfig = require('../lib/formularioAplicacaoConfig');
 const { lerUtmDoCookie } = require('../lib/utm');
 const { removerAudioDaEntrevista } = require('../lib/audioEntrevista');
 // Adaptadores agnosticos (interface). Os SDKs/chaves so sao tocados quando
@@ -170,7 +171,12 @@ router.post('/aplicacao', (req, res) => {
       if (!emailValido(email)) {
         return res.status(400).json({ ok: false, erro: 'Informe um e-mail válido.' });
       }
-      if (!req.file) {
+      // Currículo obrigatório SO quando o toggle global estiver ligado (ETAPA B, Incremento
+      // 2 — /admin/config, aba "Formulário de candidatura"). Desligado: req.file pode vir
+      // ausente sem recusa — curriculo_path/curriculo_texto ficam vazios (ver mais abaixo),
+      // e a entrevista ja tem fallback pronto pra isso (entrevista.js:337,420, o mesmo
+      // caminho ja usado hoje quando o upload e imagem sem extracao de texto).
+      if (!req.file && formularioAplicacaoConfig.exibirCurriculo()) {
         return res.status(400).json({ ok: false, erro: 'Anexe seu currículo (PDF, JPG, PNG ou DOCX).' });
       }
       // Consentimento LGPD (OPCIONAL): checkbox da tela de aplicacao. Nao bloqueia mais o
@@ -222,15 +228,25 @@ router.post('/aplicacao', (req, res) => {
       // Salva o curriculo no volume persistente (cria a pasta se nao existir). Extensao real
       // do arquivo, nao mais fixa em .pdf — hoje so PDF passa pelo fileFilter, mas gravar a
       // extensao certa desde ja evita divergencia no dia em que outros tipos forem aceitos.
-      fs.mkdirSync(config.caminhoCurriculos, { recursive: true });
-      const caminhoPdf = path.join(config.caminhoCurriculos, `${token}.${extensaoDoArquivo(req.file)}`);
-      fs.writeFileSync(caminhoPdf, req.file.buffer);
+      //
+      // `req.file` pode vir ausente (toggle de currículo desligado, guard acima ja deixou
+      // passar) — nesse caso caminhoPdf/curriculoTexto ficam vazios, MESMO estado que
+      // curriculo_path/curriculo_texto NULL sempre representou pra applications sem
+      // currículo utilizavel (ver admin.js:1443 `temCurriculo = Boolean(cand.curriculo_path)`
+      // e entrevista.js:337,420, que ja degradam sozinhos pra esse caso).
+      let caminhoPdf = null;
+      let curriculoTexto = '';
+      if (req.file) {
+        fs.mkdirSync(config.caminhoCurriculos, { recursive: true });
+        caminhoPdf = path.join(config.caminhoCurriculos, `${token}.${extensaoDoArquivo(req.file)}`);
+        fs.writeFileSync(caminhoPdf, req.file.buffer);
 
-      // Extrai o texto do curriculo (PDF/DOCX; truncado em ~20.000 caracteres no helper).
-      // JPG/PNG NAO passam por extracao nenhuma — decisao de produto (sem OCR):
-      // curriculo_texto fica '', e o system prompt da Vera ja degrada sozinho pra esse caso
-      // (mesmo caminho de um PDF ilegivel hoje).
-      const curriculoTexto = await extrairTextoCurriculo(req.file);
+        // Extrai o texto do curriculo (PDF/DOCX; truncado em ~20.000 caracteres no helper).
+        // JPG/PNG NAO passam por extracao nenhuma — decisao de produto (sem OCR):
+        // curriculo_texto fica '', e o system prompt da Vera ja degrada sozinho pra esse caso
+        // (mesmo caminho de um PDF ilegivel hoje).
+        curriculoTexto = await extrairTextoCurriculo(req.file);
+      }
 
       // Persiste a application pela camada de dados agnostica
       const applicationId = db.criarAplicacao({

@@ -71,6 +71,12 @@ function tipoCurriculoAceito(file) {
   }
 
   // Upload de curriculo (PDF/JPG/PNG/DOCX): clique (label nativo) + arrastar/soltar + validacao
+  //
+  // `upload`/`inputArquivo` podem NAO EXISTIR: o campo Currículo e opcional hoje (toggle
+  // GLOBAL em /admin/config, ver lib/formularioAplicacaoConfig.js no servidor) — quando
+  // desativado, o HTML inteiro do campo (pages.js:formularioAplicacao) nem e renderizado.
+  // Todo este bloco fica condicional a `upload && inputArquivo` pra nao quebrar o form
+  // INTEIRO (submit incluso) tentando wire-up de elementos que nao existem no DOM.
   const upload = form.querySelector('[data-upload]');
   const inputArquivo = form.querySelector('input[name="curriculo"]');
   const textoUpload = form.querySelector('[data-upload-texto]');
@@ -88,36 +94,38 @@ function tipoCurriculoAceito(file) {
     return true;
   }
 
-  inputArquivo.addEventListener('change', () => {
-    const file = inputArquivo.files[0];
-    if (file && validarArquivo(file)) {
-      mostrarErro('');
-      textoUpload.textContent = file.name;
-      upload.classList.add('vm-upload--ok');
-    }
-  });
+  if (upload && inputArquivo) {
+    inputArquivo.addEventListener('change', () => {
+      const file = inputArquivo.files[0];
+      if (file && validarArquivo(file)) {
+        mostrarErro('');
+        textoUpload.textContent = file.name;
+        upload.classList.add('vm-upload--ok');
+      }
+    });
 
-  ['dragover', 'dragenter'].forEach((ev) =>
-    upload.addEventListener(ev, (e) => {
-      e.preventDefault();
-      upload.classList.add('vm-upload--sobre');
-    }),
-  );
-  ['dragleave', 'drop'].forEach((ev) =>
-    upload.addEventListener(ev, (e) => {
-      e.preventDefault();
-      upload.classList.remove('vm-upload--sobre');
-    }),
-  );
-  upload.addEventListener('drop', (e) => {
-    const file = e.dataTransfer.files[0];
-    if (file && validarArquivo(file)) {
-      inputArquivo.files = e.dataTransfer.files;
-      mostrarErro('');
-      textoUpload.textContent = file.name;
-      upload.classList.add('vm-upload--ok');
-    }
-  });
+    ['dragover', 'dragenter'].forEach((ev) =>
+      upload.addEventListener(ev, (e) => {
+        e.preventDefault();
+        upload.classList.add('vm-upload--sobre');
+      }),
+    );
+    ['dragleave', 'drop'].forEach((ev) =>
+      upload.addEventListener(ev, (e) => {
+        e.preventDefault();
+        upload.classList.remove('vm-upload--sobre');
+      }),
+    );
+    upload.addEventListener('drop', (e) => {
+      const file = e.dataTransfer.files[0];
+      if (file && validarArquivo(file)) {
+        inputArquivo.files = e.dataTransfer.files;
+        mostrarErro('');
+        textoUpload.textContent = file.name;
+        upload.classList.add('vm-upload--ok');
+      }
+    });
+  }
 
   // Telefone: o <select name="ddi"> ja contribui "+55" (ou outro codigo) separado — este
   // campo e SO digitos locais (DDD + numero). Um "+" no inicio so pode ser o candidato
@@ -175,11 +183,15 @@ function tipoCurriculoAceito(file) {
       campoTelefone.focus();
       return false;
     }
-    if (!inputArquivo.files[0]) {
-      mostrarErro('Anexe seu currículo (PDF, JPG, PNG ou DOCX).');
-      return false;
+    // Campo ausente do DOM (toggle desligado) = nao obrigatorio: nada a checar aqui, o
+    // servidor ja sabe (mesma config) que este envio nao precisa de arquivo.
+    if (inputArquivo) {
+      if (!inputArquivo.files[0]) {
+        mostrarErro('Anexe seu currículo (PDF, JPG, PNG ou DOCX).');
+        return false;
+      }
+      if (!validarArquivo(inputArquivo.files[0])) return false;
     }
-    if (!validarArquivo(inputArquivo.files[0])) return false;
     return true;
   }
 

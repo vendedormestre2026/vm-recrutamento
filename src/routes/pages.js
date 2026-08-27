@@ -25,6 +25,7 @@ const {
   badgeVereditoHtml,
 } = require('../lib/relatorio');
 const { pagina, escapeHtml } = require('../views');
+const formularioAplicacaoConfig = require('../lib/formularioAplicacaoConfig');
 
 const router = express.Router();
 
@@ -354,8 +355,25 @@ router.get('/vaga/:slug/confirmacao', (req, res) => {
   res.send(pagina({ titulo: vaga.titulo, tema: 'claro', conteudo }));
 });
 
+// Lista, em portugues, dos dados que o texto de consentimento cita — nome/e-mail/telefone
+// SEMPRE entram (nunca ficam opcionais no formulario); LinkedIn/currículo só entram se o
+// campo estiver realmente no ar, pra não pedir consentimento pra coletar algo que a tela
+// nem oferece mais.
+function listaDadosColetados(exibirLinkedin, exibirCurriculo) {
+  const itens = ['nome', 'e-mail', 'telefone'];
+  if (exibirLinkedin) itens.push('LinkedIn');
+  if (exibirCurriculo) itens.push('currículo');
+  if (itens.length === 1) return itens[0];
+  return `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`;
+}
+
 // ── Tela 2: Aplicacao (passo unico) ──
-function formularioAplicacao(vaga) {
+//
+// `exibirLinkedin`/`exibirCurriculo` (ETAPA B, Incremento 2 — toggle GLOBAL em
+// /admin/config, ver lib/formularioAplicacaoConfig.js): controlam se cada campo aparece
+// no HTML. Currículo ausente tambem precisa que public/js/app.js NAO quebre (o script
+// referencia `input[name="curriculo"]` incondicionalmente hoje) — ver o comentario la.
+function formularioAplicacao(vaga, { exibirLinkedin = true, exibirCurriculo = true } = {}) {
   const opcoesDdi = [
     ['+55', 'Brasil +55'],
     ['+1', 'EUA/Canadá +1'],
@@ -400,23 +418,33 @@ function formularioAplicacao(vaga) {
         </div>
       </div>
 
-      <label class="vm-campo">URL do LinkedIn <span class="vm-opcional">(opcional)</span>
+      ${
+        exibirLinkedin
+          ? `<label class="vm-campo">URL do LinkedIn <span class="vm-opcional">(opcional)</span>
         <input type="url" name="linkedin_url" placeholder="https://linkedin.com/in/...">
-      </label>
+      </label>`
+          : ''
+      }
 
-      <div class="vm-campo">Currículo<span class="vm-obrigatorio" aria-hidden="true">*</span><span class="vm-sr-only"> (obrigatório)</span>
+      ${
+        exibirCurriculo
+          ? `<div class="vm-campo">Currículo<span class="vm-obrigatorio" aria-hidden="true">*</span><span class="vm-sr-only"> (obrigatório)</span>
         <label class="vm-upload" data-upload>
           <input type="file" name="curriculo" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" hidden>
           <span class="vm-upload__icone" aria-hidden="true">⬆</span>
           <span class="vm-upload__texto" data-upload-texto>Clique para enviar ou arraste seu currículo aqui</span>
           <span class="vm-upload__dica">PDF, JPG, PNG ou DOCX · até 10 MB</span>
         </label>
-      </div>
+      </div>`
+          : ''
+      }
 
       <label class="vm-aceite">
         <input type="checkbox" name="consentimento" value="1" data-consentimento>
-        <span>Concordo com a coleta e uso dos meus dados (nome, e-mail, telefone, LinkedIn e
-        currículo) para este processo seletivo e futuras oportunidades de vendas na Vendedor
+        <span>Concordo com a coleta e uso dos meus dados (${listaDadosColetados(
+          exibirLinkedin,
+          exibirCurriculo,
+        )}) para este processo seletivo e futuras oportunidades de vendas na Vendedor
         Mestre. Posso solicitar a remoção a qualquer momento.</span>
       </label>
 
@@ -460,7 +488,10 @@ router.get('/aplicar/:slug', (req, res) => {
       titulo: `Candidatar-se — ${vaga.titulo}`,
       tema: 'claro',
       etapa: 1,
-      conteudo: formularioAplicacao(vaga),
+      conteudo: formularioAplicacao(vaga, {
+        exibirLinkedin: formularioAplicacaoConfig.exibirLinkedin(),
+        exibirCurriculo: formularioAplicacaoConfig.exibirCurriculo(),
+      }),
     }),
   );
 });
