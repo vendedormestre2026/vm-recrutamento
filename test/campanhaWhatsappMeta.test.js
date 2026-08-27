@@ -3063,27 +3063,38 @@ test('POST /enviar-teste: erro do transporte volta classificado, sem derrubar a 
 // BUG-PRA-CONFIRMAR: com `parametrosBotao` removido da rota (POST /enviar-teste em
 // admin_campanha_whatsapp.js), este teste FALHA com HTTP 502 e a mensagem de button0 — testado
 // manualmente comentando a linha antes de reaplicar o fix. Com o fix, passa.
-const transporteBotaoDinamico = {
-  enviarTemplate: async (args) => {
-    const payload = transporte.montarPayload(args);
-    if (args.template.nome_meta === 'convite_grupo_vagas_vm' && !payload.vars.button0) {
-      throw new Error(
-        'Central Whats retornou HTTP 400 — {"error":"Template \\"convite_grupo_vagas_vm\\": o ' +
-          'botão de índice 0 tem URL dinâmica e exige a variável \\"button0\\", que não foi ' +
-          'informada."}',
-      );
-    }
-    return { wamid: 'wamid-botao-dinamico-ok', mock: false };
-  },
-  classificarErroCentralWhats: transporte.classificarErroCentralWhats,
-};
+//
+// ── ATUALIZADO apos o diagnostico do 404 real (sessao seguinte) ──
+// O valor certo de button0 e o SLUG da praca ("joinville"), NAO o link completo do WhatsApp
+// — a URL base aprovada na Meta e "https://.../grupo/{{1}}", e GET /grupo/:slug e quem
+// resolve slug -> link no clique. `recebido` deixa o teste afirmar o VALOR exato, nao so "nao
+// quebrou" — e o que teria pego o bug do link completo se existisse desde o Incremento 2.
+function criarTransporteBotaoDinamico() {
+  const recebido = [];
+  return {
+    recebido,
+    enviarTemplate: async (args) => {
+      recebido.push(args);
+      const payload = transporte.montarPayload(args);
+      if (args.template.nome_meta === 'convite_grupo_vagas_vm' && !payload.vars.button0) {
+        throw new Error(
+          'Central Whats retornou HTTP 400 — {"error":"Template \\"convite_grupo_vagas_vm\\": o ' +
+            'botão de índice 0 tem URL dinâmica e exige a variável \\"button0\\", que não foi ' +
+            'informada."}',
+        );
+      }
+      return { wamid: 'wamid-botao-dinamico-ok', mock: false };
+    },
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+}
 
-test('POST /enviar-teste: convite_grupo_vagas_vm manda o link do grupo como button0 (botao de URL dinamica)', async () => {
+test('POST /enviar-teste: convite_grupo_vagas_vm manda o SLUG da praca como button0 (nao o link completo)', async () => {
   zerarSeg();
   const j = vagaCom('Joinville');
   exec(
-    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo) VALUES (?, ?)',
-    'Joinville', 'https://chat.whatsapp.com/BOTAODINAMICO',
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, slug) VALUES (?, ?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/BOTAODINAMICO', 'joinville',
   );
   const appId = candidatura(j, 'Botao Dinamico', '+55 47 99958-2500');
   const tid = Number(
@@ -3098,7 +3109,8 @@ test('POST /enviar-teste: convite_grupo_vagas_vm manda o link do grupo como butt
     ).lastInsertRowid,
   );
 
-  await comRotaEnviarTeste(transporteBotaoDinamico, async (base) => {
+  const fake = criarTransporteBotaoDinamico();
+  await comRotaEnviarTeste(fake, async (base) => {
     const res = await enviarTestePost(base, {
       applicationId: appId,
       templateId: tid,
@@ -3108,7 +3120,13 @@ test('POST /enviar-teste: convite_grupo_vagas_vm manda o link do grupo como butt
     assert.equal(res.status, 200, JSON.stringify(corpo));
     assert.equal(corpo.ok, true);
     assert.equal(corpo.wamid, 'wamid-botao-dinamico-ok');
+    // Variavel de CORPO (posicao 3) continua sendo o NOME da cidade — nao confundir com o
+    // slug do botao, valores diferentes de proposito.
+    assert.equal(corpo.variaveis[2], 'Joinville');
   });
+
+  assert.equal(fake.recebido.length, 1);
+  assert.deepEqual(fake.recebido[0].parametrosBotao, { 0: 'joinville' });
 });
 
 test('POST /enviar-teste: template fora da lista de botao dinamico NAO recebe parametrosBotao, mesmo com botao_parametro_fixo NULL', async () => {
@@ -3163,7 +3181,11 @@ test('POST /enviar-teste: template fora da lista de botao dinamico NAO recebe pa
 // FALHA (resumo.enviados fica 0, resumo.falhas vira 1, e a linha da fila registra o erro
 // 400 real) — testado manualmente comentando a linha antes de reaplicar o fix. Com o fix,
 // passa.
-test('ciclo: convite_grupo com botao dinamico manda o link do grupo como button0', async () => {
+//
+// ATUALIZADO apos o diagnostico do 404 real: o valor certo e o SLUG da praca, nao o link
+// completo — mesma correcao do teste de envio avulso acima. `recebido[0].parametrosBotao` e
+// afirmado explicitamente pra pegar uma regressao pro link completo se voltar a acontecer.
+test('ciclo: convite_grupo com botao dinamico manda o SLUG da praca como button0 (nao o link completo)', async () => {
   zerar();
   db.definirConfigBool(job.CHAVE_ATIVO, true);
   const tid = Number(
@@ -3178,8 +3200,8 @@ test('ciclo: convite_grupo com botao dinamico manda o link do grupo como button0
     ).lastInsertRowid,
   );
   exec(
-    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo) VALUES (?, ?)',
-    'Joinville', 'https://chat.whatsapp.com/CICLOBOTAODINAMICO',
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, slug) VALUES (?, ?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/CICLOBOTAODINAMICO', 'joinville',
   );
   const cid = db.criarCampanhaWhatsapp({ nome: 'Convite grupo botao dinamico', templateId: tid, baseAlvo: 'ambos' });
   db.definirStatusCampanhaWhatsapp(cid, 'ativa');
@@ -3207,4 +3229,5 @@ test('ciclo: convite_grupo com botao dinamico manda o link do grupo como button0
   assert.equal(resumo.falhas, 0, JSON.stringify(resumo));
   assert.equal(fila(cid)[0].status, 'enviado');
   assert.equal(fila(cid)[0].wamid, 'wamid-ciclo-botao-ok');
+  assert.deepEqual(recebido[0].parametrosBotao, { 0: 'joinville' });
 });

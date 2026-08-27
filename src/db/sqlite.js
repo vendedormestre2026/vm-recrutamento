@@ -3485,6 +3485,23 @@ function obterLinkGrupo(cidade) {
   return link || null;
 }
 
+// Slug do grupo de UMA praca, so se ativa — mesmo contrato de obterLinkGrupo (praca
+// inexistente, inativa ou sem slug preenchido colapsam no mesmo null), so que devolvendo
+// `slug` em vez de `link_convite_grupo`. Existe pro parametro de botao do template com URL
+// DINAMICA (convite_grupo_vagas_vm): a Meta aprovou a URL base
+// "https://entrevista.vendedormestre.com.br/grupo/{{1}}", e {{1}} e o SLUG da praca (ex.
+// "joinville"), nao o link completo do WhatsApp — que e o que link_grupo_regiao/`link` ja
+// davam, e o que causou o 404 do diagnostico da sessao anterior (botao levando pra
+// ".../grupo/https://chat.whatsapp.com/..."). GET /grupo/:slug (routes/pages.js) e quem
+// resolve slug -> link de verdade, no clique.
+function obterSlugGrupo(cidade) {
+  const linha = getDb()
+    .prepare('SELECT slug FROM regioes_grupos_whatsapp WHERE cidade = ? AND ativo = 1')
+    .get(cidade);
+  const slug = linha && String(linha.slug || '').trim();
+  return slug || null;
+}
+
 // Mesmo contrato de obterLinkGrupo (link ou null; praca inexistente, inativa ou sem link
 // colapsam no mesmo null), so que por `slug` em vez de `cidade` — e a consulta de
 // GET /grupo/:slug (routes/pages.js). A rota nao precisa distinguir "slug nao existe" de
@@ -3785,6 +3802,7 @@ module.exports = {
   criarRegiaoGrupo,
   listarRegioesGrupos,
   obterLinkGrupo,
+  obterSlugGrupo,
   obterLinkGrupoPorSlug,
   definirLinkGrupo,
   criarCampanhaWhatsapp,

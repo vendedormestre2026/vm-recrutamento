@@ -878,20 +878,26 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     }
     const variaveis = campanha.resolverVariaveis(mapa, contexto);
 
-    // ── BOTAO DINAMICO (Incremento 2, diagnostico da sessao anterior) ──
+    // ── BOTAO DINAMICO (Incremento 2, ajustado apos diagnostico do 404 real) ──
     // precisaBotaoDinamico(nome_meta) e a lista fechada em lib/templatesWhatsapp.js — hoje so
-    // convite_grupo_vagas_vm. O VALOR (link do grupo da cidade da vaga do candidato) ja vinha
-    // resolvido em contexto.link_grupo_regiao (montarContextoWhatsapp, lib/campanhaWhatsapp.js)
-    // e so era usado como variavel de CORPO; button0 e o MESMO link, so que tambem no
-    // parametro de botao que a Meta exige pra templates com URL dinamica. Sem link cadastrado
-    // pra praca (contexto.link_grupo_regiao === '') fica undefined de proposito — mandar
-    // button0 vazio e recusado pela Central Whats com a mesma dureza de nao mandar nada (ver
-    // a nota de "vazio nao sobrescreve" em centralWhats.js:montarPayload); melhor deixar o
-    // envio falhar no motivo real ("praca sem link") do que num 400 de parametro vazio.
-    const parametrosBotao =
-      precisaBotaoDinamico(template.nome_meta) && contexto.link_grupo_regiao
-        ? { 0: contexto.link_grupo_regiao }
-        : undefined;
+    // convite_grupo_vagas_vm. A URL base aprovada na Meta e
+    // "https://entrevista.vendedormestre.com.br/grupo/{{1}}" (confirmado direto no Central
+    // Whats), e {{1}} e o SLUG da praca (ex. "joinville") — NAO o link completo do WhatsApp.
+    // Um primeiro envio real usou contexto.link_grupo_regiao aqui (o link completo, que so
+    // faz sentido na variavel de CORPO — posicao 3, "cidade", continua sendo o NOME da
+    // cidade, ex. "Joinville", ver resolverVariaveis acima; nao confundir os tres valores) e
+    // o botao gerou 404 (".../grupo/https://chat.whatsapp.com/..." nao bate slug nenhum).
+    // db.obterSlugGrupo(cidade) e o lookup certo — mesmo contrato de null de obterLinkGrupo.
+    //
+    // ⚠️ RISCO CONHECIDO, NAO REGRESSAO NOVA: praca sem slug cadastrado (linha inexistente,
+    // ou existente sem `slug` preenchido) cai em undefined, igual a praca sem link — o envio
+    // sai sem parametro de botao (o mesmo caminho de "template sem botao"), e quem clicar no
+    // botao do WhatsApp (se a Central Whats aceitar sem o param — o que hoje ela NAO aceita
+    // pra este template, ver o 400 do diagnostico anterior) cairia num 404 em /grupo/:slug.
+    // Praticamente hoje isso vira falha ANTES de sair (Central Whats recusa parametro
+    // ausente), entao o 404 e um risco teorico, nao o caminho que acontece de verdade.
+    const slugGrupo = precisaBotaoDinamico(template.nome_meta) ? db.obterSlugGrupo(contexto.cidade) : null;
+    const parametrosBotao = slugGrupo ? { 0: slugGrupo } : undefined;
 
     console.log(
       `[campanha-wa] envio avulso de teste: template '${template.nome_meta}' -> ` +

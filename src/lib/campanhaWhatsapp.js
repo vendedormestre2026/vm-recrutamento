@@ -227,15 +227,24 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
       cidade: linha.cidade || '',
     });
 
-    // ── BOTAO DINAMICO (Incremento 3, mesmo caso do envio avulso em admin_campanha_whatsapp.js)
-    // precisaBotaoDinamico(nome_meta) e a mesma lista fechada de lib/templatesWhatsapp.js — o
-    // `link` desta linha (ja calculado acima, so pra convite_grupo) e o MESMO valor que
-    // alimenta a variavel de corpo link_grupo_regiao; aqui ele tambem vira o parametro de
-    // botao que a Meta exige pra templates com URL dinamica. Sem link (`link` = '') fica
-    // undefined de proposito: a linha ja foi recusada acima (passo 2, "praca sem link
-    // cadastrado") ANTES de chegar aqui, entao este `if` so importa quando link e verdadeiro.
-    const parametrosBotao =
-      precisaBotaoDinamico(linha.template_nome) && link ? { 0: link } : undefined;
+    // ── BOTAO DINAMICO (Incremento 3, ajustado apos diagnostico do 404 real) ──
+    // precisaBotaoDinamico(nome_meta) e a mesma lista fechada de lib/templatesWhatsapp.js. A
+    // URL base aprovada na Meta e "https://entrevista.vendedormestre.com.br/grupo/{{1}}"
+    // (confirmado direto no Central Whats), e {{1}} e o SLUG da praca (ex. "joinville") — NAO
+    // o link completo do WhatsApp. Um primeiro envio real usou `link` aqui (o mesmo valor que
+    // alimenta a variavel de CORPO link_grupo_regiao, linha 225 acima — essa continua certa,
+    // nao mexe) e o botao gerou 404. db.obterSlugGrupo(linha.cidade) e o lookup certo — mesma
+    // cidade que ja resolveu `link` alguns passos acima, mesmo contrato de null.
+    //
+    // ⚠️ RISCO CONHECIDO, NAO REGRESSAO NOVA: o passo 2 (acima) ja recusa a linha ANTES de
+    // chegar aqui quando falta LINK (`!link`) — mas uma praca com link cadastrado e SLUG
+    // vazio (linha antiga nao migrada, por exemplo) passaria por ali e cairia aqui com
+    // slugGrupo=null, saindo sem parametro de botao. Hoje isso vira falha visivel e imediata
+    // (a Central Whats recusa o envio faltando button0 pra este template, mesmo 400 do
+    // diagnostico anterior) — nao um 404 silencioso pro candidato, entao o risco pratico e
+    // baixo, mas o cenario existe.
+    const slugGrupo = precisaBotaoDinamico(linha.template_nome) ? db.obterSlugGrupo(linha.cidade) : null;
+    const parametrosBotao = slugGrupo ? { 0: slugGrupo } : undefined;
 
     try {
       const { wamid } = await enviar({
