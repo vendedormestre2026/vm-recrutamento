@@ -202,3 +202,118 @@ test('migrar() e idempotente: rodar de novo nao lanca nem duplica', () => {
   const n = db.getDb().prepare('SELECT COUNT(*) AS n FROM campanha_envios').get().n;
   assert.ok(n > 0, 'a re-migracao apagou os envios gravados');
 });
+
+// ── 7. campanhas: job_id opcional + coluna tipo (campanha de grupo) ──
+//
+// Mesmo par de motivos do bloco de campanhas_whatsapp em campanhaWhatsappMeta.test.js
+// (linhas 159-218): aplicarSchema() (CREATE TABLE IF NOT EXISTS) nunca toca uma tabela que
+// ja existe, entao o unico jeito de exercitar de verdade a migracao de recriacao e simular
+// a mao o schema ANTIGO (job_id NOT NULL, sem coluna tipo) antes de chamar migrar().
+
+function simularSchemaAntigoDeCampanhas() {
+  db.getDb().exec('PRAGMA foreign_keys = OFF');
+  db.getDb().exec('DROP TABLE campanhas');
+  db.getDb().exec(`
+    CREATE TABLE campanhas (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id              INTEGER NOT NULL REFERENCES jobs(id),
+      assunto             TEXT NOT NULL,
+      corpo_html          TEXT NOT NULL,
+      criterios           TEXT NOT NULL,
+      status              TEXT NOT NULL DEFAULT 'rascunho'
+                            CHECK (status IN ('rascunho', 'enfileirada', 'enviando', 'concluida', 'cancelada')),
+      total_destinatarios INTEGER NOT NULL DEFAULT 0,
+      criado_em           TEXT NOT NULL DEFAULT (datetime('now')),
+      enfileirada_em      TEXT,
+      finalizada_em       TEXT
+    );
+  `);
+  db.getDb().exec('PRAGMA foreign_keys = ON');
+}
+
+test('migrate: campanhas com job_id NOT NULL (schema antigo) e recriada com job_id opcional + tipo, preservando linhas', () => {
+  simularSchemaAntigoDeCampanhas();
+
+  // Confirma que o estado simulado E o antigo: job_id NULL tem que ser recusado AGORA,
+  // antes da migracao rodar — senao o teste provaria uma migracao que nao fez nada.
+  assert.throws(
+    () =>
+      run(
+        "INSERT INTO campanhas (job_id, assunto, corpo_html, criterios) VALUES (NULL, 'x', '<p>x</p>', '{}')",
+      ),
+    /NOT NULL constraint failed/,
+  );
+
+  const existente = run(
+    `INSERT INTO campanhas (job_id, assunto, corpo_html, criterios, total_destinatarios)
+     VALUES (?, 'Campanha pre-existente', '<p>Corpo</p>', '{"origem":"direto"}', 7)`,
+    vagaId,
+  );
+
+  migrar(); // idempotente — chamada de novo aqui simula o proximo boot apos o deploy
+
+  // A linha pre-existente sobreviveu a recriacao da tabela, com os mesmos valores.
+  const linha = db.getDb().prepare('SELECT * FROM campanhas WHERE id = ?').get(existente);
+  assert.equal(linha.assunto, 'Campanha pre-existente');
+  assert.equal(linha.job_id, vagaId);
+  assert.equal(linha.total_destinatarios, 7);
+  // tipo nao existia na linha antiga (nao fazia parte do INSERT...SELECT de origem) — herda
+  // o DEFAULT da coluna nova, e o default precisa ser o comportamento de sempre.
+  assert.equal(linha.tipo, 'divulgacao_vaga');
+
+  // E agora job_id NULL e aceito — campanha de grupo nao tem vaga.
+  assert.doesNotThrow(() =>
+    run(
+      "INSERT INTO campanhas (job_id, tipo, assunto, corpo_html, criterios) VALUES (NULL, 'convite_grupo', 'y', '<p>y</p>', '{}')",
+    ),
+  );
+
+  // CHECK de tipo continua protegendo o enum.
+  assert.throws(
+    () =>
+      run(
+        "INSERT INTO campanhas (job_id, tipo, assunto, corpo_html, criterios) VALUES (NULL, 'tipo_invalido', 'z', '<p>z</p>', '{}')",
+      ),
+    /CHECK constraint failed/,
+  );
+});
+
+test('migrate: campanhas ja com job_id opcional (schema aplicado do zero) nao dispara a recriacao de novo', () => {
+  const { linhas } = semRuido(() => migrar());
+  assert.equal(linhas.some((l) => l.includes('campanhas recriada')), false);
+});
+
+function semRuido(fn) {
+  const { log, warn, error } = console;
+  const linhas = [];
+  const cap = (...a) => linhas.push(a.join(' '));
+  console.log = console.warn = console.error = cap;
+  try {
+    return { r: fn(), linhas };
+  } finally {
+    Object.assign(console, { log, warn, error });
+  }
+}
+
+// ── 8. grupo_acessos: tabela nova, aditiva ──
+
+test('migrar() cria grupo_acessos com id/slug/campanha_id/criado_em e o indice por campanha', () => {
+  assert.ok(existeNoSqliteMaster('table', 'grupo_acessos'));
+  assert.ok(existeNoSqliteMaster('index', 'idx_grupo_acessos_campanha'));
+
+  const colunas = db.getDb().prepare('SELECT * FROM pragma_table_info(?)').all('grupo_acessos').map((c) => c.name);
+  assert.deepEqual(colunas, ['id', 'slug', 'campanha_id', 'criado_em']);
+});
+
+test('grupo_acessos.campanha_id e opcional (clique sem campanha, ex.: botao do WhatsApp)', () => {
+  assert.doesNotThrow(() =>
+    run("INSERT INTO grupo_acessos (slug, campanha_id) VALUES ('joinville', NULL)"),
+  );
+});
+
+test('grupo_acessos.campanha_id aceita id de campanha existente', () => {
+  const campanhaId = criarCampanha();
+  assert.doesNotThrow(() =>
+    run('INSERT INTO grupo_acessos (slug, campanha_id) VALUES (?, ?)', 'joinville', campanhaId),
+  );
+});

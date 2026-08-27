@@ -2409,14 +2409,18 @@ function campanhaDeLinha(linha) {
 // tamanho do publico no momento em que o recorte foi aprovado, e serve depois para
 // comparar com o publico recalculado e revelar decadencia (gente que se descadastrou ou
 // se candidatou a vaga alvo no meio do caminho).
-function criarCampanha({ job_id, assunto, corpo_html, criterios, total_destinatarios } = {}) {
+// `tipo`: 'divulgacao_vaga' (default, mesmo comportamento de sempre) ou 'convite_grupo'.
+// Nao valida o enum aqui — quem decide o que e um tipo valido e o CHECK da coluna (recusa
+// no INSERT) e a rota (admin_promocao.js), que so deixa um valor do enum chegar ate aqui.
+function criarCampanha({ job_id, tipo, assunto, corpo_html, criterios, total_destinatarios } = {}) {
   const info = getDb()
     .prepare(
-      `INSERT INTO campanhas (job_id, assunto, corpo_html, criterios, total_destinatarios)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO campanhas (job_id, tipo, assunto, corpo_html, criterios, total_destinatarios)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .run(
       job_id,
+      tipo || 'divulgacao_vaga',
       assunto,
       corpo_html,
       JSON.stringify(criterios || {}),
@@ -2675,8 +2679,15 @@ function listarEnviosPendentesCampanha({ limite = 125 } = {}) {
       // `e.tentativas` decide, no momento da falha, entre devolver a linha a fila ou
       // encerra-la: quem compara com o teto e a varredura, e ela so tem em maos o que esta
       // consulta trouxer. Sem esta coluna aqui, a retentativa seria infinita.
+      // `tipo`/`criterios_json`: pra enviarUm (dispararPromocao.js) decidir qual moldura
+      // montar por linha. 'convite_grupo' nao tem vaga (job_id NULL, j.* vem tudo NULL pelo
+      // LEFT JOIN, degradacao ja prevista) — a CIDADE do grupo vem de dentro de
+      // criterios_json (campo `cidadeGrupo`, gravado na criacao — ver admin_promocao.js),
+      // nao de uma coluna propria: e o MESMO padrao ja usado pra jobIdAlvo/perfil/etc, e
+      // evita uma coluna nova so pra um dado que so um dos dois tipos usa.
       `SELECT e.id, e.campanha_id, e.email, e.nome, e.tentativas,
               c.assunto AS assunto, c.corpo_html AS corpo_html,
+              c.tipo AS tipo, c.criterios AS criterios_json,
               j.slug AS vaga_slug,
               j.titulo AS vaga_titulo, j.perfil AS vaga_perfil, j.empresa AS vaga_empresa,
               j.endereco AS vaga_endereco, j.modalidade AS vaga_modalidade,
@@ -3580,6 +3591,39 @@ function obterLinkGrupoPorSlug(slug) {
   return link || null;
 }
 
+// Rastro de clique no botao "ENTRAR NO GRUPO" (campanha de e-mail tipo convite_grupo) —
+// ANONIMO, mesmo espirito de registrarAcessoVaga (acima neste arquivo): conta cliques, nao
+// identifica quem clicou. `slug` e sempre gravado (chega do proprio path de
+// GET /grupo/:slug); `campanhaId` e OPCIONAL e validado contra `campanhas` ANTES de gravar
+// — mesmo padrao de registrarAcessoVaga: um id invalido/de campanha inexistente (link
+// velho, alguem mexendo na URL, ou o botao de WhatsApp, que nunca manda esse parametro)
+// vira NULL, nunca impede o registro do acesso nem derruba o redirect de quem chamou.
+function registrarAcessoGrupo(slug, campanhaId = null) {
+  const n = Number(campanhaId);
+  const campanhaValida =
+    Number.isInteger(n) && n > 0 && getDb().prepare('SELECT 1 FROM campanhas WHERE id = ?').get(n) ? n : null;
+
+  getDb()
+    .prepare('INSERT INTO grupo_acessos (slug, campanha_id) VALUES (?, ?)')
+    .run(String(slug || '').trim(), campanhaValida);
+}
+
+// Total de cliques registrados pra UMA campanha — MESMO CONTRATO de contarCliquesCampanha
+// (acima neste arquivo, a versao de vaga: { total }, 0 pra id invalido, nunca lanca), so
+// que sobre grupo_acessos em vez de vaga_acessos. Nomes DIFERENTES (nao uma so funcao com
+// parametro de tabela) pelo mesmo motivo de vaga_acessos/grupo_acessos serem tabelas
+// separadas: cada uma e dona clara da metrica do proprio tipo de campanha.
+function contarCliquesGrupo(campanhaId) {
+  const id = Number(campanhaId);
+  if (!Number.isInteger(id) || id <= 0) return { total: 0 };
+
+  const linha = getDb()
+    .prepare('SELECT COUNT(*) AS total FROM grupo_acessos WHERE campanha_id = ?')
+    .get(id);
+
+  return { total: linha.total };
+}
+
 function definirLinkGrupo(cidade, link) {
   return getDb()
     .prepare(
@@ -3960,6 +4004,8 @@ module.exports = {
   obterLinkGrupo,
   obterSlugGrupo,
   obterLinkGrupoPorSlug,
+  registrarAcessoGrupo,
+  contarCliquesGrupo,
   definirLinkGrupo,
   criarCampanhaWhatsapp,
   listarCampanhasWhatsapp,

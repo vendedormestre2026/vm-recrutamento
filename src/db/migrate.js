@@ -452,6 +452,81 @@ function migrar() {
     }
   }
 
+  // ── campanhas.job_id vira opcional + coluna `tipo` (Promocao de Vagas: campanha de grupo) ──
+  //
+  // Ate aqui `campanhas.job_id` era `NOT NULL` — toda campanha de e-mail promovia uma
+  // VAGA especifica. O objetivo novo 'convite_grupo' (mesmo par de objetivos que
+  // campanhas_whatsapp ja tem — divulgacao_vaga/convite_grupo) promove o link do GRUPO de
+  // uma praca, sem vaga nenhuma: job_id precisa aceitar NULL, e uma coluna `tipo` nova diz
+  // qual dos dois uma campanha e.
+  //
+  // MESMO PROCEDIMENTO de 12 passos do bloco de campanhas_whatsapp logo acima (SQLite nao
+  // tem ALTER TABLE para soltar um NOT NULL nem para acrescentar CHECK numa coluna
+  // existente — a unica forma e recriar a tabela): CREATE nova, INSERT...SELECT (tipo NAO
+  // entra no INSERT, toda linha copiada herda o DEFAULT 'divulgacao_vaga' — comportamento
+  // de sempre, preservado automaticamente, sem tocar uma linha existente), DROP, RENAME.
+  //
+  // Idempotencia: em vez de regex sobre o SQL gravado (o metodo do bloco de
+  // campanhas_whatsapp acima), aqui e mais direto perguntar ao PRAGMA se job_id ainda e
+  // NOT NULL (pragma_table_info.notnull) — so recria enquanto for 1. Depois do primeiro
+  // migrar() que rodar isto, job_id deixa de ser NOT NULL e a condicao vira false pra
+  // sempre; banco novo (aplicarSchema aplicado do zero, ja com o schema novo abaixo) nunca
+  // entra aqui.
+  //
+  // `"notnull"` ENTRE ASPAS: e o nome literal da coluna que pragma_table_info devolve, mas
+  // SQLite trata `notnull` sem aspas como o operador postfix NOTNULL (equivalente a
+  // `IS NOT NULL`) — "SELECT notnull FROM ..." sem aspas e erro de sintaxe, nao um SELECT
+  // de coluna. Confirmado rodando contra better-sqlite3 real antes de fechar este bloco.
+  {
+    const conexaoCampanhas = getDb();
+    const colunaJobId = conexaoCampanhas
+      .prepare('SELECT "notnull" FROM pragma_table_info(?) WHERE name = ?')
+      .get('campanhas', 'job_id');
+    const precisaRecriarCampanhas = Boolean(colunaJobId) && colunaJobId.notnull === 1;
+    if (precisaRecriarCampanhas) {
+      // FK OFF durante o drop/rename: campanha_envios.campanha_id (NOT NULL) e
+      // vaga_acessos.campanha_id (nullable) referenciam esta tabela — o DROP TABLE
+      // falharia com violacao de FK enquanto qualquer linha filha ainda apontar pra ela.
+      // Restaurado no estado anterior no finally, nunca fica desligado por engano.
+      const fkAntesCampanhas = conexaoCampanhas.pragma('foreign_keys', { simple: true });
+      conexaoCampanhas.pragma('foreign_keys = OFF');
+      try {
+        conexaoCampanhas.transaction(() => {
+          conexaoCampanhas.exec(`
+            CREATE TABLE campanhas_novo (
+              id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+              job_id              INTEGER REFERENCES jobs(id),
+              tipo                TEXT NOT NULL DEFAULT 'divulgacao_vaga'
+                                    CHECK (tipo IN ('divulgacao_vaga', 'convite_grupo')),
+              assunto             TEXT NOT NULL,
+              corpo_html          TEXT NOT NULL,
+              criterios           TEXT NOT NULL,
+              status              TEXT NOT NULL DEFAULT 'rascunho'
+                                    CHECK (status IN ('rascunho', 'enfileirada', 'enviando', 'concluida', 'cancelada')),
+              total_destinatarios INTEGER NOT NULL DEFAULT 0,
+              criado_em           TEXT NOT NULL DEFAULT (datetime('now')),
+              enfileirada_em      TEXT,
+              finalizada_em       TEXT
+            );
+          `);
+          conexaoCampanhas.exec(`
+            INSERT INTO campanhas_novo
+              (id, job_id, assunto, corpo_html, criterios, status, total_destinatarios,
+               criado_em, enfileirada_em, finalizada_em)
+            SELECT id, job_id, assunto, corpo_html, criterios, status, total_destinatarios,
+                   criado_em, enfileirada_em, finalizada_em
+            FROM campanhas;
+          `);
+          conexaoCampanhas.exec('DROP TABLE campanhas;');
+          conexaoCampanhas.exec('ALTER TABLE campanhas_novo RENAME TO campanhas;');
+        })();
+      } finally {
+        conexaoCampanhas.pragma(`foreign_keys = ${fkAntesCampanhas ? 'ON' : 'OFF'}`);
+      }
+      console.log('[migrate] campanhas recriada: job_id opcional + coluna tipo (campanha de grupo).');
+    }
+  }
+
   // ── regioes_grupos_whatsapp.slug — link curto de convite (GET /grupo/:slug) ──
   //
   // Coluna nasce TEXT solta (nao "TEXT UNIQUE" no ADD COLUMN): SQLite recusa isso —

@@ -200,6 +200,8 @@ module.exports = {
   obterLinkGrupo: driver.obterLinkGrupo,
   obterSlugGrupo: driver.obterSlugGrupo,
   obterLinkGrupoPorSlug: driver.obterLinkGrupoPorSlug,
+  registrarAcessoGrupo: driver.registrarAcessoGrupo,
+  contarCliquesGrupo: driver.contarCliquesGrupo,
   definirLinkGrupo: driver.definirLinkGrupo,
   criarCampanhaWhatsapp: driver.criarCampanhaWhatsapp,
   listarCampanhasWhatsapp: driver.listarCampanhasWhatsapp,

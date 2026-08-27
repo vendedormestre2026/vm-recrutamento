@@ -282,7 +282,21 @@ CREATE INDEX IF NOT EXISTS idx_api_usage_criado      ON api_usage(criado_em);
 -- (enviados / total) sem recontar um conjunto que muda embaixo dele.
 CREATE TABLE IF NOT EXISTS campanhas (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-  job_id              INTEGER NOT NULL REFERENCES jobs(id),
+  -- Obrigatorio SO quando tipo='divulgacao_vaga' (a vaga sendo divulgada). NULL em
+  -- 'convite_grupo' — essa campanha nao tem vaga nenhuma, promove o link do GRUPO de uma
+  -- praca. Nullable na coluna porque a validacao de "obrigatorio por tipo" e do APP (ver
+  -- POST /admin/promocao em admin_promocao.js), mesmo precedente de
+  -- campanhas_whatsapp.job_id.
+  job_id              INTEGER REFERENCES jobs(id),
+  -- O QUE a campanha divulga. 'divulgacao_vaga' (default, comportamento de sempre) leva
+  -- uma VAGA — job_id obrigatorio, e o publico exclui automaticamente quem ja se
+  -- candidatou a ela (ver listarPublicoCampanha, lib/promocaoVagas.js). 'convite_grupo'
+  -- leva o link do GRUPO de WhatsApp de UMA praca — sem vaga, sem essa exclusao (nao ha
+  -- candidatura de vaga nenhuma pra excluir). Mesmo par de objetivos que
+  -- campanhas_whatsapp.tipo_mensagem ja tem, coluna PROPRIA (tabelas/ids independentes,
+  -- mesmo motivo de vaga_acessos.campanha_id vs campanha_whatsapp_id nao serem uma so).
+  tipo                TEXT NOT NULL DEFAULT 'divulgacao_vaga'
+                        CHECK (tipo IN ('divulgacao_vaga', 'convite_grupo')),
   assunto             TEXT NOT NULL,
   corpo_html          TEXT NOT NULL,
   criterios           TEXT NOT NULL,   -- JSON dos filtros aplicados (rastro historico)
@@ -338,6 +352,32 @@ CREATE TABLE IF NOT EXISTS campanha_envios (
   criado_em   TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (campanha_id, email)
 );
+
+-- Rastro de clique no botao "ENTRAR NO GRUPO" (campanha de e-mail tipo convite_grupo,
+-- lib/ctaCampanha.js) — ANONIMO por design, mesmo espirito de vaga_acessos: conta cliques,
+-- nao identifica quem clicou. Um registro por acesso (preserva timestamp), sem agregacao
+-- aqui — quem conta e db.contarCliquesGrupo (sqlite.js).
+--
+-- ── TABELA PROPRIA, e nao reusar vaga_acessos ──
+-- vaga_acessos.job_id e NOT NULL (o clique e sempre em CIMA de uma vaga) — um clique de
+-- grupo nao tem vaga nenhuma, entao encaixar aqui exigiria job_id nullable ali, o que
+-- confundiria "vaga sem clique registrado" com "clique que nunca foi de vaga". Tabela nova,
+-- mais simples que o rebuild de vaga_acessos so pra isto.
+--
+-- `slug` (nao `campanha_id`) e o dado PRIMARIO: GET /grupo/:slug (routes/pages.js) e usado
+-- tanto pelo botao do e-mail QUANTO pelo botao de WhatsApp (ETAPA B da campanha por
+-- WhatsApp) — o clique do WhatsApp nunca manda `campanha_id` (esse parametro so existe no
+-- link que ctaCampanha.js monta) e ainda assim precisa ser contavel por praca no futuro,
+-- por isso o slug entra sempre. `campanha_id` e OPCIONAL e so identifica cliques vindos de
+-- UMA campanha de e-mail especifica — mesmo raciocinio de vaga_acessos.campanha_id (NULL =
+-- acesso que nao veio de campanha rastreavel).
+CREATE TABLE IF NOT EXISTS grupo_acessos (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug        TEXT NOT NULL,
+  campanha_id INTEGER REFERENCES campanhas(id),
+  criado_em   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_grupo_acessos_campanha ON grupo_acessos(campanha_id);
 
 -- Opt-out de divulgacao. GLOBAL e por E-MAIL, nao por candidato, por tres razoes que
 -- juntas descartam qualquer alternativa por-linha:
