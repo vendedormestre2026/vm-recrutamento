@@ -62,6 +62,10 @@ const UTM_SOURCE_WHATSAPP = 'whatsapp';
 // o CSS vira redundancia barata em vez de unica linha de defesa.
 const TEXTO_BOTAO_CTA = 'VER A VAGA E ME CANDIDATAR';
 
+// Botao da campanha tipo 'convite_grupo' (Promocao de Vagas — campanha de grupo, e-mail).
+// Mesma disciplina de TEXTO_BOTAO_CTA (ja em maiusculas na string, ver o comentario dela).
+const TEXTO_BOTAO_CTA_GRUPO = 'ENTRAR NO GRUPO';
+
 // A marca, agora em papel de APOIO (11px) e nao de manchete (era 26px laranja, o maior
 // elemento do e-mail). Ver a justificativa em marcaEmail.estiloEyebrow: quem abre uma
 // divulgacao precisa saber em dois segundos QUAL VAGA e — o remetente e contexto.
@@ -117,6 +121,25 @@ function montarUrlVaga(
 
   const idWa = Number(campanhaWhatsappId);
   if (Number.isInteger(idWa) && idWa > 0) url.searchParams.set('campanha_whatsapp_id', String(idWa));
+
+  return url.toString();
+}
+
+// URL publica do GRUPO de uma praca (campanha tipo 'convite_grupo'), com campanha_id —
+// mesmo padrao de montarUrlVaga, MAS SEM utm_source: GET /grupo/:slug (routes/pages.js)
+// nunca leu UTM (o botao ja serve tanto o e-mail QUANTO o WhatsApp — ver
+// providers/centralWhats/centralWhats.js:montarPayload/parametrosBotao — e nao faz parte
+// do funil de candidatura que a UTM/cookie vm_utm cobrem) e nao deve passar a ler agora so
+// porque um segundo chamador apareceu. `campanha_id` e o UNICO parametro de atribuicao —
+// e o que db.registrarAcessoGrupo valida antes de gravar em grupo_acessos.
+function montarUrlGrupo(slug, { campanhaId, baseUrl = config.baseUrl } = {}) {
+  const s = String(slug || '').trim();
+  if (!s) return '';
+
+  const url = new URL(`/grupo/${encodeURIComponent(s)}`, String(baseUrl || '').replace(/\/+$/, '') + '/');
+
+  const id = Number(campanhaId);
+  if (Number.isInteger(id) && id > 0) url.searchParams.set('campanha_id', String(id));
 
   return url.toString();
 }
@@ -193,6 +216,34 @@ function blocoCabecalho(vaga) {
     .join('\n');
 }
 
+// Cabecalho da campanha de GRUPO: eyebrow da marca + kicker "Convite de grupo" + a CIDADE
+// como titulo — nao ha vaga pra mostrar (titulo/perfil/selos de blocoCabecalho nao se
+// aplicam), mas a cidade e um dado barato de exibir e resolve o mesmo problema que
+// blocoCabecalho existe pra resolver: "quem abre a mensagem precisa saber em dois segundos
+// do que se trata", sem inflar o escopo (sem selos, sem campos opcionais de vaga).
+//
+// SEM CIDADE, degrada para so a marca — mesma forma de blocoCabecalho(null) pra vaga
+// removida: `cidade` pode chegar vazia se a campanha foi criada sem uma (nao deveria
+// acontecer — a rota valida isso na criacao — mas a funcao nao pode presumir).
+function blocoCabecalhoGrupo(cidade) {
+  const c = String(cidade == null ? '' : cidade).trim();
+  const eyebrow = `<p style="${marca.estiloEyebrow()}">${TITULO_CABECALHO}</p>`;
+
+  if (!c) {
+    return `<tr><td style="padding:0 0 14px;">${eyebrow}</td></tr>`;
+  }
+
+  return [
+    '<tr>',
+    '<td style="padding:0 0 16px;">',
+    eyebrow,
+    `<p style="${marca.estiloKicker()}">Convite de grupo</p>`,
+    `<p style="${marca.estiloTituloVaga()}">Vagas em ${escapeHtml(c)}</p>`,
+    '</td>',
+    '</tr>',
+  ].join('\n');
+}
+
 // O bloco do botao de candidatura.
 //
 // ── POR QUE BLOCO FIXO, e nao um placeholder tipo {{LINK_VAGA}} no texto do LLM ──
@@ -233,6 +284,30 @@ function blocoCta(urlVaga) {
     '<tr>',
     `<td bgcolor="${marca.LARANJA}" style="border-radius:8px;">`,
     `<a href="${escapeHtml(url)}" style="${marca.estiloBotaoCta()}">${TEXTO_BOTAO_CTA}</a>`,
+    '</td>',
+    '</tr>',
+    '</table>',
+    '</td>',
+    '</tr>',
+  ].join('\n');
+}
+
+// O bloco do botao "ENTRAR NO GRUPO" — mesmo padrao de blocoCta (tabela de 1 celula em
+// volta do <a>, mesmo motivo do Outlook ignorar padding em inline), so com o texto e a URL
+// do grupo. Devolve '' sem URL (praca sem slug configurado — mesma degradacao de blocoCta
+// sem vaga: nenhum botao e melhor que um <a href=""> que parece funcional e nao leva a
+// lugar nenhum).
+function blocoCtaGrupo(urlGrupo) {
+  const url = String(urlGrupo || '').trim();
+  if (!url) return '';
+
+  return [
+    '<tr>',
+    '<td style="padding:20px 0 24px;">',
+    '<table role="presentation" cellpadding="0" cellspacing="0" border="0">',
+    '<tr>',
+    `<td bgcolor="${marca.LARANJA}" style="border-radius:8px;">`,
+    `<a href="${escapeHtml(url)}" style="${marca.estiloBotaoCta()}">${TEXTO_BOTAO_CTA_GRUPO}</a>`,
     '</td>',
     '</tr>',
     '</table>',
@@ -385,16 +460,90 @@ function montarCorpoFinal(
   });
 }
 
+// ──────────────────────────────────────────────────────────────
+// A moldura completa — variante GRUPO
+// ──────────────────────────────────────────────────────────────
+//
+// FUNCOES SEPARADAS (montarEmailCampanhaGrupo/montarCorpoFinalGrupo), e nao um parametro
+// `tipo` dentro de montarEmailCampanha/montarCorpoFinal: os dois caminhos recebem dados de
+// NATUREZA diferente — vaga inteira + urlVaga vs. cidade (string) + urlGrupo — e um `if`
+// no meio da funcao existente obrigaria os DOIS conjuntos de parametros a conviverem na
+// mesma assinatura, a maioria opcional e mutuamente exclusiva (vaga faz sentido sem
+// cidade, cidade faz sentido sem vaga, nunca os dois). Funcoes distintas deixam cada
+// contrato simples de ler sozinho — mesmo raciocinio que ja separa montarUrlVaga de
+// montarUrlGrupo, acima.
+function montarEmailCampanhaGrupo({ corpoHtml, urlGrupo, urlDescadastro, cidade } = {}) {
+  const corpo = String(corpoHtml == null ? '' : corpoHtml);
+
+  return [
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${marca.PRETO}" style="background:${marca.PRETO};width:100%;">`,
+    '<tr>',
+    `<td align="center" style="${marca.estiloFundo()}">`,
+    `<table role="presentation" width="${marca.LARGURA_MAX}" cellpadding="0" cellspacing="0" border="0" align="center" style="${marca.estiloMoldura()}">`,
+
+    // ── Cabecalho: marca discreta + a CIDADE em destaque (sem vaga nenhuma aqui) ──
+    blocoCabecalhoGrupo(cidade),
+    `<tr><td style="${marca.estiloSeparador()}">&nbsp;</td></tr>`,
+
+    // ── Conteudo gerado a mao pelo Jean (SEM sugestao de IA neste tipo, ver admin_promocao.js) ──
+    '<tr>',
+    `<td style="${marca.estiloConteudo()}padding:22px 0 0;">`,
+    corpo,
+    '</td>',
+    '</tr>',
+
+    // ── Botao ──
+    blocoCtaGrupo(urlGrupo),
+
+    // ── Rodape ──
+    `<tr><td style="${marca.estiloSeparador()}">&nbsp;</td></tr>`,
+    blocoRodape(urlDescadastro),
+
+    '</table>',
+    '</td>',
+    '</tr>',
+    '</table>',
+  ]
+    .filter(Boolean) // blocoCtaGrupo devolve '' quando a praca nao tem slug configurado
+    .join('\n');
+}
+
+// Atalho, espelhando montarCorpoFinal: quem tem o slug do grupo, o corpo e a URL de
+// descadastro monta a URL do grupo e ja devolve o e-mail inteiro. MESMA razao de existir
+// de montarCorpoFinal — os dois caminhos de envio (varredura de disparo real e botao de
+// e-mail de teste) precisam produzir BYTE A BYTE o mesmo e-mail.
+function montarCorpoFinalGrupo(
+  corpoHtml,
+  slug,
+  urlDescadastro,
+  cidade = '',
+  campanhaId = null,
+  baseUrl = config.baseUrl,
+) {
+  return montarEmailCampanhaGrupo({
+    corpoHtml,
+    urlGrupo: montarUrlGrupo(slug, { campanhaId, baseUrl }),
+    urlDescadastro,
+    cidade,
+  });
+}
+
 module.exports = {
   montarUrlVaga,
+  montarUrlGrupo,
   montarEmailCampanha,
+  montarEmailCampanhaGrupo,
   montarCorpoFinal,
+  montarCorpoFinalGrupo,
   blocoCta,
+  blocoCtaGrupo,
   blocoRodape,
   blocoCabecalho,
+  blocoCabecalhoGrupo,
   UTM_SOURCE_CAMPANHA,
   UTM_SOURCE_WHATSAPP,
   TEXTO_BOTAO_CTA,
+  TEXTO_BOTAO_CTA_GRUPO,
   TITULO_CABECALHO,
   TEXTO_LINK_DESCADASTRO,
 };
