@@ -77,6 +77,18 @@ const ROTULO_STATUS_CAMPANHA = {
   cancelada: 'Cancelada',
 };
 
+// Os DOIS objetivos de campanha de e-mail. Mesmo par de valores que
+// campanhas_whatsapp.tipo_mensagem/OBJETIVOS ja usam (admin_campanha_whatsapp.js) — tabelas
+// e ids independentes, mas o VOCABULARIO ('divulgacao_vaga'/'convite_grupo') e o mesmo de
+// proposito, pra quem conhece um painel reconhecer o outro. Sem 'status_candidatura' aqui:
+// aquele terceiro objetivo e exclusivo da campanha por WhatsApp, fora do escopo deste
+// arquivo. Ordem = ordem de exibicao no select.
+const OBJETIVOS = [
+  ['divulgacao_vaga', 'Promover uma vaga'],
+  ['convite_grupo', 'Promover um grupo de vagas'],
+];
+const TIPOS_VALIDOS = OBJETIVOS.map(([v]) => v);
+
 // Nome amigavel do atributo, usado nas linhas de "sem atributo" da previa.
 const ROTULO_ATRIBUTO = {
   perfil: 'perfil',
@@ -102,7 +114,19 @@ function lerCriteriosDoForm(b = {}) {
   const vagaNum = Number(b.vaga);
 
   return {
+    // 'divulgacao_vaga' e o DEFAULT — ausente/invalido cai nele, entao nenhum client antigo
+    // (nenhum manda `tipo`) muda de comportamento. Mesmo padrao ja usado por
+    // admin_campanha_whatsapp.js:OBJETIVOS.
+    tipo: TIPOS_VALIDOS.includes(b.tipo) ? b.tipo : 'divulgacao_vaga',
     jobIdAlvo: Number.isInteger(vagaNum) && vagaNum > 0 ? vagaNum : undefined,
+    // A CIDADE do grupo (so faz sentido em convite_grupo) — DIFERENTE de `cidades` (a
+    // multi-selecao do filtro "Quem vai receber", logo abaixo). Sao dois dados
+    // independentes por design: cidadeGrupo decide QUAL grupo o botao do e-mail promove
+    // (conteudo, imutavel apos a criacao — nao ha edicao de campanha existente); `cidades`
+    // decide QUEM recebe (audiencia, o Jean pode desmarcar/adicionar livremente — decisao
+    // de produto: pre-selecionar sem travar). Misturar os dois faria o Jean editar a
+    // audiencia e sem querer trocar qual grupo esta sendo divulgado.
+    cidadeGrupo: b.cidade_grupo ? String(b.cidade_grupo).trim() : undefined,
     perfil: PERFIS_VALIDOS.includes(b.perfil) ? b.perfil : undefined,
     perfilIncluirSemAtributo: marcado('perfil_incluir_sem'),
     utmSource: b.origem ? String(b.origem) : undefined,
@@ -134,10 +158,18 @@ function montarConteudoListagemPromocao({ formatarDataHora, fmtInt }) {
         c.status === 'rascunho'
           ? `<span class="badge badge--aplicado">${escapeHtml(rotulo)}</span>`
           : `<span class="badge badge--ativa">${escapeHtml(rotulo)}</span>`;
+      // Coluna "Tipo" — substitui a antiga coluna "Vaga" (que mostrava c.vaga_titulo direto):
+      // com dois objetivos possiveis, "(vaga removida)" ficaria enganoso pra convite_grupo
+      // (nunca teve vaga — nao e "removida", e "nao se aplica"). Um badge Vaga/Grupo diz o
+      // objetivo sem ambiguidade nos dois casos; quem quer o titulo da vaga clica em "Ver".
+      const badgeTipo =
+        c.tipo === 'convite_grupo'
+          ? '<span class="badge badge--aplicado">Grupo</span>'
+          : '<span class="badge badge--ativa">Vaga</span>';
       return `
         <tr>
           <td><a href="/admin/promocao/${c.id}">${escapeHtml(c.assunto || '(sem assunto)')}</a></td>
-          <td>${escapeHtml(c.vaga_titulo || '(vaga removida)')}</td>
+          <td>${badgeTipo}</td>
           <td>${badge}</td>
           <td class="col-num">${fmtInt(c.total_destinatarios)}</td>
           <td>${formatarDataHora(c.criado_em)}</td>
@@ -172,7 +204,7 @@ function montarConteudoListagemPromocao({ formatarDataHora, fmtInt }) {
       <div class="admin-tab-scroll">
         <table class="admin-tab">
           <thead>
-            <tr><th>Assunto</th><th>Vaga</th><th>Status</th><th class="col-num">Destinatários</th><th>Criada em</th><th>Ações</th></tr>
+            <tr><th>Assunto</th><th>Tipo</th><th>Status</th><th class="col-num">Destinatários</th><th>Criada em</th><th>Ações</th></tr>
           </thead>
           <tbody>
             ${linhas || '<tr><td colspan="6">Nenhuma campanha criada ainda.</td></tr>'}
@@ -229,9 +261,26 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
 
   // Formulario de criacao. `criterios` e `valores` vem preenchidos no re-submit da previa,
   // para o Jean nunca perder o que digitou ao recalcular.
-  function formularioCampanha({ vagas, origens, cidades = [], criterios = {}, valores = {}, erro = '', ok = '' } = {}) {
+  //
+  // `regioesComLink`: pracas com link de grupo JA cadastrado (db.listarRegioesGrupos()
+  // filtrado por link_convite_grupo, ver paginaFormulario abaixo — nao existe uma funcao de
+  // db dedicada a "regioes com link", entao o filtro fica aqui, mesmo padrao ja usado em
+  // admin_campanha_whatsapp.js). E a lista de opcoes de "Cidade do grupo" — DIFERENTE da
+  // lista `cidades` (todas as pracas conhecidas na base, usada no filtro de audiencia):
+  // uma praca sem link nao tem pra onde o botao do e-mail apontar, entao nem aparece aqui.
+  function formularioCampanha({
+    vagas,
+    origens,
+    cidades = [],
+    regioesComLink = [],
+    criterios = {},
+    valores = {},
+    erro = '',
+    ok = '',
+  } = {}) {
     const alerta = erro ? `<p class="aviso-alerta">${escapeHtml(erro)}</p>` : '';
     const confirmacao = ok ? `<p class="aviso-ok">${escapeHtml(ok)}</p>` : '';
+    const tipoAtual = criterios.tipo === 'convite_grupo' ? 'convite_grupo' : 'divulgacao_vaga';
 
     const opcoesVaga = vagas
       .map(
@@ -280,6 +329,22 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     // lado. Um unico campo chamado `vaga` chega ao servidor, nos dois estados.
     const vagaTravada = Boolean(valores.sugestaoGerada);
 
+    // ── Objetivo: SO trava junto com a vaga ──
+    //
+    // vagaTravada (a trava ja existente, so pra IA) e o MESMO gatilho aqui: se o Jean
+    // trocasse de objetivo depois de gerar sugestao pra uma vaga, criterios.jobIdAlvo
+    // continuaria apontando pra ela mas o assunto/corpo (escritos sobre essa vaga) nao
+    // fariam mais sentido pro objetivo novo — o mesmo furo que a trava da vaga ja fecha,
+    // agora vazando por outra porta. "Trocar vaga" (que ja limpa assunto/corpo e destrava)
+    // e o caminho pra sair desse estado, exatamente como hoje.
+    const opcoesObjetivo = OBJETIVOS.map(
+      ([v, r]) => `<option value="${v}"${tipoAtual === v ? ' selected' : ''}>${escapeHtml(r)}</option>`,
+    ).join('');
+    const campoObjetivo = vagaTravada
+      ? `<select disabled id="campo-objetivo">${opcoesObjetivo}</select>
+         <input type="hidden" name="tipo" value="${escapeHtml(tipoAtual)}">`
+      : `<select name="tipo" id="campo-objetivo">${opcoesObjetivo}</select>`;
+
     const campoVaga = vagaTravada
       ? `
           <label class="campo" style="max-width:520px;">
@@ -310,6 +375,36 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
           <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
             Só vagas <b>ativas</b> aparecem aqui. Quem já se candidatou a esta vaga
             (mesmo com a candidatura arquivada) é excluído do público automaticamente.
+          </p>`;
+
+    // ── Cidade do grupo (so em convite_grupo) — decide QUAL grupo o botao do e-mail
+    // promove, IMUTAVEL apos a criacao (nao ha edicao de campanha existente). DIFERENTE do
+    // checkbox de Cidade no filtro "Quem vai receber" abaixo (audiencia, editavel livre —
+    // ver o comentario de lerCriteriosDoForm). Sem trava tipo "vaga travada": nao ha
+    // conteudo gerado por IA que amarre a cidade a um texto especifico (decisao de produto:
+    // sem sugestao de IA pra grupo), entao nao ha o mesmo risco de inconsistencia a fechar.
+    const opcoesCidadeGrupo = regioesComLink
+      .map(
+        (r) =>
+          `<option value="${escapeHtml(r.cidade)}"${criterios.cidadeGrupo === r.cidade ? ' selected' : ''}>${escapeHtml(r.cidade)}</option>`,
+      )
+      .join('');
+    const campoCidadeGrupo = `
+          <label class="campo" style="max-width:520px;">
+            <span>Cidade do grupo</span>
+            <select name="cidade_grupo" id="select-cidade-grupo" required>
+              <option value="">Selecione…</option>
+              ${opcoesCidadeGrupo}
+            </select>
+          </label>
+          <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem;">
+            Só praças com link de grupo já cadastrado aparecem aqui — cadastre em
+            <a href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>.
+            ${
+              regioesComLink.length === 0
+                ? '<b>Nenhuma praça com link de grupo cadastrado ainda.</b>'
+                : ''
+            }
           </p>`;
 
     // ── Botao de e-mail de teste ──
@@ -348,17 +443,32 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
           valores.sugestaoGerada ? '<input type="hidden" name="sugestao_gerada" value="1">' : ''
         }
         <section class="rel-sec">
-          <h2>Vaga e mensagem</h2>
-          ${campoVaga}
-          <p style="margin:0 0 1rem;">
-            <button type="submit" class="btn btn--ghost" formaction="/admin/promocao/sugestao">
-              ${vagaTravada ? 'Gerar outra sugestão para esta vaga' : 'Gerar sugestão de conteúdo'}
-            </button>
-            <span style="color:var(--cinza);font-size:.8rem;margin-left:.5rem;">
-              Escreve assunto e corpo a partir dos dados da vaga. Você revisa depois.
-            </span>
-          </p>
-          ${notaSugestao}
+          <h2>Objetivo</h2>
+          <label class="campo" style="max-width:520px;">
+            <span>O que esta campanha divulga</span>
+            ${campoObjetivo}
+          </label>
+        </section>
+
+        <section class="rel-sec">
+          <h2>${tipoAtual === 'convite_grupo' ? 'Grupo e mensagem' : 'Vaga e mensagem'}</h2>
+          <div id="bloco-vaga"${tipoAtual === 'convite_grupo' ? ' hidden' : ''}>
+            ${campoVaga}
+          </div>
+          <div id="bloco-cidade-grupo"${tipoAtual === 'divulgacao_vaga' ? ' hidden' : ''}>
+            ${campoCidadeGrupo}
+          </div>
+          <div id="bloco-sugestao-ia"${tipoAtual === 'convite_grupo' ? ' hidden' : ''}>
+            <p style="margin:0 0 1rem;">
+              <button type="submit" class="btn btn--ghost" formaction="/admin/promocao/sugestao">
+                ${vagaTravada ? 'Gerar outra sugestão para esta vaga' : 'Gerar sugestão de conteúdo'}
+              </button>
+              <span style="color:var(--cinza);font-size:.8rem;margin-left:.5rem;">
+                Escreve assunto e corpo a partir dos dados da vaga. Você revisa depois.
+              </span>
+            </p>
+            ${notaSugestao}
+          </div>
           <label class="campo" style="max-width:520px;">
             <span>Assunto do e-mail</span>
             <input type="text" name="assunto" value="${escapeHtml(valores.assunto || '')}"
@@ -480,7 +590,65 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
           }
           <a class="btn btn--ghost" href="/admin/promocao">Cancelar</a>
         </div>
-      </form>`;
+      </form>
+
+      <script>
+      (function () {
+        // Mostra/esconde Vaga vs. Cidade do grupo conforme o Objetivo — MESMO mecanismo
+        // (alternar com disabled+hidden) ja usado em admin_campanha_whatsapp.js pro toggle
+        // de objetivo de campanha por WhatsApp; formulario de e-mail nao tinha JavaScript
+        // proprio ate aqui, mas o problema (mostrar/esconder blocos por um <select>, sem
+        // deixar campo incompativel vazar no POST) e o MESMO, entao o padrao e reaproveitado
+        // em vez de inventado.
+        var form = document.querySelector('form[action="/admin/promocao/previa"]');
+        var selObjetivo = document.getElementById('campo-objetivo');
+        if (!form || !selObjetivo) return;
+        var blocoVaga = document.getElementById('bloco-vaga');
+        var blocoCidadeGrupo = document.getElementById('bloco-cidade-grupo');
+        var blocoSugestaoIA = document.getElementById('bloco-sugestao-ia');
+        var selCidadeGrupo = document.getElementById('select-cidade-grupo');
+
+        // disabled junto com hidden: campo desabilitado NAO e enviado no submit — sem isso,
+        // trocar de Objetivo deixaria "vaga" E "cidade_grupo" os DOIS no body do POST
+        // seguinte (o servidor ja recusaria via primeiroCampoIncompativel-like check, mas o
+        // defeito e evitavel aqui, na origem — mesmo raciocinio do toggle de WhatsApp).
+        function alternar(container, visivel) {
+          if (!container) return;
+          container.hidden = !visivel;
+          var campos = container.querySelectorAll('input, select');
+          for (var i = 0; i < campos.length; i += 1) campos[i].disabled = !visivel;
+        }
+
+        // Pre-seleciona (SEM travar — decisao de produto) o checkbox de Cidade do filtro
+        // "Quem vai receber" com a cidade do grupo escolhida. So MARCA — nunca desmarca
+        // outra cidade que o Jean ja tenha escolhido — e so quando ha valor selecionado.
+        function preSelecionarCidadeAudiencia() {
+          if (!selCidadeGrupo || !selCidadeGrupo.value) return;
+          // Atributo name SEM ASPAS de proposito, sintaxe de seletor igualmente valida:
+          // evita repetir aqui dentro do <script> a MESMA sequencia de caracteres do
+          // atributo HTML do checkbox real (nome do filtro, com aspas, seguida de perto
+          // pela palavra que marca a caixa) — coincidencia inofensiva no navegador, mas que
+          // um teste de tela (regex sobre o HTML inteiro, sem parser de DOM) nao consegue
+          // distinguir de um checkbox de verdade marcado.
+          var caixas = form.querySelectorAll('input[name=cidade]');
+          for (var i = 0; i < caixas.length; i += 1) {
+            if (caixas[i].value === selCidadeGrupo.value) caixas[i].checked = true;
+          }
+        }
+
+        function atualizar() {
+          var temVaga = selObjetivo.value !== 'convite_grupo';
+          alternar(blocoVaga, temVaga);
+          alternar(blocoCidadeGrupo, !temVaga);
+          if (blocoSugestaoIA) blocoSugestaoIA.hidden = temVaga ? false : true;
+          if (!temVaga) preSelecionarCidadeAudiencia();
+        }
+        selObjetivo.addEventListener('change', atualizar);
+        atualizar();
+
+        if (selCidadeGrupo) selCidadeGrupo.addEventListener('change', preSelecionarCidadeAudiencia);
+      })();
+      </script>`;
   }
 
   // Bloco da previa. `resultado` vem de lib/promocaoVagas.listarPublicoCampanha.
@@ -611,22 +779,28 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     //
     // A taxa so aparece com recebidos > 0. Com uma campanha recem-enfileirada (0 enviados)
     // nao ha divisao a fazer, e um "0%" ali sugeriria fracasso onde ainda nao houve envio.
-    const cliques = db.contarCliquesCampanha(campanha.id);
+    // Grupo e vaga contam clique em tabelas diferentes (grupo_acessos x vaga_acessos),
+    // porque sao paginas diferentes (/grupo/:slug x /vaga/:slug) — o numero certo depende
+    // do tipo da campanha, nao so do id.
+    const cliques =
+      campanha.tipo === 'convite_grupo' ? db.contarCliquesGrupo(campanha.id) : db.contarCliquesCampanha(campanha.id);
     const taxa = c.enviado > 0 ? Math.round((cliques.total / c.enviado) * 100) : null;
+    const rotuloLink = campanha.tipo === 'convite_grupo' ? 'no link do grupo' : 'no link da vaga';
+    const rotuloPagina = campanha.tipo === 'convite_grupo' ? 'à página do grupo' : 'à página da vaga';
 
     const blocoDesempenho = `
       <section class="rel-sec">
         <h2>Desempenho</h2>
         <ul class="lista">
           <li><b>${fmtInt(c.enviado)}</b> receberam o e-mail</li>
-          <li><b>${fmtInt(cliques.total)}</b> clique${cliques.total === 1 ? '' : 's'} no link da vaga${
+          <li><b>${fmtInt(cliques.total)}</b> clique${cliques.total === 1 ? '' : 's'} ${rotuloLink}${
             taxa === null ? '' : ` — <b>${taxa}%</b> de quem recebeu`
           }</li>
         </ul>
         <p style="margin:.8rem 0 0;color:var(--cinza);font-size:.8rem;">
-          Cliques conta <b>acessos</b> à página da vaga vindos do link deste e-mail, não
+          Cliques conta <b>acessos</b> ${rotuloPagina} vindos do link deste e-mail, não
           pessoas: a página é anônima e a mesma pessoa abrindo duas vezes conta duas vezes.
-          Quem chegou à vaga por outro caminho não entra aqui.
+          Quem chegou por outro caminho não entra aqui.
         </p>
       </section>`;
 
@@ -701,6 +875,10 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
         // empresas legadas, e uma lista chumbada no codigo divergiria no primeiro dado
         // novo. O sentinela 'Todas as cidades' fica de fora — ele casa sozinho.
         cidades: db.listarCidadesDistintas(),
+        // Pracas com link de grupo JA cadastrado — a opcao de "Cidade do grupo" pra
+        // convite_grupo. Nao ha funcao de db dedicada a isso (confirmado antes de escrever
+        // uma nova); mesmo filtro inline que admin_campanha_whatsapp.js ja usa.
+        regioesComLink: db.listarRegioesGrupos().filter((r) => r.link_convite_grupo),
         criterios,
         valores,
         erro,
@@ -739,13 +917,27 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       sugestaoGerada: b.sugestao_gerada === '1',
     };
 
-    if (!criterios.jobIdAlvo) {
+    // Validacao do ALVO, condicional ao objetivo: vaga (divulgacao_vaga) ou cidade do grupo
+    // com link ja configurado (convite_grupo) — mesma disciplina de "nao ha pergunta
+    // bem-formada a responder" que ja vale pra vaga (ver o erro de listarPublicoCampanha em
+    // lib/promocaoVagas.js).
+    const erroAlvo =
+      criterios.tipo === 'convite_grupo'
+        ? !criterios.cidadeGrupo
+          ? 'Escolha a cidade do grupo — o botão do e-mail leva o link dela.'
+          : !db.obterLinkGrupo(criterios.cidadeGrupo)
+            ? `A praça "${criterios.cidadeGrupo}" não tem link de grupo cadastrado — configure em Campanha por WhatsApp antes de continuar.`
+            : ''
+        : !criterios.jobIdAlvo
+          ? 'Escolha a vaga que será divulgada — o público depende dela (quem já se candidatou a essa vaga é excluído).'
+          : '';
+    if (erroAlvo) {
       return res.status(400).send(
         paginaFormulario({
           criterios,
           valores: { ...valores, previaCalculada: false },
           resultado: null,
-          erro: 'Escolha a vaga que será divulgada — o público depende dela (quem já se candidatou a essa vaga é excluído).',
+          erro: erroAlvo,
         }),
       );
     }
@@ -869,19 +1061,24 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       sugestaoGerada: b.sugestao_gerada === '1',
     };
 
-    // `jobId` vem dos MESMOS criterios do formulario: o e-mail de teste monta o link de
-    // candidatura da vaga selecionada, igual ao disparo real.
+    // `jobId`/`tipo`/`cidade` vem dos MESMOS criterios do formulario: o e-mail de teste
+    // monta o link de candidatura da vaga (ou o botao do grupo) selecionada, igual ao
+    // disparo real.
     const r = await emailTeste.enviarEmailTeste({
       assunto: b.assunto,
       corpoHtml: b.corpo_html,
       jobId: criterios.jobIdAlvo,
+      tipo: criterios.tipo,
+      cidade: criterios.cidadeGrupo,
     });
 
     // Recalculo do publico no mesmo molde de /sugestao e /trocar-vaga: os criterios nao
     // mudaram, mas a tela nao pode voltar sem numero a vista so porque o Jean pediu um
-    // e-mail de teste. Falha aqui nao e fatal — o estado cai no campo oculto.
+    // e-mail de teste. Falha aqui nao e fatal — o estado cai no campo oculto. convite_grupo
+    // nao depende de jobIdAlvo pra ser um recalculo valido (listarPublicoCampanha ja aceita
+    // os dois tipos, ver lib/promocaoVagas.js).
     let resultado = null;
-    if (criterios.jobIdAlvo) {
+    if (criterios.tipo === 'convite_grupo' || criterios.jobIdAlvo) {
       try {
         resultado = listarPublicoCampanha(criterios);
       } catch (err) {
@@ -911,6 +1108,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       DESTINATARIO_INVALIDO: 400,
       SEM_CONTEUDO: 400,
       SEM_VAGA: 400,
+      SEM_GRUPO: 400,
       PRE_VOO: 503,
       COOLDOWN: 429,
       ENVIO_FALHOU: 502,
@@ -1007,13 +1205,19 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
       sugestaoGerada: b.sugestao_gerada === '1',
     };
 
-    const erro = !criterios.jobIdAlvo
-      ? 'Escolha a vaga que será divulgada.'
-      : !assunto
-        ? 'O assunto do e-mail é obrigatório.'
-        : !corpoHtml
-          ? 'O corpo do e-mail é obrigatório.'
+    // Validacao do ALVO, condicional ao objetivo — MESMA checagem de POST /previa (a
+    // criacao nao pode aceitar um alvo que a previa ja teria recusado).
+    const erroAlvo =
+      criterios.tipo === 'convite_grupo'
+        ? !criterios.cidadeGrupo
+          ? 'Escolha a cidade do grupo.'
+          : !db.obterLinkGrupo(criterios.cidadeGrupo)
+            ? `A praça "${criterios.cidadeGrupo}" não tem link de grupo cadastrado.`
+            : ''
+        : !criterios.jobIdAlvo
+          ? 'Escolha a vaga que será divulgada.'
           : '';
+    const erro = erroAlvo || (!assunto ? 'O assunto do e-mail é obrigatório.' : !corpoHtml ? 'O corpo do e-mail é obrigatório.' : '');
     if (erro) {
       return res.status(400).send(paginaFormulario({ criterios, valores, resultado: null, erro }));
     }
@@ -1042,6 +1246,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     // destinatarios agora significaria enviar para um recorte velho.
     const id = db.criarCampanha({
       job_id: criterios.jobIdAlvo,
+      tipo: criterios.tipo,
       assunto,
       corpo_html: corpoHtml,
       criterios,
@@ -1099,8 +1304,12 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
 
       <section class="rel-sec">
         <dl class="rel-id">
-          <div><dt>Vaga</dt><dd>${escapeHtml(campanha.vaga_titulo || '(vaga removida)')}</dd></div>
-          <div><dt>Perfil da vaga</dt><dd>${escapeHtml(campanha.vaga_perfil || '—')}</dd></div>
+          ${
+            campanha.tipo === 'convite_grupo'
+              ? `<div><dt>Objetivo</dt><dd>Grupo de vagas — ${escapeHtml(campanha.criterios.cidadeGrupo || '—')}</dd></div>`
+              : `<div><dt>Vaga</dt><dd>${escapeHtml(campanha.vaga_titulo || '(vaga removida)')}</dd></div>
+                 <div><dt>Perfil da vaga</dt><dd>${escapeHtml(campanha.vaga_perfil || '—')}</dd></div>`
+          }
           <div><dt>Criada em</dt><dd>${escapeHtml(formatarDataHora(campanha.criado_em))}</dd></div>
           <div><dt>Destinatários (na criação)</dt><dd>${fmtInt(campanha.total_destinatarios)}</dd></div>
         </dl>
@@ -1217,7 +1426,11 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
         <section class="rel-sec">
           <dl class="rel-id">
             <div><dt>Assunto</dt><dd>${escapeHtml(campanha.assunto || '(sem assunto)')}</dd></div>
-            <div><dt>Vaga divulgada</dt><dd>${escapeHtml(campanha.vaga_titulo || '(vaga removida)')}</dd></div>
+            ${
+              campanha.tipo === 'convite_grupo'
+                ? `<div><dt>Objetivo</dt><dd>Grupo de vagas — ${escapeHtml(campanha.criterios.cidadeGrupo || '—')}</dd></div>`
+                : `<div><dt>Vaga divulgada</dt><dd>${escapeHtml(campanha.vaga_titulo || '(vaga removida)')}</dd></div>`
+            }
             <div><dt>Destinatários agora</dt><dd>${fmtInt(atual.total)}</dd></div>
           </dl>
           <ul class="lista">
@@ -1311,7 +1524,11 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
         <section class="rel-sec">
           <dl class="rel-id">
             <div><dt>Assunto</dt><dd>${escapeHtml(campanha.assunto || '(sem assunto)')}</dd></div>
-            <div><dt>Vaga divulgada</dt><dd>${escapeHtml(campanha.vaga_titulo || '(vaga removida)')}</dd></div>
+            ${
+              campanha.tipo === 'convite_grupo'
+                ? `<div><dt>Objetivo</dt><dd>Grupo de vagas — ${escapeHtml(campanha.criterios.cidadeGrupo || '—')}</dd></div>`
+                : `<div><dt>Vaga divulgada</dt><dd>${escapeHtml(campanha.vaga_titulo || '(vaga removida)')}</dd></div>`
+            }
             <div><dt>Criada em</dt><dd>${escapeHtml(formatarDataHora(campanha.criado_em))}</dd></div>
           </dl>
           <p style="margin:1rem 0 0;color:var(--cinza);font-size:.85rem;">

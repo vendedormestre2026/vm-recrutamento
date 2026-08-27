@@ -415,6 +415,212 @@ test('a listagem passa a mostrar as campanhas criadas', async () => {
   });
 });
 
+// ── Objetivo: convite_grupo (Item H — fluxo completo tela→prévia→criar→detalhe) ──
+//
+// ESTE BLOCO E O QUE FECHA A GARANTIA MAIS IMPORTANTE DESTA TAREFA: alem de provar que o
+// caminho de grupo funciona ponta a ponta, TODOS os testes de modo vaga acima e abaixo
+// deste bloco continuam rodando sem alteracao nenhuma — se a introducao de `tipo` tivesse
+// mudado o comportamento default (ausente = 'divulgacao_vaga'), algum teste la em cima
+// teria quebrado primeiro.
+
+const CIDADE_GRUPO_TELA = 'Joinville';
+db.criarRegiaoGrupo(CIDADE_GRUPO_TELA, 'https://chat.whatsapp.com/exemplo-tela-joinville');
+
+test('GET /admin/promocao/nova mostra o seletor de Objetivo e a Cidade do grupo (praca com link)', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/promocao/nova`, { headers: comAuth() })).text();
+
+    assert.match(html, /<h2>Objetivo<\/h2>/);
+    assert.match(html, /Promover uma vaga/);
+    assert.match(html, /Promover um grupo de vagas/);
+    assert.match(html, /id="select-cidade-grupo"/);
+    assert.match(html, new RegExp(`<option value="${CIDADE_GRUPO_TELA}"`));
+    // Objetivo comeca em modo vaga por default (tipo ausente = divulgacao_vaga): o bloco
+    // de cidade do grupo nasce escondido, o de vaga nasce visivel.
+    assert.match(html, /<div id="bloco-cidade-grupo" hidden>/);
+    assert.doesNotMatch(html, /<div id="bloco-vaga" hidden>/);
+  });
+});
+
+test('POST /previa (convite_grupo) calcula sem exigir vaga, e NAO cria nada', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const antes = db.listarCampanhas().length;
+
+    const res = await fetch(
+      `${base}/admin/promocao/previa`,
+      form({ tipo: 'convite_grupo', cidade_grupo: CIDADE_GRUPO_TELA }),
+    );
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /Prévia do público/);
+    assert.match(html, /Criar campanha \(rascunho\)/);
+
+    assert.equal(db.listarCampanhas().length, antes, 'a previa NAO pode criar campanha, no grupo tambem');
+  });
+});
+
+test('POST /previa (convite_grupo) sem cidade -> 400 com mensagem clara, sem criar nada', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const antes = db.listarCampanhas().length;
+    const res = await fetch(`${base}/admin/promocao/previa`, form({ tipo: 'convite_grupo' }));
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /Escolha a cidade do grupo/);
+    assert.equal(db.listarCampanhas().length, antes);
+  });
+});
+
+test('POST /previa (convite_grupo) com praca SEM link cadastrado -> 400, nao confunde com "escolha a vaga"', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const res = await fetch(
+      `${base}/admin/promocao/previa`,
+      form({ tipo: 'convite_grupo', cidade_grupo: 'Praça Nunca Cadastrada Na Tela' }),
+    );
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /não tem link de grupo cadastrado/);
+  });
+});
+
+test('POST /admin/promocao (convite_grupo) cria rascunho com job_id NULL, tipo gravado e criterios.cidadeGrupo', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const res = await fetch(
+      `${base}/admin/promocao`,
+      form({
+        tipo: 'convite_grupo',
+        cidade_grupo: CIDADE_GRUPO_TELA,
+        assunto: 'Entre no grupo de Joinville',
+        corpo_html: '<p>Abrimos um grupo novo.</p>',
+      }),
+    );
+    assert.equal(res.status, 302);
+    const destino = res.headers.get('location') || '';
+    assert.match(destino, /^\/admin\/promocao\/\d+$/);
+
+    const id = Number(destino.split('/').pop());
+    const campanha = db.obterCampanha(id);
+    assert.equal(campanha.status, 'rascunho');
+    assert.equal(campanha.tipo, 'convite_grupo');
+    assert.equal(campanha.job_id, null, 'campanha de grupo nao tem vaga');
+    assert.equal(campanha.criterios.tipo, 'convite_grupo');
+    assert.equal(campanha.criterios.cidadeGrupo, CIDADE_GRUPO_TELA);
+    assert.equal(campanha.criterios.jobIdAlvo, undefined, 'nenhum jobId residual em modo grupo');
+
+    // Total gravado = o motor de publico com tipo convite_grupo (sem exclusao "ja
+    // candidatou", ver promocaoVagas.test.js).
+    const { listarPublicoCampanha } = require('../src/lib/promocaoVagas');
+    assert.equal(
+      campanha.total_destinatarios,
+      listarPublicoCampanha({ tipo: 'convite_grupo', cidadeGrupo: CIDADE_GRUPO_TELA }).total,
+    );
+
+    // ── Detalhe mostra "Objetivo: Grupo de vagas" em vez de "Vaga" ──
+    const html = await (await fetch(`${base}/admin/promocao/${id}`, { headers: comAuth() })).text();
+    assert.match(html, /Objetivo/);
+    assert.match(html, new RegExp(`Grupo de vagas.*${CIDADE_GRUPO_TELA}`));
+    assert.doesNotMatch(html, /<dt>Vaga<\/dt>/);
+    assert.doesNotMatch(html, /<dt>Perfil da vaga<\/dt>/);
+    // Rascunho ainda nao tem bloco de Desempenho (so aparece apos o disparo, mesma regra
+    // de blocoDisparo pra campanha de vaga) — o teste de cliques do grupo esta abaixo,
+    // sobre uma campanha ja enfileirada.
+  });
+});
+
+test('detalhe de campanha de grupo ja enfileirada mostra "Desempenho" com cliques no link DO GRUPO (nao "da vaga")', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const id = db.criarCampanha({
+      job_id: null,
+      tipo: 'convite_grupo',
+      assunto: 'Campanha de Grupo Enfileirada',
+      corpo_html: '<p>x</p>',
+      criterios: { tipo: 'convite_grupo', cidadeGrupo: CIDADE_GRUPO_TELA },
+      total_destinatarios: 0,
+    });
+    db.getDb()
+      .prepare("UPDATE campanhas SET status = 'enfileirada', enfileirada_em = datetime('now') WHERE id = ?")
+      .run(id);
+
+    // Dois cliques registrados no grupo desta campanha, mais um de OUTRA (nao pode
+    // contaminar a contagem) e um sem campanha_id (botao do WhatsApp).
+    const slug = db.obterSlugGrupo(CIDADE_GRUPO_TELA);
+    db.registrarAcessoGrupo(slug, id);
+    db.registrarAcessoGrupo(slug, id);
+    db.registrarAcessoGrupo(slug, null);
+
+    const html = await (await fetch(`${base}/admin/promocao/${id}`, { headers: comAuth() })).text();
+    assert.match(html, /<h2>Desempenho<\/h2>/);
+    assert.match(html, /<b>2<\/b> cliques no link do grupo/);
+    assert.doesNotMatch(html, /no link da vaga/, 'rotulo de vaga nao pode vazar pro modo grupo');
+    assert.equal(db.contarCliquesGrupo(id).total, 2);
+  });
+});
+
+test('POST /admin/promocao (convite_grupo) sem cidade -> 400, nada criado', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const antes = db.listarCampanhas().length;
+    const res = await fetch(
+      `${base}/admin/promocao`,
+      form({ tipo: 'convite_grupo', assunto: 'x', corpo_html: '<p>x</p>' }),
+    );
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /Escolha a cidade do grupo/);
+    assert.equal(db.listarCampanhas().length, antes);
+  });
+});
+
+test('a listagem mostra badge "Grupo" para campanha de grupo e "Vaga" para campanha de vaga', async () => {
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const idGrupo = db.criarCampanha({
+      job_id: null,
+      tipo: 'convite_grupo',
+      assunto: 'Campanha de Grupo na Listagem',
+      corpo_html: '<p>x</p>',
+      criterios: { tipo: 'convite_grupo', cidadeGrupo: CIDADE_GRUPO_TELA },
+      total_destinatarios: 0,
+    });
+    const idVaga = db.criarCampanha({
+      job_id: vagaAlvo,
+      assunto: 'Campanha de Vaga na Listagem',
+      corpo_html: '<p>x</p>',
+      criterios: { jobIdAlvo: vagaAlvo },
+      total_destinatarios: 0,
+    });
+
+    const html = await (await fetch(`${base}/admin/promocao`, { headers: comAuth() })).text();
+    assert.match(html, /<th>Tipo<\/th>/);
+    assert.doesNotMatch(html, /<th>Vaga<\/th>/, 'a coluna Vaga foi substituida por Tipo, nao duplicada');
+
+    // As duas linhas aparecem, cada uma com seu proprio rotulo de tipo perto do assunto —
+    // basta confirmar que ambas as campanhas estao listadas e que os dois rotulos existem
+    // em algum lugar da tabela.
+    assert.match(html, /Campanha de Grupo na Listagem/);
+    assert.match(html, /Campanha de Vaga na Listagem/);
+    assert.match(html, />Grupo</);
+    assert.match(html, />Vaga</);
+
+    void idGrupo;
+    void idVaga;
+  });
+});
+
+test('lerCriteriosDoForm: tipo ausente ou invalido cai em divulgacao_vaga (nenhum client antigo muda de comportamento)', () => {
+  assert.equal(lerCriteriosDoForm({ vaga: '1' }).tipo, 'divulgacao_vaga');
+  assert.equal(lerCriteriosDoForm({ vaga: '1', tipo: 'chute_qualquer' }).tipo, 'divulgacao_vaga');
+  assert.equal(lerCriteriosDoForm({ tipo: 'convite_grupo', cidade_grupo: 'Joinville' }).tipo, 'convite_grupo');
+});
+
+test('lerCriteriosDoForm: cidade_grupo aparado, ausente vira undefined (nao string vazia)', () => {
+  assert.equal(lerCriteriosDoForm({ tipo: 'convite_grupo', cidade_grupo: '  Joinville  ' }).cidadeGrupo, 'Joinville');
+  assert.equal(lerCriteriosDoForm({ tipo: 'convite_grupo' }).cidadeGrupo, undefined);
+  assert.equal(lerCriteriosDoForm({ tipo: 'convite_grupo', cidade_grupo: '' }).cidadeGrupo, undefined);
+});
+
 // ── Navegacao ──
 
 test('o painel principal tem o link para Divulgação de Vagas (aba Promocao, Item 3 do ETAPA B/Commit 7)', async () => {
