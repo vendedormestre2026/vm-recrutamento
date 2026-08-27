@@ -83,3 +83,71 @@ test('GET /grupo/:slug — slug inexistente devolve 404', async () => {
     assert.match(corpo, /não encontrado/i);
   });
 });
+
+// ── Registro de clique (?campanha_id=) — a metrica da campanha de e-mail de grupo ──
+//
+// O MESMO botao serve dois chamadores: o template de WhatsApp (nunca manda campanha_id) e
+// o e-mail de campanha (sempre manda, ver lib/ctaCampanha.montarUrlGrupo). Os testes abaixo
+// cobrem os dois lados dessa fronteira: com o parametro, grava; sem ele, comportamento
+// IDENTICO ao de antes (nenhuma linha em grupo_acessos, nenhum grep no request).
+
+function contarGrupoAcessos(slug) {
+  return db.getDb().prepare('SELECT COUNT(*) AS n FROM grupo_acessos WHERE slug = ?').get(slug).n;
+}
+
+test('GET /grupo/:slug com ?campanha_id= valido: redireciona E registra o clique', async () => {
+  db.criarRegiaoGrupo('Blumenau', 'https://chat.whatsapp.com/exemplo-blumenau');
+  const slug = slugDaCidade('Blumenau');
+
+  const campanhaId = db.criarCampanha({
+    job_id: null,
+    tipo: 'convite_grupo',
+    assunto: 'Entre no grupo',
+    corpo_html: '<p>x</p>',
+    criterios: { tipo: 'convite_grupo', cidadeGrupo: 'Blumenau' },
+    total_destinatarios: 0,
+  });
+
+  await comServidor(async (base) => {
+    const res = await fetch(`${base}/grupo/${slug}?campanha_id=${campanhaId}`, { redirect: 'manual' });
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), 'https://chat.whatsapp.com/exemplo-blumenau');
+  });
+
+  assert.equal(contarGrupoAcessos(slug), 1, 'o clique com campanha_id precisa gravar uma linha');
+  assert.equal(db.contarCliquesGrupo(campanhaId).total, 1);
+
+  const linha = db.getDb().prepare('SELECT * FROM grupo_acessos WHERE slug = ?').get(slug);
+  assert.equal(linha.campanha_id, campanhaId);
+});
+
+test('GET /grupo/:slug SEM ?campanha_id= (botao do WhatsApp): redireciona e NAO registra nada — comportamento inalterado', async () => {
+  db.criarRegiaoGrupo('Itajai', 'https://chat.whatsapp.com/exemplo-itajai');
+  const slug = slugDaCidade('Itajai');
+  const antes = contarGrupoAcessos(slug);
+
+  await comServidor(async (base) => {
+    const res = await fetch(`${base}/grupo/${slug}`, { redirect: 'manual' });
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), 'https://chat.whatsapp.com/exemplo-itajai');
+  });
+
+  assert.equal(contarGrupoAcessos(slug), antes, 'sem campanha_id o comportamento e IDENTICO ao de antes do clique de e-mail existir');
+});
+
+test('GET /grupo/:slug com ?campanha_id= invalido ou de campanha inexistente: ainda redireciona, grava com campanha_id NULL', async () => {
+  db.criarRegiaoGrupo('Brusque', 'https://chat.whatsapp.com/exemplo-brusque');
+  const slug = slugDaCidade('Brusque');
+
+  await comServidor(async (base) => {
+    for (const valor of ['abc', '999999', '-1', '0']) {
+      const res = await fetch(`${base}/grupo/${slug}?campanha_id=${valor}`, { redirect: 'manual' });
+      assert.equal(res.status, 302, `id invalido nao pode bloquear o redirect (valor=${valor})`);
+      assert.equal(res.headers.get('location'), 'https://chat.whatsapp.com/exemplo-brusque');
+    }
+  });
+
+  const linhas = db.getDb().prepare('SELECT campanha_id FROM grupo_acessos WHERE slug = ?').all(slug);
+  assert.equal(linhas.length, 4, 'as quatro tentativas gravaram, mesmo com id invalido');
+  assert.ok(linhas.every((l) => l.campanha_id === null), 'id invalido/inexistente colapsa em NULL, nunca lanca');
+});

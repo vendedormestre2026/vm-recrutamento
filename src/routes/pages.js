@@ -242,10 +242,10 @@ function montarConteudoVaga(vaga) {
 // ── Convite ao grupo de WhatsApp da praca (link curto por slug) ──
 //
 // Redirect puro: diferente das rotas de vaga, esta NAO faz parte do funil do candidato
-// (sem sessao, sem UTM, sem registro de acesso) — so leva quem clicou no botao do
-// template de WhatsApp direto pro grupo da cidade dele. `slug` vem de
-// regioes_grupos_whatsapp.slug (lib/slug.normalizarSlug sobre `cidade`, atribuido na
-// criacao da praca ou, para linhas anteriores a essa coluna, no backfill de migrate.js).
+// (sem sessao, sem UTM, sem cookie) — so leva quem clicou direto pro grupo da cidade. Dois
+// chamadores possiveis hoje: o botao do template de WhatsApp (nunca manda `campanha_id`) e
+// o botao "ENTRAR NO GRUPO" da campanha de e-mail tipo convite_grupo (lib/ctaCampanha.js,
+// SEMPRE manda `campanha_id` quando a campanha tem id — ver montarUrlGrupo).
 //
 // db.obterLinkGrupoPorSlug ja colapsa em null os tres casos "slug nao existe", "praca
 // inativa" e "praca sem link cadastrado" — a rota nao precisa (nem deve) diferencia-los
@@ -265,6 +265,23 @@ router.get('/grupo/:slug', (req, res) => {
       }),
     );
   }
+
+  // Registra o clique (topo do funil da campanha de grupo) em fire-and-forget: nunca
+  // bloqueia nem quebra o redirect por causa de metrica — mesmo padrao de
+  // registrarAcessoVaga em GET /vaga/:slug, acima neste arquivo. SO grava quando
+  // ?campanha_id= veio na query (o botao do template de WhatsApp nunca manda esse
+  // parametro — pra ele o comportamento continua IDENTICO ao de sempre: sem registro
+  // nenhum). Sem saneamento aqui de proposito: db.registrarAcessoGrupo valida o id contra
+  // `campanhas` e grava NULL se nao existir — um link velho ou um id digitado a mao nao
+  // pode impedir o registro do clique nem, muito menos, o redirect em si.
+  if (req.query && req.query.campanha_id != null) {
+    try {
+      db.registrarAcessoGrupo(req.params.slug, req.query.campanha_id);
+    } catch (e) {
+      console.error('[grupo] falha ao registrar clique (métrica, ignorado):', e.message);
+    }
+  }
+
   return res.redirect(302, link);
 });
 
