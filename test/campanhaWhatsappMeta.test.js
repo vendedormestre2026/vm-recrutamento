@@ -1927,6 +1927,27 @@ test('POST /previa: divulgacao_vaga com job_id valido devolve total (mesmo camin
   });
 });
 
+// ETAPA B, Incremento 2 (previa client-side): calcularPublico() para convite_grupo
+// (admin_campanha_whatsapp.js:98-102) NUNCA olha jobId — chama listarPublicoConviteGrupo
+// direto, so com os criterios. Sem este teste, um regressao que passasse a exigir job_id
+// pra convite_grupo (ex.: alguem "simplificando" calcularPublico por engano) so apareceria
+// quebrando o botao "Calcular estimativa" em producao, sem nenhum teste pegando antes.
+test('POST /previa: convite_grupo funciona SEM job_id no body (calcularPublico ignora jobId nesse objetivo)', async () => {
+  zerarSeg();
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/previa`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ tipo_mensagem: 'convite_grupo' }),
+    });
+    assert.equal(res.status, 200);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, true);
+    assert.equal(corpo.tipo, 'convite_grupo');
+    assert.equal(typeof corpo.total, 'number');
+  });
+});
+
 test('POST /:id/disparar: materializa divulgacao_vaga corretamente a partir do que foi persistido na criacao', async () => {
   zerarSeg();
   const alvo = vagaCom('Joinville');

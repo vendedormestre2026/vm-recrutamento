@@ -435,7 +435,12 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
         <p style="margin:-.6rem 0 1rem;color:var(--cinza);font-size:.8rem">
           A campanha nasce em <b>rascunho</b> e não envia nada até ser ativada aqui.
         </p>
-        <button type="submit" class="btn">Criar campanha</button>
+        <button type="button" class="btn btn--ghost" id="btn-calcular-previa">Calcular estimativa</button>
+        <p id="resultado-previa" class="aviso-ok" hidden style="margin:.6rem 0 0;"></p>
+        <p id="erro-previa" class="aviso-alerta" hidden style="margin:.6rem 0 0;"></p>
+        <p style="margin:.8rem 0 0;">
+          <button type="submit" class="btn" id="btn-criar-campanha" disabled>Criar campanha</button>
+        </p>
       </form>
     </details>
 
@@ -494,6 +499,98 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
         e.preventDefault();
         if (avisoStatus) avisoStatus.hidden = false;
       });
+
+      // ── Previa de publico (ETAPA B, Incremento 2) ──
+      //
+      // "Criar campanha" nasce disabled no HTML (defesa em profundidade client-side; o
+      // servidor continua validando tudo de novo no POST de criacao, sem confiar so
+      // nisso — POST / recalcula o publico do zero antes de gravar). So habilita depois
+      // de uma previa calculada com sucesso, e QUALQUER mudanca no form depois disso
+      // invalida a estimativa de novo — ela nao pode ficar "validando" um recorte que ja
+      // mudou.
+      //
+      // POST /admin/campanhas-whatsapp/previa aceita application/x-www-form-urlencoded
+      // (confirmado contra o body parser real: express.urlencoded() e express.json() estao
+      // os dois montados globalmente em server.js, os dois funcionam — urlencoded foi o
+      // escolhido por ser o MESMO formato que o submit nativo deste form ja usa, sem
+      // enctype especial).
+      var btnPrevia = document.getElementById('btn-calcular-previa');
+      var btnCriar = document.getElementById('btn-criar-campanha');
+      var resultadoPrevia = document.getElementById('resultado-previa');
+      var erroPrevia = document.getElementById('erro-previa');
+
+      function invalidarPrevia() {
+        if (resultadoPrevia) resultadoPrevia.hidden = true;
+        if (erroPrevia) erroPrevia.hidden = true;
+        if (btnCriar) btnCriar.disabled = true;
+      }
+
+      if (btnPrevia && btnCriar) {
+        btnPrevia.addEventListener('click', function () {
+          btnPrevia.disabled = true;
+          var textoOriginalBtnPrevia = btnPrevia.textContent;
+          btnPrevia.textContent = 'Calculando…';
+          fetch('/admin/campanhas-whatsapp/previa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(new FormData(form)),
+          })
+            .then(function (r) {
+              return r.json().then(function (dados) { return { status: r.status, dados: dados }; });
+            })
+            .then(function (res) {
+              if (res.dados && res.dados.ok) {
+                if (resultadoPrevia) {
+                  resultadoPrevia.textContent = 'Estimativa: ' + res.dados.total + ' destinatário(s) no recorte atual.';
+                  resultadoPrevia.hidden = false;
+                }
+                if (erroPrevia) erroPrevia.hidden = true;
+                btnCriar.disabled = false;
+              } else {
+                if (erroPrevia) {
+                  erroPrevia.textContent = (res.dados && res.dados.erro) || 'Não foi possível calcular a estimativa.';
+                  erroPrevia.hidden = false;
+                }
+                if (resultadoPrevia) resultadoPrevia.hidden = true;
+                btnCriar.disabled = true;
+              }
+            })
+            .catch(function () {
+              if (erroPrevia) {
+                erroPrevia.textContent = 'Falha ao calcular a estimativa. Verifique sua conexão e tente de novo.';
+                erroPrevia.hidden = false;
+              }
+              if (resultadoPrevia) resultadoPrevia.hidden = true;
+              btnCriar.disabled = true;
+            })
+            .finally(function () {
+              btnPrevia.disabled = false;
+              btnPrevia.textContent = textoOriginalBtnPrevia;
+            });
+        });
+
+        // Delegado no form inteiro (change + input, cobre select/checkbox/date e texto):
+        // objetivo, vaga, base alvo, cidade, período, status marcado — qualquer campo.
+        // Exclui os dois botoes do proprio gatilho: um <button> nao dispara change/input
+        // por clique mesmo, mas fica explicito aqui pra nao depender disso por acidente —
+        // o clique em "Calcular estimativa" nao pode se autoinvalidar, e "Criar campanha"
+        // (que so fica clicavel DEPOIS de uma previa) nao deve reagir a si mesmo.
+        //
+        // Cobre o toggle de Objetivo (selObjetivo, acima) de graca: 'change' num <select>
+        // sempre borbulha ate o form, entao trocar de objetivo invalida a previa mesmo sem
+        // nenhum codigo extra aqui — atualizar() roda primeiro (listener direto no select),
+        // depois este listener roda por borbulhamento. Os campos que atualizar() desabilita
+        // (ex.: campo-vaga-alvo ao sair de divulgacao_vaga) NAO disparam change sozinhos,
+        // mas isso e inofensivo: a mudanca do PROPRIO select de objetivo ja invalidou tudo.
+        form.addEventListener('change', function (e) {
+          if (e.target === btnPrevia || e.target === btnCriar) return;
+          invalidarPrevia();
+        });
+        form.addEventListener('input', function (e) {
+          if (e.target === btnPrevia || e.target === btnCriar) return;
+          invalidarPrevia();
+        });
+      }
     })();
     </script>
 
