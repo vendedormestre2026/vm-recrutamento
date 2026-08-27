@@ -407,6 +407,35 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
             }
           </p>`;
 
+    // ── Texto padrao pra convite_grupo (sem sugestao de IA, decisao ja fechada) ──
+    //
+    // montarEmailCampanhaGrupo (ctaCampanha.js) injeta corpo_html CRU, sem transformacao
+    // nenhuma (mesmo comportamento de montarEmailCampanha, deliberado pra nao mexer em HTML
+    // editado a mao — nao mudado aqui): texto sem <p>/<br> vira um bloco so no e-mail
+    // final. Sem NENHUM texto de partida, o Jean teria que escrever HTML valido do zero pra
+    // cada campanha de grupo. O botao "Restaurar texto padrão" (aplicarPadraoGrupo(), no
+    // script abaixo) devolve um texto pronto, ja em <p>...</p>, com {{cidade}} substituido
+    // pela praca selecionada — mesma condicao/mecanismo (hidden + alternar()) ja usado em
+    // #bloco-cidade-grupo, so que um container proprio, posicionado ao lado do campo de
+    // corpo (nao junto do seletor de cidade, que fica mais acima). O helper de "cada
+    // parágrafo em <p>" mora no mesmo bloco — reforco pro caso de edicao manual (mitigacao
+    // "a" do diagnostico).
+    const blocoPadraoGrupo = `
+          <div id="bloco-padrao-grupo"${tipoAtual === 'divulgacao_vaga' ? ' hidden' : ''} style="margin:-.6rem 0 1rem;">
+            <p style="margin:0 0 .4rem;">
+              <button type="button" id="btn-restaurar-padrao-grupo" class="btn btn--ghost">
+                Restaurar texto padrão
+              </button>
+            </p>
+            <p id="aviso-cidade-grupo-obrigatoria" class="aviso-alerta" hidden style="margin:0 0 .4rem;">
+              Escolha a cidade do grupo primeiro.
+            </p>
+            <p style="margin:0;color:var(--cinza);font-size:.8rem;">
+              Cada parágrafo precisa estar entre &lt;p&gt;...&lt;/p&gt;, senão o e-mail sai
+              tudo num bloco só.
+            </p>
+          </div>`;
+
     // ── Botao de e-mail de teste ──
     //
     // BOTAO SEMPRE VIVO, inclusive sem endereco configurado. `disabled` de verdade era
@@ -479,6 +508,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
             <textarea name="corpo_html" rows="10"
               placeholder="&lt;p&gt;Olá! Estamos com uma vaga aberta…&lt;/p&gt;">${escapeHtml(valores.corpo_html || '')}</textarea>
           </label>
+          ${blocoPadraoGrupo}
           <p style="margin:.2rem 0 0;">
             <button type="submit" class="btn btn--ghost" formaction="/admin/promocao/teste">
               Enviar e-mail de teste para mim
@@ -606,7 +636,10 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
         var blocoVaga = document.getElementById('bloco-vaga');
         var blocoCidadeGrupo = document.getElementById('bloco-cidade-grupo');
         var blocoSugestaoIA = document.getElementById('bloco-sugestao-ia');
+        var blocoPadraoGrupo = document.getElementById('bloco-padrao-grupo');
         var selCidadeGrupo = document.getElementById('select-cidade-grupo');
+        var btnRestaurarPadrao = document.getElementById('btn-restaurar-padrao-grupo');
+        var avisoCidadeGrupoObrigatoria = document.getElementById('aviso-cidade-grupo-obrigatoria');
 
         // disabled junto com hidden: campo desabilitado NAO e enviado no submit — sem isso,
         // trocar de Objetivo deixaria "vaga" E "cidade_grupo" os DOIS no body do POST
@@ -636,17 +669,88 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
           }
         }
 
+        // ── Texto padrao de convite_grupo (Incremento 1) ──
+        //
+        // {{cidade}} e substituido por SPLIT/JOIN (nao regex): sem chave especial pra
+        // escapar, funciona igual em qualquer motor, e nao arrisca um '$' ou colchete
+        // perdido no texto virando token de regex por acidente.
+        //
+        // O link do grupo NAO aparece escrito no texto de proposito: ele ja sai certo, por
+        // cidade, no botao "ENTRAR NO GRUPO" que blocoCtaGrupo (ctaCampanha.js) gera
+        // sozinho a partir do slug da praca — um link fixo aqui no padrao sairia ERRADO pra
+        // qualquer cidade diferente da que o texto foi originalmente escrito.
+        var PADRAO_ASSUNTO_GRUPO = 'Convite para Grupo de Vagas e Empregos em {{cidade}}';
+        var PADRAO_CORPO_GRUPO =
+          '<p>Oi! Aqui é do time da Vendedor Mestre 👋</p>\\n' +
+          '<p>Você já passou pelo nosso processo seletivo pra uma vaga comercial e ' +
+          'queremos te avisar em primeira mão quando surgirem novas vagas de vendas em ' +
+          '{{cidade}}.</p>\\n' +
+          '<p>Criamos um grupo no WhatsApp só pra avisar de novas vagas na sua cidade — ' +
+          'apenas alertas de vaga, sem spam e conversas desnecessárias.</p>\\n' +
+          '<p>Quer entrar? É só clicar no botão abaixo.</p>\\n' +
+          '<p>É 100% gratuito, e se não quiser participar é só ignorar esta mensagem.</p>\\n' +
+          '<p>Atenciosamente,<br>Jean Dentz<br>Recrutador da Vendedor Mestre</p>';
+
+        function aplicarPadraoGrupo(cidade) {
+          var campoAssunto = form.querySelector('input[name=assunto]');
+          var campoCorpo = form.querySelector('textarea[name=corpo_html]');
+          if (!campoAssunto || !campoCorpo) return;
+          campoAssunto.value = PADRAO_ASSUNTO_GRUPO.split('{{cidade}}').join(cidade);
+          campoCorpo.value = PADRAO_CORPO_GRUPO.split('{{cidade}}').join(cidade);
+          if (avisoCidadeGrupoObrigatoria) avisoCidadeGrupoObrigatoria.hidden = true;
+        }
+
+        // Auto-preenche SO quando os DOIS campos estao vazios — nunca sobrescreve o que o
+        // Jean ja escreveu (ainda que so um dos dois tenha conteudo: preencher so o outro
+        // deixaria assunto e corpo de origens diferentes, sem o Jean ter pedido isso).
+        function preencherSeVazio(cidade) {
+          if (!cidade) return;
+          var campoAssunto = form.querySelector('input[name=assunto]');
+          var campoCorpo = form.querySelector('textarea[name=corpo_html]');
+          if (!campoAssunto || !campoCorpo) return;
+          if (campoAssunto.value.trim() || campoCorpo.value.trim()) return;
+          aplicarPadraoGrupo(cidade);
+        }
+
+        function aoTrocarCidadeGrupo() {
+          preSelecionarCidadeAudiencia();
+          if (selCidadeGrupo && selCidadeGrupo.value && avisoCidadeGrupoObrigatoria) {
+            avisoCidadeGrupoObrigatoria.hidden = true;
+          }
+          if (selCidadeGrupo) preencherSeVazio(selCidadeGrupo.value);
+        }
+
         function atualizar() {
           var temVaga = selObjetivo.value !== 'convite_grupo';
           alternar(blocoVaga, temVaga);
           alternar(blocoCidadeGrupo, !temVaga);
+          if (blocoPadraoGrupo) blocoPadraoGrupo.hidden = temVaga;
           if (blocoSugestaoIA) blocoSugestaoIA.hidden = temVaga ? false : true;
-          if (!temVaga) preSelecionarCidadeAudiencia();
+          if (!temVaga) {
+            preSelecionarCidadeAudiencia();
+            if (selCidadeGrupo) preencherSeVazio(selCidadeGrupo.value);
+          }
         }
         selObjetivo.addEventListener('change', atualizar);
         atualizar();
 
-        if (selCidadeGrupo) selCidadeGrupo.addEventListener('change', preSelecionarCidadeAudiencia);
+        if (selCidadeGrupo) selCidadeGrupo.addEventListener('change', aoTrocarCidadeGrupo);
+
+        // Botao "Restaurar texto padrão": acao EXPLICITA do operador, entao SEMPRE
+        // sobrescreve os dois campos (diferente de preencherSeVazio, que so age no vazio) —
+        // quem clica aqui esta pedindo pra voltar ao padrao, mesmo que ja tenha editado.
+        // Aviso INLINE (nao alert()), mesmo padrao de #aviso-status-candidatura em
+        // admin_campanha_whatsapp.js: aparece/some junto do proprio botao.
+        if (btnRestaurarPadrao) {
+          btnRestaurarPadrao.addEventListener('click', function () {
+            var cidade = selCidadeGrupo ? selCidadeGrupo.value : '';
+            if (!cidade) {
+              if (avisoCidadeGrupoObrigatoria) avisoCidadeGrupoObrigatoria.hidden = false;
+              return;
+            }
+            aplicarPadraoGrupo(cidade);
+          });
+        }
       })();
       </script>`;
   }
