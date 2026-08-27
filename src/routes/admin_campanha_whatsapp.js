@@ -28,6 +28,7 @@ const { PERFIS_VALIDOS } = require('../lib/promocaoVagas');
 // completo nunca aparece no stdout, mesma disciplina do resto do projeto.
 const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
+const { precisaBotaoDinamico } = require('../lib/templatesWhatsapp');
 
 // Os TRES objetivos de campanha (ETAPA B, Incremento 12 — redesenho da segmentacao). O valor
 // gravado em campanhas_whatsapp.tipo_mensagem continua o mesmo de sempre (a coluna perdeu o
@@ -877,6 +878,21 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
     }
     const variaveis = campanha.resolverVariaveis(mapa, contexto);
 
+    // ── BOTAO DINAMICO (Incremento 2, diagnostico da sessao anterior) ──
+    // precisaBotaoDinamico(nome_meta) e a lista fechada em lib/templatesWhatsapp.js — hoje so
+    // convite_grupo_vagas_vm. O VALOR (link do grupo da cidade da vaga do candidato) ja vinha
+    // resolvido em contexto.link_grupo_regiao (montarContextoWhatsapp, lib/campanhaWhatsapp.js)
+    // e so era usado como variavel de CORPO; button0 e o MESMO link, so que tambem no
+    // parametro de botao que a Meta exige pra templates com URL dinamica. Sem link cadastrado
+    // pra praca (contexto.link_grupo_regiao === '') fica undefined de proposito — mandar
+    // button0 vazio e recusado pela Central Whats com a mesma dureza de nao mandar nada (ver
+    // a nota de "vazio nao sobrescreve" em centralWhats.js:montarPayload); melhor deixar o
+    // envio falhar no motivo real ("praca sem link") do que num 400 de parametro vazio.
+    const parametrosBotao =
+      precisaBotaoDinamico(template.nome_meta) && contexto.link_grupo_regiao
+        ? { 0: contexto.link_grupo_regiao }
+        : undefined;
+
     console.log(
       `[campanha-wa] envio avulso de teste: template '${template.nome_meta}' -> ` +
         `${mascarar(telefone)} (candidatura ${applicationId}).`,
@@ -891,6 +907,7 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
           botao_parametro_fixo: template.botao_parametro_fixo,
         },
         variaveis,
+        parametrosBotao,
         // A UNICA chamada do projeto que passa isto: um teste avulso EXISTE para furar o
         // mock — ver o comentario de forcarEnvioReal em providers/centralWhats/centralWhats.js.
         forcarEnvioReal: true,

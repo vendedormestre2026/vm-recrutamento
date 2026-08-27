@@ -28,4 +28,35 @@ function pertenceVendedorMestre(nomeMeta) {
   return nome.endsWith('_vm') || EXCECOES_PADRAO_VM.includes(nome);
 }
 
-module.exports = { pertenceVendedorMestre, EXCECOES_PADRAO_VM };
+// ── TEMPLATES_COM_BOTAO_DINAMICO (diagnostico da sessao de 2026-08-26/27) ──
+//
+// `templates_whatsapp.botao_parametro_fixo` so distingue DOIS estados (ver o comentario da
+// coluna em db/schema.sql): NULL = "sem botao, nao manda componente nenhum", preenchido =
+// "botao com valor FIXO, o mesmo em todo envio". Nao existe hoje um terceiro estado pra
+// "tem botao de URL DINAMICA, o valor muda por destinatario" — e convite_grupo_vagas_vm e
+// esse terceiro estado, confirmado contra o Central Whats de verdade (erro 400 real: "o
+// botao de indice 0 tem URL dinamica e exige a variavel button0, que nao foi informada").
+//
+// Por que uma LISTA, e nao "botao_parametro_fixo === null" generalizado: nova_vaga_v1 e
+// nova_vaga_v2 TAMBEM tem botao_parametro_fixo NULL hoje, e nao ha nenhuma evidencia de que
+// tenham botao dinamico — pelo CONTRATO DOCUMENTADO da coluna, NULL neles significa "sem
+// botao mesmo". Generalizar por NULL mandaria um button0 indevido pra eles no dia em que
+// alguem os usar de verdade (divulgacao_vaga). Mesmo precedente de EXCECOES_PADRAO_VM acima:
+// excecao por IDENTIDADE (nome do template), nao por inferencia de outro campo.
+//
+// Quando outro template com o mesmo caso for aprovado na Meta, esta lista cresce — uma linha
+// de codigo, revisada, o mesmo raciocinio de EXCECOES_PADRAO_VM. Nao virou coluna nova (ex.:
+// um enum 'tipo_botao') porque so ha UM caso confirmado ate agora; se um segundo aparecer
+// vale reabrir essa decisao.
+const TEMPLATES_COM_BOTAO_DINAMICO = ['convite_grupo_vagas_vm'];
+
+function precisaBotaoDinamico(nomeMeta) {
+  return TEMPLATES_COM_BOTAO_DINAMICO.includes(String(nomeMeta || '').trim());
+}
+
+module.exports = {
+  pertenceVendedorMestre,
+  EXCECOES_PADRAO_VM,
+  precisaBotaoDinamico,
+  TEMPLATES_COM_BOTAO_DINAMICO,
+};

@@ -3047,3 +3047,106 @@ test('POST /enviar-teste: erro do transporte volta classificado, sem derrubar a 
     assert.match(corpo.erro, /template nao sincronizado/);
   });
 });
+
+// ══════════════════ button0 dinamico (Incremento 2, diagnostico 2026-08-26/27) ══════════════════
+//
+// convite_grupo_vagas_vm tem um botao de URL DINAMICA na Meta: cada envio precisa do
+// PARAMETRO do botao (button0), nao so das variaveis de corpo — confirmado contra o Central
+// Whats de verdade (HTTP 400 real, ver o diagnostico da sessao anterior). O teste abaixo
+// reproduz essa validacao num FAKE do transporte construido em cima do `montarPayload` REAL
+// (nao reimplementado a parte, pra nao divergir do contrato de verdade): se o payload
+// montado nao tiver vars.button0 para este template, o fake lanca o MESMO erro 400 que a
+// Central Whats devolveu em producao.
+//
+// BUG-PRA-CONFIRMAR: com `parametrosBotao` removido da rota (POST /enviar-teste em
+// admin_campanha_whatsapp.js), este teste FALHA com HTTP 502 e a mensagem de button0 — testado
+// manualmente comentando a linha antes de reaplicar o fix. Com o fix, passa.
+const transporteBotaoDinamico = {
+  enviarTemplate: async (args) => {
+    const payload = transporte.montarPayload(args);
+    if (args.template.nome_meta === 'convite_grupo_vagas_vm' && !payload.vars.button0) {
+      throw new Error(
+        'Central Whats retornou HTTP 400 — {"error":"Template \\"convite_grupo_vagas_vm\\": o ' +
+          'botão de índice 0 tem URL dinâmica e exige a variável \\"button0\\", que não foi ' +
+          'informada."}',
+      );
+    }
+    return { wamid: 'wamid-botao-dinamico-ok', mock: false };
+  },
+  classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+};
+
+test('POST /enviar-teste: convite_grupo_vagas_vm manda o link do grupo como button0 (botao de URL dinamica)', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  exec(
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo) VALUES (?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/BOTAODINAMICO',
+  );
+  const appId = candidatura(j, 'Botao Dinamico', '+55 47 99958-2500');
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo) VALUES (?, ?, ?, ?, NULL)',
+      'convite_grupo_vagas_vm', 'pt_BR', 'marketing',
+      JSON.stringify([
+        { posicao: 1, campo: 'nome_primeiro' },
+        { posicao: 2, campo: 'cargo_vaga' },
+        { posicao: 3, campo: 'cidade' },
+      ]),
+    ).lastInsertRowid,
+  );
+
+  await comRotaEnviarTeste(transporteBotaoDinamico, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId,
+      templateId: tid,
+      telefoneDestino: '+55 47 98888-7777',
+    });
+    const corpo = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(corpo));
+    assert.equal(corpo.ok, true);
+    assert.equal(corpo.wamid, 'wamid-botao-dinamico-ok');
+  });
+});
+
+test('POST /enviar-teste: template fora da lista de botao dinamico NAO recebe parametrosBotao, mesmo com botao_parametro_fixo NULL', async () => {
+  // nova_vaga_v1/v2 tambem tem botao_parametro_fixo NULL hoje (o mesmo estado de "sem botao"
+  // documentado em schema.sql) — sem evidencia de botao dinamico. Prova que o gatilho e a
+  // lista fechada (precisaBotaoDinamico, lib/templatesWhatsapp.js), nao "botao_parametro_fixo
+  // === null" generico — generalizar mandaria button0 indevido pra este template.
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  exec(
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo) VALUES (?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/NAODINAMICO',
+  );
+  const appId = candidatura(j, 'Sem Botao Dinamico', '+55 47 99958-2500');
+  const tid = Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo) VALUES (?, ?, ?, ?, NULL)',
+      'nova_vaga_v1', 'pt_BR', 'marketing',
+      JSON.stringify([
+        { posicao: 1, campo: 'nome_primeiro' },
+        { posicao: 2, campo: 'cargo_vaga' },
+        { posicao: 3, campo: 'link_vaga' },
+      ]),
+    ).lastInsertRowid,
+  );
+
+  const chamadas = [];
+  const transporteFalso = {
+    enviarTemplate: async (args) => {
+      chamadas.push(args);
+      return { wamid: 'w', mock: false };
+    },
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+
+  await comRotaEnviarTeste(transporteFalso, async (base) => {
+    const res = await enviarTestePost(base, { applicationId: appId, templateId: tid, telefoneDestino: '+55 47 98888-7777' });
+    assert.equal(res.status, 200);
+  });
+
+  assert.equal(chamadas.length, 1);
+  assert.equal(chamadas[0].parametrosBotao, undefined);
+});
