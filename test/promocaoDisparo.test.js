@@ -54,7 +54,7 @@ const { criarApp } = require('../src/server');
 const { listarPublicoCampanha } = require('../src/lib/promocaoVagas');
 const disparo = require('../src/lib/dispararPromocao');
 const desc = require('../src/lib/descadastro');
-const { montarCorpoFinal } = require('../src/lib/ctaCampanha');
+const { montarCorpoFinal, montarCorpoFinalGrupo } = require('../src/lib/ctaCampanha');
 
 migrar();
 
@@ -116,6 +116,21 @@ function criarRascunho(jobIdAlvo, assunto = 'Vaga aberta') {
     job_id: jobIdAlvo,
     assunto,
     corpo_html: '<p>Temos uma vaga.</p>',
+    criterios,
+    total_destinatarios: listarPublicoCampanha(criterios).total,
+  });
+}
+
+// Mesmo molde de criarRascunho, para tipo 'convite_grupo': job_id NULL (nao ha vaga), e
+// `cidadeGrupo` dentro de criterios (nao `jobIdAlvo`) — o que decide qual grupo o botao do
+// e-mail promove, ver o comentario em admin_promocao.js:lerCriteriosDoForm.
+function criarRascunhoGrupo(cidadeGrupo, assunto = 'Entre no grupo') {
+  const criterios = { tipo: 'convite_grupo', cidadeGrupo };
+  return db.criarCampanha({
+    job_id: null,
+    tipo: 'convite_grupo',
+    assunto,
+    corpo_html: '<p>Abrimos um grupo novo.</p>',
     criterios,
     total_destinatarios: listarPublicoCampanha(criterios).total,
   });
@@ -223,6 +238,10 @@ const vagaOutra = criarVaga('Outra Vaga');
 for (let i = 1; i <= 4; i += 1) criarCandidatura(vagaOutra, `base${i}@exemplo.com`);
 // Este ja se candidatou a vaga ALVO: exclusao automatica do motor de publico.
 criarCandidatura(vagaAlvo, 'ja-inscrito@exemplo.com');
+
+// Praca com grupo configurado, para os cenarios de convite_grupo abaixo.
+const CIDADE_GRUPO = 'Joinville';
+db.criarRegiaoGrupo(CIDADE_GRUPO, 'https://chat.whatsapp.com/teste-disparo-joinville');
 
 // ════════════════════════ A. enfileirarCampanha ════════════════════════
 
@@ -445,6 +464,86 @@ test('a rotina chama o adaptador SEM headers manuais (List-Unsubscribe vem dele)
     assert.match(html, new RegExp(`campanha_id=${id}`), 'o link tem que ser atribuivel');
     assert.match(html, /utm_source=email/, 'todo link de campanha carrega a origem');
     assert.doesNotMatch(html, /List-Unsubscribe/i, 'o header nao e responsabilidade da rotina');
+  }
+});
+
+test('convite_grupo: disparo real sai com o botao ENTRAR NO GRUPO, sem CTA de vaga e sem o warning de vaga removida', async () => {
+  zerarCampanhas();
+  db.definirConfigBool(disparo.CHAVE_ATIVO, true);
+  config.entrevista.mock = false;
+
+  const id = criarRascunhoGrupo(CIDADE_GRUPO, 'Assunto da Campanha de Grupo');
+  const { enfileirados } = disparo.enfileirarCampanha(id, deps);
+  assert.ok(enfileirados > 0, 'sanidade: o cenario precisa ter publico (sem vaga alvo, e todo mundo elegivel)');
+  enviosFeitos.length = 0;
+
+  const avisos = [];
+  const warnOriginal = console.warn;
+  console.warn = (...a) => avisos.push(a.join(' '));
+  let r;
+  try {
+    r = await semRuido(() => disparo.varrerDisparoPromocao(deps));
+  } finally {
+    console.warn = warnOriginal;
+  }
+
+  assert.equal(r.enviados, enfileirados);
+  assert.equal(statusCampanha(id), 'concluida');
+  assert.ok(enviosFeitos.length > 0, 'sanidade: precisa ter enviado alguma coisa');
+
+  // O warning generico de "vaga foi removida?" e sobre divulgacao_vaga sem slug — nao pode
+  // aparecer aqui: convite_grupo NUNCA tem vaga, isso nao e sinal de bug neste tipo.
+  assert.ok(
+    !avisos.some((a) => a.includes('A vaga foi removida?')),
+    'convite_grupo nao pode disparar o aviso de vaga removida — ele nunca tem vaga',
+  );
+
+  for (const args of enviosFeitos) {
+    const [destino, assunto, html] = args;
+    assert.equal(assunto, 'Assunto da Campanha de Grupo');
+    assert.equal(
+      html,
+      montarCorpoFinalGrupo(
+        '<p>Abrimos um grupo novo.</p>',
+        db.obterSlugGrupo(CIDADE_GRUPO),
+        desc.montarUrlDescadastro(destino, config.baseUrl),
+        CIDADE_GRUPO,
+        id,
+      ),
+    );
+    assert.match(html, /ENTRAR NO GRUPO/, 'o botao do grupo precisa aparecer');
+    assert.doesNotMatch(html, /VER A VAGA E ME CANDIDATAR/, 'e-mail de grupo nao pode ter o CTA de vaga');
+    assert.match(html, new RegExp(`href="[^"]*/grupo/${db.obterSlugGrupo(CIDADE_GRUPO)}\\?campanha_id=${id}[^"]*"`));
+  }
+});
+
+test('convite_grupo: praca sem grupo configurado avisa e envia SEM o botao (degrada, nao trava a fila)', async () => {
+  zerarCampanhas();
+  db.definirConfigBool(disparo.CHAVE_ATIVO, true);
+  config.entrevista.mock = false;
+
+  const id = criarRascunhoGrupo('Praça Sem Grupo No Disparo', 'Assunto Sem Grupo');
+  const { enfileirados } = disparo.enfileirarCampanha(id, deps);
+  assert.ok(enfileirados > 0);
+  enviosFeitos.length = 0;
+
+  const avisos = [];
+  const warnOriginal = console.warn;
+  console.warn = (...a) => avisos.push(a.join(' '));
+  try {
+    await semRuido(() => disparo.varrerDisparoPromocao(deps));
+  } finally {
+    console.warn = warnOriginal;
+  }
+
+  assert.ok(
+    avisos.some((a) => a.includes('sem grupo configurado')),
+    'a falta de link precisa deixar rastro, mesmo espirito do aviso de vaga sem slug',
+  );
+  assert.equal(statusCampanha(id), 'concluida', 'a fila nao trava so porque um link falta');
+  assert.ok(enviosFeitos.length > 0);
+  for (const [, , html] of enviosFeitos) {
+    assert.doesNotMatch(html, /ENTRAR NO GRUPO/, 'sem slug, sem botao — degradacao visivel, nao um link quebrado');
   }
 });
 

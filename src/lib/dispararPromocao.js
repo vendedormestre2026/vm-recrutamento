@@ -45,7 +45,7 @@ const emailCampanhaPadrao = require('../providers/emailCampanha');
 const { credenciaisFaltando } = require('../providers/emailCampanha');
 const { montarUrlDescadastro } = require('./descadastro');
 const { listarPublicoCampanha } = require('./promocaoVagas');
-const { montarCorpoFinal } = require('./ctaCampanha');
+const { montarCorpoFinal, montarCorpoFinalGrupo } = require('./ctaCampanha');
 const { classificarErroEnvio } = require('./classificarErroEnvio');
 
 // Interruptor GERAL do envio de campanha (painel: /admin/config). Default FALSE.
@@ -331,7 +331,12 @@ async function enviarUm(linha, deps) {
   const emailCampanha = deps.emailCampanha || emailCampanhaPadrao;
   const classificar = deps.classificarErro || classificarErroEnvio;
 
-  if (!linha.vaga_slug) {
+  const tipo = linha.tipo === 'convite_grupo' ? 'convite_grupo' : 'divulgacao_vaga';
+
+  // Warning condicional ao tipo: 'convite_grupo' NUNCA tem vaga_slug (nao ha vaga
+  // nenhuma — job_id e NULL por design, ver schema.sql) — logar "a vaga foi removida?"
+  // nesse caminho soaria alarme falso em TODO envio real desse tipo, nao um sinal de bug.
+  if (tipo === 'divulgacao_vaga' && !linha.vaga_slug) {
     console.warn(
       `[promocao] envio ${linha.id} (campanha ${linha.campanha_id}) sem slug de vaga — ` +
         'o e-mail sai SEM link de candidatura. A vaga foi removida?',
@@ -362,25 +367,57 @@ async function enviarUm(linha, deps) {
     // no LEFT JOIN), e nao de um db.obterVaga por destinatario — seriam 125 consultas por
     // ciclo para um dado que a query ja carregou. O shape e o mesmo que o botao de teste
     // monta a partir de db.obterVaga, e e isso que mantem os dois caminhos identicos.
-    const vaga = {
-      titulo: linha.vaga_titulo,
-      perfil: linha.vaga_perfil,
-      empresa: linha.vaga_empresa,
-      endereco: linha.vaga_endereco,
-      modalidade: linha.vaga_modalidade,
-      regime: linha.vaga_regime,
-      horario: linha.vaga_horario,
-    };
-
-    const corpoFinal = montarCorpoFinal(
-      linha.corpo_html,
-      linha.vaga_slug,
-      montarUrlDescadastro(linha.email, config.baseUrl),
-      vaga,
-      // `campanha_id` no link e o que permite atribuir o clique a ESTA campanha, e nao a
-      // "alguma campanha desta vaga". Vem da propria linha da fila.
-      linha.campanha_id,
-    );
+    //
+    // 'convite_grupo' NAO tem vaga (job_id NULL) — a CIDADE do grupo vem de dentro de
+    // criterios_json (campo `cidadeGrupo`, gravado na criacao da campanha — ver
+    // admin_promocao.js), e o slug e resolvido por db.obterSlugGrupo(cidade) aqui, no
+    // momento do envio — MESMA disciplina do resto desta funcao (link/slug NUNCA gravado
+    // em campanhas.corpo_html, sempre derivado a cada envio, pra um link do grupo trocado
+    // depois da criacao valer no proximo ciclo, nao so em campanhas novas).
+    let corpoFinal;
+    if (tipo === 'divulgacao_vaga') {
+      const vaga = {
+        titulo: linha.vaga_titulo,
+        perfil: linha.vaga_perfil,
+        empresa: linha.vaga_empresa,
+        endereco: linha.vaga_endereco,
+        modalidade: linha.vaga_modalidade,
+        regime: linha.vaga_regime,
+        horario: linha.vaga_horario,
+      };
+      corpoFinal = montarCorpoFinal(
+        linha.corpo_html,
+        linha.vaga_slug,
+        montarUrlDescadastro(linha.email, config.baseUrl),
+        vaga,
+        // `campanha_id` no link e o que permite atribuir o clique a ESTA campanha, e nao a
+        // "alguma campanha desta vaga". Vem da propria linha da fila.
+        linha.campanha_id,
+      );
+    } else {
+      let criterios = {};
+      try {
+        criterios = JSON.parse(linha.criterios_json || '{}');
+      } catch {
+        criterios = {};
+      }
+      const cidadeGrupo = String(criterios.cidadeGrupo || '').trim();
+      const slugGrupo = cidadeGrupo ? db.obterSlugGrupo(cidadeGrupo) : null;
+      if (!slugGrupo) {
+        console.warn(
+          `[promocao] envio ${linha.id} (campanha ${linha.campanha_id}) — praca ` +
+            `"${cidadeGrupo || '(sem cidade)'}" sem grupo configurado — o e-mail sai SEM ` +
+            'o botao de entrar no grupo.',
+        );
+      }
+      corpoFinal = montarCorpoFinalGrupo(
+        linha.corpo_html,
+        slugGrupo,
+        montarUrlDescadastro(linha.email, config.baseUrl),
+        cidadeGrupo,
+        linha.campanha_id,
+      );
+    }
 
     if (config.entrevista.mock) {
       // Mesmo padrao das outras quatro varreduras: em mock o adaptador nao e tocado, e a
