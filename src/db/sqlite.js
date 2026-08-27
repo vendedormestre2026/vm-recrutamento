@@ -240,6 +240,72 @@ function definirVagaAtiva(id, ativo) {
   return info.changes;
 }
 
+// Exclui FISICAMENTE uma vaga — hard delete, ao contrario do padrao de sempre do projeto
+// (definirVagaAtiva/ativo=0, acima). Existe SO para vagas de teste que nunca tiveram uso
+// real: qualquer rastro de atividade (candidatura, acesso, campanha) recusa a exclusao,
+// no MESMO espirito de excluirCampanha (mais abaixo neste arquivo) — apagar destruiria a
+// evidencia de uso, e "vaga de teste" nao e "vaga sem gente" por afirmacao de quem chama,
+// e sim por checagem.
+//
+// Verifica as 4 tabelas com FK em jobs.id: applications, vaga_acessos, campanhas,
+// campanhas_whatsapp (ETAPA A do diagnostico anterior — sao as unicas). `interviews` nao
+// tem job_id direto (depende de applications.id): zero applications ja garante zero
+// interviews, entao nao entra na lista. `jobs.roteiro_id` e a UNICA FK que a vaga tem no
+// sentido INVERSO (jobs -> roteiros) — nao e dependente, nao bloqueia nada.
+//
+// Para na PRIMEIRA tabela com dependente (nao continua checando as outras): o operador so
+// precisa saber que ha uso real pra decidir "nao apaga", nao um relatorio completo de
+// quantas tabelas tem gente.
+//
+// Resultado DISCRIMINADO, nunca lanca (mesmo contrato de excluirCampanha):
+//   { ok: true }
+//   { ok: false, erroCodigo: 'VAGA_NAO_ENCONTRADA' | 'TEM_DEPENDENTES', mensagem, tabela?, total? }
+//
+// Transacao: a checagem das 4 tabelas e o DELETE precisam ver o MESMO estado — sem ela, uma
+// candidatura poderia chegar entre a checagem e o DELETE e ser apagada junto.
+const TABELAS_DEPENDENTES_VAGA = ['applications', 'vaga_acessos', 'campanhas', 'campanhas_whatsapp'];
+
+function excluirVaga(id) {
+  const jobId = Number(id);
+  if (!Number.isInteger(jobId) || jobId <= 0) {
+    return { ok: false, erroCodigo: 'VAGA_NAO_ENCONTRADA', mensagem: 'Vaga não encontrada.' };
+  }
+
+  const db = getDb();
+
+  const executar = db.transaction(() => {
+    const vaga = db.prepare('SELECT id, titulo FROM jobs WHERE id = ?').get(jobId);
+    if (!vaga) {
+      return { ok: false, erroCodigo: 'VAGA_NAO_ENCONTRADA', mensagem: 'Vaga não encontrada.' };
+    }
+
+    // Nomes de tabela vêm de TABELAS_DEPENDENTES_VAGA (array fechado acima, nunca de
+    // input externo) — interpolação de identificador é o único jeito de parametrizar
+    // NOME DE TABELA no SQLite (placeholders `?` só valem para valores).
+    for (const tabela of TABELAS_DEPENDENTES_VAGA) {
+      const { n } = db.prepare(`SELECT COUNT(*) AS n FROM ${tabela} WHERE job_id = ?`).get(jobId);
+      if (n > 0) {
+        return {
+          ok: false,
+          erroCodigo: 'TEM_DEPENDENTES',
+          tabela,
+          total: n,
+          mensagem:
+            `A vaga "${vaga.titulo}" tem ${n} registro(s) em ${tabela} — não pode ser ` +
+            'excluída fisicamente. Use "Encerrar" (soft-delete) em vez de apagar.',
+        };
+      }
+    }
+
+    db.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+    return { ok: true, titulo: vaga.titulo };
+  });
+
+  const r = executar();
+  if (r.ok) console.log(`[vagas] vaga ${jobId} ("${r.titulo}") excluida fisicamente (sem dependentes).`);
+  return r;
+}
+
 // Troca so o slug da vaga. Separada de atualizarVaga() de proposito: aquela e o form geral
 // (ETAPA A confirmou que nao mexe em slug/perfil/roteiro_id), e o slug e uma acao distinta,
 // com sua propria validacao de unicidade — nao um campo a mais no UPDATE de cima.
@@ -3779,6 +3845,7 @@ module.exports = {
   atualizarSlugVaga,
   definirCidadeVaga,
   definirVagaAtiva,
+  excluirVaga,
   // painel (Fase 5)
   CANDIDATOS_POR_PAGINA,
   ORIGENS_POR_PAGINA,
