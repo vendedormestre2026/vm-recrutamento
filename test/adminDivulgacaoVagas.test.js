@@ -163,6 +163,59 @@ test('campanhas de WhatsApp aparecem na coluna certa, com o título da vaga (LEF
   exec('DELETE FROM campanhas_whatsapp WHERE id = ?', cid);
 });
 
+test('campanha de WhatsApp SEM job_id (ex.: convite_grupo, que não tem vaga): listarCampanhasWhatsapp devolve vaga_titulo null, sem quebrar', () => {
+  // Cobre o LEFT JOIN jobs novo em listarCampanhasWhatsapp (sqlite.js) direto na camada de
+  // dados — job_id NULL e um caso REAL do schema (campanhas_whatsapp.job_id e nullable de
+  // proposito: convite_grupo nao tem vaga associada, ver o comentario da coluna em
+  // schema.sql), nao um estado hipotetico.
+  exec("DELETE FROM campanhas_whatsapp WHERE nome = 'Campanha WA Sem Vaga'");
+  exec("DELETE FROM templates_whatsapp WHERE nome_meta = 'tpl_resumo_sem_vaga'");
+  const templateId = run(
+    "INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES ('tpl_resumo_sem_vaga', 'pt_BR', 'marketing', '[]')",
+  );
+  const cid = run(
+    `INSERT INTO campanhas_whatsapp (nome, template_id, base_alvo, tipo_mensagem, job_id, status)
+     VALUES ('Campanha WA Sem Vaga', ?, 'ambos', 'convite_grupo', NULL, 'ativa')`,
+    templateId,
+  );
+
+  const linha = db.listarCampanhasWhatsapp().find((c) => c.id === cid);
+  assert.ok(linha, 'a query precisa achar a linha (nao pode quebrar com job_id NULL)');
+  assert.equal(linha.job_id, null);
+  assert.equal(linha.vaga_titulo, null, 'LEFT JOIN sem match -> vaga_titulo null (comportamento padrao de LEFT JOIN)');
+
+  exec('DELETE FROM campanhas_whatsapp WHERE id = ?', cid);
+});
+
+test('resumo /admin/divulgacao-vagas: campanha de WhatsApp sem vaga mostra o fallback "(sem vaga)", nunca vazio/undefined/null', async () => {
+  exec("DELETE FROM campanhas_whatsapp WHERE nome = 'Campanha WA Sem Vaga Tela'");
+  exec("DELETE FROM templates_whatsapp WHERE nome_meta = 'tpl_resumo_sem_vaga_tela'");
+  const templateId = run(
+    "INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES ('tpl_resumo_sem_vaga_tela', 'pt_BR', 'marketing', '[]')",
+  );
+  const cid = run(
+    `INSERT INTO campanhas_whatsapp (nome, template_id, base_alvo, tipo_mensagem, job_id, status)
+     VALUES ('Campanha WA Sem Vaga Tela', ?, 'ambos', 'convite_grupo', NULL, 'ativa')`,
+    templateId,
+  );
+
+  const { status, html } = await getHtml('/admin/divulgacao-vagas');
+  assert.equal(status, 200, 'a tela nao pode quebrar com uma campanha sem vaga');
+  assert.match(html, /Campanha WA Sem Vaga Tela/);
+
+  // A linha da tabela: <td>Campanha WA Sem Vaga Tela</td> ... <td>(sem vaga)</td> — mesmo
+  // padrao ja usado pelo lado do e-mail (ver ROTULO 'vaga_titulo' em admin_promocao.js/
+  // admin.js:5601). Nunca "undefined", "null" (string) ou uma celula vazia.
+  const idxLinha = html.indexOf('Campanha WA Sem Vaga Tela');
+  const trechoLinha = html.slice(idxLinha, html.indexOf('</tr>', idxLinha));
+  assert.match(trechoLinha, /\(sem vaga\)/);
+  assert.doesNotMatch(trechoLinha, />undefined</);
+  assert.doesNotMatch(trechoLinha, />null</);
+  assert.doesNotMatch(trechoLinha, /<td><\/td>/, 'nenhuma celula vazia na linha');
+
+  exec('DELETE FROM campanhas_whatsapp WHERE id = ?', cid);
+});
+
 test('rotas standalone /admin/promocao e /admin/campanhas-whatsapp continuam respondendo 200, com o próprio <h1>', async () => {
   const promocao = await getHtml('/admin/promocao');
   assert.equal(promocao.status, 200);
