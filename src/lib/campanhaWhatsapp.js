@@ -41,6 +41,27 @@ const ENVIOS_POR_CICLO = 30;
 // vazao, e remove a rajada, que e o padrao que a Meta mede como qualidade ruim.
 const ENVIO_INTERVALO_MS = 2000;
 
+// ── VARIAVEL DE TEMPLATE NUNCA PODE SAIR VAZIA (diagnostico da campanha 3) ──
+//
+// A Meta REJEITA o envio quando uma variavel posicional chega vazia: erro 131008,
+// "Required parameter is missing" — o parametro vazio e tratado como ausente, nao como
+// texto em branco. Confirmado em producao: a campanha 3 ('Convite Grupo Whats SP', 1.463
+// destinatarios) nao entregou UMA mensagem sequer, e os dois envios avulsos do mesmo dia
+// provaram os dois lados — o que tinha as tres variaveis preenchidas passou, o que tinha
+// uma vazia falhou com este mesmo 131008.
+//
+// `cargo_vaga` e a variavel que ficava vazia: em convite de grupo NAO ha vaga
+// (campanhas_whatsapp.job_id e NULL por definicao — o convite e da praca, nao de uma vaga),
+// entao `job_titulo` chega null da fila e o campo caia para ''. Divulgacao de vaga nunca
+// sofreu disso porque tem job_id, e por isso a campanha 1 entregou 930 mensagens.
+//
+// O valor e GENERICO de proposito. O corpo aprovado diz "processo seletivo pra vaga {{2}}",
+// e com 1.268 dos 1.463 destinatarios vindos do legado (talentos sem candidatura), nao ha
+// vaga por pessoa para citar — "comercial" e verdadeiro para a base inteira e le natural na
+// frase. Resolver por destinatario a partir da candidatura de origem cobriria so a minoria
+// com application e ainda precisaria deste mesmo fallback atras.
+const CARGO_VAGA_PADRAO = 'comercial';
+
 function ativo(deps = {}) {
   const db = deps.db || dbPadrao;
   return db.obterConfigBool(CHAVE_ATIVO, false);
@@ -219,9 +240,9 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
 
     const variaveis = resolverVariaveis(mapa, {
       nome_primeiro: primeiroNome(linha.nome),
-      // Em divulgacao, o cargo vem da VAGA; em convite de grupo nao ha vaga e o campo fica
-      // vazio, que e o comportamento ja documentado de resolverVariaveis.
-      cargo_vaga: linha.job_titulo || linha.cargo_vaga || '',
+      // Em divulgacao, o cargo vem da VAGA. Em convite de grupo nao ha vaga, e o fallback
+      // NAO pode ser '' — variavel vazia e o 131008 da Meta, ver CARGO_VAGA_PADRAO no topo.
+      cargo_vaga: linha.job_titulo || linha.cargo_vaga || CARGO_VAGA_PADRAO,
       link_grupo_regiao: link,
       link_vaga: linkVaga,
       cidade: linha.cidade || '',

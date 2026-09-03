@@ -353,6 +353,30 @@ function classificarErroCentralWhats(erro) {
     return { categoria: 'retentavel', teto: TETO_RETENTAVEL, motivo: 'rede ate o Central Whats' };
   }
 
+  // ── CODIGO DA META ANTES DO STATUS HTTP ──
+  //
+  // Mesmo criterio que classificarErroEnvio ja aplica ao ZeptoMail, e pela mesma razao: o
+  // status nao separa as categorias, o codigo dentro do corpo separa. O Central Whats
+  // embrulha a recusa da Meta num HTTP 502 — o mesmo 502 que ele usa quando esta fora do ar
+  // —, entao ler so o status trata um erro de DADOS como instabilidade de rede.
+  //
+  // 131008 = "Required parameter is missing": a Meta recebeu o template com uma variavel
+  // posicional vazia e trata vazio como ausente. E erro de CONFIGURACAO, nao transitorio:
+  // repetir manda exatamente o mesmo payload, e a variavel vazia e a mesma para a fila
+  // inteira, porque vem do mapa do template e nao do destinatario.
+  //
+  // Custou uma campanha inteira: os 30 primeiros da campanha 3 gastaram 4 ciclos cada
+  // relancando o mesmo 502, e como erro retentavel mantem a linha em 'pendente', a leitura
+  // de 30 por ciclo devolvia sempre os MESMOS 30 — os outros 1.432 nunca chegaram a ser
+  // tentados. Como 'configuracao' o ciclo para no primeiro, ninguem e marcado e o log grita.
+  if (/\b131008\b/.test(bruta)) {
+    return {
+      categoria: 'configuracao',
+      teto: null,
+      motivo: 'codigo 131008 da Meta (variavel de template vazia ou ausente)',
+    };
+  }
+
   if (status !== null) {
     // ⚠️ 401/403/404 sao CONFIGURACAO, e nao 'terminal' — divergencia deliberada da lista de
     // mapeamento pedida, registrada aqui porque a diferenca e destrutiva:

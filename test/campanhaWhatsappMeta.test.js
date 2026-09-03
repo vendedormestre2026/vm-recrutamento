@@ -870,8 +870,10 @@ test('fluxo feliz: envia, grava wamid e marca enviado', async () => {
   const linha = fila(cid)[0];
   assert.equal(linha.status, 'enviado');
   assert.equal(linha.wamid, 'wamid-real-123');
-  // As tres variaveis, na ordem, com o link da praca resolvido.
-  assert.deepEqual(recebido[0].variaveis, ['Ana', '', 'https://chat.whatsapp.com/ABC123']);
+  // As tres variaveis, na ordem, com o link da praca resolvido. A posicao 2 e o fallback
+  // generico porque montarCenario() e um convite de grupo (sem job_id) — variavel vazia aqui
+  // seria o 131008 da Meta, ver o teste dedicado mais abaixo.
+  assert.deepEqual(recebido[0].variaveis, ['Ana', 'comercial', 'https://chat.whatsapp.com/ABC123']);
 });
 
 test('praca SEM link: falha SO daquele envio, o ciclo continua', async () => {
@@ -2640,11 +2642,69 @@ test('montarContextoWhatsapp: NAO e a mesma resolucao do ciclo (job continua usa
       enviarTemplate: async (a) => { recebido.push(a); return { wamid: 'w' }; },
     })));
 
-  // montarCenario() e uma campanha convite_grupo (sem job_id) — cargo_vaga fica vazio, como
-  // sempre foi. Se o ciclo tivesse passado a usar montarContextoWhatsapp(origem_id=1, que
-  // aqui e um id de TALENTO, nao de application), a chamada teria estourado (application 1
-  // pode nem existir) ou resolvido o campo errado.
-  assert.deepEqual(recebido[0].variaveis, ['Ana', '', 'https://chat.whatsapp.com/ABC123']);
+  // montarCenario() e uma campanha convite_grupo (sem job_id), entao cargo_vaga cai no
+  // fallback generico — NAO na string vazia, que e o 131008 da Meta (ver CARGO_VAGA_PADRAO
+  // em lib/campanhaWhatsapp.js e o teste dedicado logo abaixo). Se o ciclo tivesse passado a
+  // usar montarContextoWhatsapp(origem_id=1, que aqui e um id de TALENTO, nao de
+  // application), a chamada teria estourado (application 1 pode nem existir) ou resolvido o
+  // campo errado — e a posicao 2 traria o titulo de uma vaga, nao o fallback.
+  assert.deepEqual(recebido[0].variaveis, ['Ana', 'comercial', 'https://chat.whatsapp.com/ABC123']);
+});
+
+test('convite de grupo (job_id NULL): NENHUMA variavel sai vazia no payload — o 131008 da Meta', async () => {
+  // ── REGRESSAO DE PRODUCAO, campanha 3 ('Convite Grupo Whats SP', 1.463 destinatarios) ──
+  //
+  // A Meta recusa o envio quando uma variavel posicional chega vazia: 131008, "Required
+  // parameter is missing" — parametro vazio e lido como ausente. Em convite de grupo NAO ha
+  // vaga (campanhas_whatsapp.job_id e NULL por definicao), entao job_titulo chegava null da
+  // fila e cargo_vaga virava ''. Resultado: zero mensagens entregues, e os 30 primeiros da
+  // fila relancando o mesmo erro a cada ciclo.
+  //
+  // O teste anterior a este afirmava a string vazia como comportamento correto ("como sempre
+  // foi") — o mock aceita '' sem reclamar, a Meta nao. Por isso a assercao aqui e sobre a
+  // INVARIANTE (nenhuma posicao vazia), e nao so sobre o valor de cargo_vaga: qualquer
+  // variavel nova que passe a resolver para '' quebra este teste antes de quebrar a campanha.
+  zerar();
+  db.definirConfigBool(job.CHAVE_ATIVO, true);
+  const { cid } = montarCenario();
+  adicionar(cid, '5547999582500', 'Ana Paula', 'Joinville');
+
+  const recebido = [];
+  await semRuido(() =>
+    job.processarCicloCampanhaWhatsapp(deps({
+      enviarTemplate: async (a) => { recebido.push(a); return { wamid: 'w' }; },
+    })));
+
+  assert.equal(recebido.length, 1);
+  const vazias = recebido[0].variaveis
+    .map((v, i) => (String(v || '').trim() === '' ? i + 1 : null))
+    .filter(Boolean);
+  assert.deepEqual(vazias, [], `posicoes vazias no payload: ${vazias.join(', ')}`);
+  assert.equal(recebido[0].variaveis[1], 'comercial');
+});
+
+test('131008 da Meta e configuracao (aborta o ciclo), nao 502 retentavel', () => {
+  // O Central Whats embrulha a recusa da Meta num HTTP 502 — o MESMO status que ele usa
+  // quando esta fora do ar. Ler so o status trata erro de dados como instabilidade de rede, e
+  // foi isso que fez 30 destinatarios gastarem 4 tentativas cada sem sair do lugar, travando
+  // a leitura de 30 por ciclo em cima dos mesmos 30 (os outros 1.432 nunca foram tentados).
+  const erro = new Error(
+    'Central Whats retornou HTTP 502 — {"error":"Falha no envio pelo provider",' +
+      '"details":{"code":"131008","message":"(#131008) Required parameter is missing"}}',
+  );
+  const classe = transporte.classificarErroCentralWhats(erro);
+  assert.equal(classe.categoria, 'configuracao');
+  assert.equal(classe.teto, null);
+  assert.match(classe.motivo, /131008/);
+});
+
+test('502 SEM 131008 continua retentavel — o Central Whats fora do ar nao virou configuracao', () => {
+  // Nao-regressao do teste acima: a mudanca e sobre o CODIGO da Meta, nao sobre o status.
+  const classe = transporte.classificarErroCentralWhats(
+    new Error('Central Whats retornou HTTP 502 — {"error":"Bad gateway"}'),
+  );
+  assert.equal(classe.categoria, 'retentavel');
+  assert.equal(classe.teto, 5);
 });
 
 // ══════════════════ montarUrlVaga parametrizado ══════════════════
