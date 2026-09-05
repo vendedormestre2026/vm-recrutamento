@@ -26,14 +26,17 @@ const { config } = require('../src/config');
 const optout = require('../src/lib/optoutWhatsapp');
 const campanha = require('../src/lib/campanhaWhatsapp');
 const tpl = require('../src/lib/templatesWhatsapp');
-const { lerTokenDescadastroWhatsapp } = require('../src/lib/descadastroWhatsapp');
+const {
+  lerTokenDescadastroWhatsapp,
+  CAMINHO_DESCADASTRO_WHATSAPP,
+} = require('../src/lib/descadastroWhatsapp');
 
 migrar();
 
 const exec = (sql, ...p) => db.getDb().prepare(sql).run(...p);
 
 // Padrao de URL EXATAMENTE como o documento manda cadastrar na Meta.
-const URL_BOTAO_DESCADASTRO = 'https://entrevista.vendedormestre.com.br/descadastro/{{1}}';
+const URL_BOTAO_DESCADASTRO = 'https://entrevista.vendedormestre.com.br/descadastro-whatsapp/{{1}}';
 const URL_BOTAO_GRUPO = 'https://entrevista.vendedormestre.com.br/grupo/{{1}}';
 
 function zerar() {
@@ -114,7 +117,7 @@ test('indiceBotaoDescadastro: 0 quando o template nao tem outro botao', () => {
   assert.equal(tpl.indiceBotaoDescadastro([botaoDescadastro]), 0);
 });
 
-test('indiceBotaoDescadastro: null quando nao ha botao, ou nenhum aponta para /descadastro/', () => {
+test('indiceBotaoDescadastro: null quando nao ha botao, ou nenhum aponta para o caminho certo', () => {
   assert.equal(tpl.indiceBotaoDescadastro([]), null);
   assert.equal(tpl.indiceBotaoDescadastro([botaoGrupo]), null);
   assert.equal(tpl.indiceBotaoDescadastro(null), null);
@@ -123,7 +126,7 @@ test('indiceBotaoDescadastro: null quando nao ha botao, ou nenhum aponta para /d
 test('indiceBotaoDescadastro: botao ESTATICO para /descadastro/ nao conta', () => {
   // Sem placeholder, todo mundo receberia o mesmo link — e a pagina exige o token no caminho,
   // entao esse botao nao descadastraria ninguem.
-  const estatico = { indice: 0, tipo: 'URL', texto: 'Sair', url: 'https://x/descadastro/' };
+  const estatico = { indice: 0, tipo: 'URL', texto: 'Sair', url: 'https://x/descadastro-whatsapp/' };
   assert.equal(tpl.indiceBotaoDescadastro([estatico]), null);
 });
 
@@ -276,11 +279,28 @@ test('a URL que a META monta bate com a rota real e abre a pagina de descadastro
   }
 });
 
+test('a duplicacao do caminho entre os dois modulos nao pode divergir', () => {
+  // lib/templatesWhatsapp e modulo-FOLHA e por isso guarda a propria copia do caminho; o
+  // dono do valor e lib/descadastroWhatsapp. Este teste e o que impede as duas de andarem
+  // separadas — sem ele, mudar so uma quebraria o reconhecimento do botao em silencio.
+  assert.equal(tpl.CAMINHO_DESCADASTRO, `${CAMINHO_DESCADASTRO_WHATSAPP}/`);
+});
+
+test('a URL do botao NAO fica sob o caminho do descadastro por e-mail', () => {
+  // /descadastro e do e-mail. Se o caminho do WhatsApp voltar a ser aninhado sob ele, o
+  // curinga :token volta a engolir sub-caminhos do outro fluxo — ver o cabecalho de
+  // lib/descadastroWhatsapp.js.
+  const caminho = new URL(tpl.montarUrlDoBotao(URL_BOTAO_DESCADASTRO, 'tok.en')).pathname;
+  const primeiroSegmento = caminho.split('/').filter(Boolean)[0];
+  assert.notEqual(primeiroSegmento, 'descadastro', 'nao pode ser filho do fluxo de e-mail');
+  assert.equal(primeiroSegmento, 'descadastro-whatsapp');
+});
+
 test('o padrao de URL do documento tem o formato que a rota espera', () => {
   // Trava o texto que o documento manda cadastrar na Meta contra a rota registrada:
   // /descadastro/<token>, um unico segmento depois de /descadastro/.
   const urlFinal = tpl.montarUrlDoBotao(URL_BOTAO_DESCADASTRO, 'abc.def');
   const caminho = new URL(urlFinal).pathname;
-  assert.equal(caminho, '/descadastro/abc.def');
-  assert.equal(caminho.split('/').filter(Boolean).length, 2, 'exatamente /descadastro/<token>');
+  assert.equal(caminho, '/descadastro-whatsapp/abc.def');
+  assert.equal(caminho.split('/').filter(Boolean).length, 2, 'exatamente /descadastro-whatsapp/<token>');
 });

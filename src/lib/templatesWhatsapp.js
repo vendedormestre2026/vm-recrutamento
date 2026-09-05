@@ -97,12 +97,23 @@ function botaoEhDinamico(botao) {
   return Boolean(botao) && botao.tipo === 'URL' && /\{\{\s*\d+\s*\}\}/.test(botao.url || '');
 }
 
-// Caminho da pagina publica de descadastro. E por ele que um botao e reconhecido como "o
-// botao de descadastro" — o RECONHECIMENTO E PELA URL, e nao pelo rotulo: o texto do botao
-// e escrito a mao no painel da Meta e pode variar ("Não quero mais receber", "Sair da
-// lista", com ou sem acento), enquanto a URL e a mesma sempre porque precisa bater com a
-// rota registrada em routes/pages.js.
-const CAMINHO_DESCADASTRO = '/descadastro/';
+// Caminho da pagina publica de descadastro POR WHATSAPP. E por ele que um botao e
+// reconhecido como "o botao de descadastro" — o RECONHECIMENTO E PELA URL, e nao pelo
+// rotulo: o texto do botao e escrito a mao no painel da Meta e pode variar ("Não quero mais
+// receber", "Sair da lista", com ou sem acento), enquanto a URL e a mesma sempre porque
+// precisa bater com a rota registrada em routes/pages.js.
+//
+// ⚠️ DUPLICACAO DELIBERADA. O dono deste valor e
+// lib/descadastroWhatsapp.CAMINHO_DESCADASTRO_WHATSAPP; a copia existe aqui porque este
+// modulo e FOLHA por contrato (nenhum require proprio) — db/sqlite.js o importa, e
+// descadastroWhatsapp puxa config.js junto. Trocar a folha por um require inverteria essa
+// decisao inteira por causa de uma string.
+//
+// A duplicacao e guardada por teste: optoutBotaoTemplate.test.js compara as duas constantes
+// e falha se divergirem. Se voce mudar uma, mude a outra — o teste avisa, mas so depois.
+//
+// A barra final faz parte: e ela que impede "/descadastro-whatsapp-antigo" de casar.
+const CAMINHO_DESCADASTRO = '/descadastro-whatsapp/';
 
 // Indice do botao de descadastro, ou null quando o template nao tem um.
 //

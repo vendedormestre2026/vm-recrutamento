@@ -1,7 +1,7 @@
 'use strict';
 
 // Incremento 4: token HMAC (lib/descadastroWhatsapp.js) e a pagina publica de descadastro
-// por WhatsApp (GET /descadastro/:token, POST /descadastro/whatsapp).
+// por WhatsApp (GET /descadastro-whatsapp/:token, POST /descadastro-whatsapp).
 //
 // O teste mais importante deste arquivo e o de que o GET NAO ESCREVE. O WhatsApp pre-carrega
 // os links de uma mensagem para montar a previa, e antivirus abrem URLs sozinhos — se o GET
@@ -76,7 +76,7 @@ test('token: nao carrega o telefone legivel na URL', () => {
   const url = montarUrlDescadastroWhatsapp('5547999582500', 'https://exemplo.test');
   assert.doesNotMatch(url, /5547999582500/);
   assert.doesNotMatch(url, /99958/);
-  assert.match(url, /^https:\/\/exemplo\.test\/descadastro\/[A-Za-z0-9_-]+\.[0-9a-f]+$/);
+  assert.match(url, /^https:\/\/exemplo\.test\/descadastro-whatsapp\/[A-Za-z0-9_-]+\.[0-9a-f]+$/);
 });
 
 test('token: adulterado e recusado', () => {
@@ -196,9 +196,9 @@ test('sem segredo: o servidor sobe e as rotas publicas respondem 404, sem 500', 
   try {
     await comServidor(async (base) => {
       zerar();
-      const res = await fetch(`${base}/descadastro/qualquer.coisa`);
+      const res = await fetch(`${base}/descadastro-whatsapp/qualquer.coisa`);
       assert.equal(res.status, 404, 'nunca 500');
-      const post = await postForm(base, '/descadastro/whatsapp', { token: 'x.y', escopo: 'campanha' });
+      const post = await postForm(base, '/descadastro-whatsapp', { token: 'x.y', escopo: 'campanha' });
       assert.equal(post.status, 404);
       assert.equal(contarOptouts(), 0);
     });
@@ -215,11 +215,11 @@ test('token: telefone irreconhecivel LANCA na geracao (falha cedo, antes do envi
 // Pagina publica
 // ══════════════════════════════════════════════════════════════
 
-test('GET /descadastro/:token mostra a confirmacao e NAO escreve nada', async () => {
+test('GET /descadastro-whatsapp/:token mostra a confirmacao e NAO escreve nada', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582500');
-    const res = await fetch(`${base}/descadastro/${token}`);
+    const res = await fetch(`${base}/descadastro-whatsapp/${token}`);
     assert.equal(res.status, 200);
     const html = await res.text();
 
@@ -236,7 +236,7 @@ test('GET: o telefone nao aparece na pagina', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582500');
-    const html = await (await fetch(`${base}/descadastro/${token}`)).text();
+    const html = await (await fetch(`${base}/descadastro-whatsapp/${token}`)).text();
     assert.doesNotMatch(html, /5547999582500/);
   });
 });
@@ -246,7 +246,7 @@ test('GET com token adulterado: 404 generico, sem revelar nada', async () => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582500');
     const [corpo] = token.split('.');
-    const res = await fetch(`${base}/descadastro/${corpo}.${'0'.repeat(32)}`);
+    const res = await fetch(`${base}/descadastro-whatsapp/${corpo}.${'0'.repeat(32)}`);
     assert.equal(res.status, 404);
     const html = await res.text();
     assert.match(html, /Link inválido/);
@@ -258,7 +258,7 @@ test('POST efetiva com escopo campanha (o CTA principal)', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582500');
-    const res = await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha' });
+    const res = await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha' });
     assert.equal(res.status, 200);
     assert.match(await res.text(), /registramos seu pedido/);
 
@@ -272,7 +272,7 @@ test('POST com escopo total bloqueia tudo, e a tela diz isso', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5511988887777');
-    const html = await (await postForm(base, '/descadastro/whatsapp', { token, escopo: 'total' })).text();
+    const html = await (await postForm(base, '/descadastro-whatsapp', { token, escopo: 'total' })).text();
     assert.match(html, /nenhuma mensagem nossa/);
     assert.equal(optout.estaOptout('5511988887777', 'transacional'), true);
   });
@@ -282,10 +282,10 @@ test('POST duplicado e idempotente: mesma tela, uma linha so, data original pres
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582500');
-    await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha' });
+    await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha' });
     exec("UPDATE whatsapp_optout SET criado_em = '2026-01-01 10:00:00'");
 
-    const res = await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha' });
+    const res = await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha' });
     assert.equal(res.status, 200);
     assert.match(await res.text(), /registramos seu pedido/);
 
@@ -297,11 +297,11 @@ test('POST duplicado e idempotente: mesma tela, uma linha so, data original pres
 test('POST: telefone com e sem o 9 resolvem para o MESMO registro', async () => {
   await comServidor(async (base) => {
     zerar();
-    await postForm(base, '/descadastro/whatsapp', {
+    await postForm(base, '/descadastro-whatsapp', {
       token: gerarTokenDescadastroWhatsapp('5531996820290'),
       escopo: 'campanha',
     });
-    await postForm(base, '/descadastro/whatsapp', {
+    await postForm(base, '/descadastro-whatsapp', {
       token: gerarTokenDescadastroWhatsapp('553196820290'),
       escopo: 'campanha',
     });
@@ -312,7 +312,7 @@ test('POST: telefone com e sem o 9 resolvem para o MESMO registro', async () => 
 test('POST com token adulterado: 404 e nada gravado', async () => {
   await comServidor(async (base) => {
     zerar();
-    const res = await postForm(base, '/descadastro/whatsapp', { token: 'lixo.deadbeef', escopo: 'campanha' });
+    const res = await postForm(base, '/descadastro-whatsapp', { token: 'lixo.deadbeef', escopo: 'campanha' });
     assert.equal(res.status, 404);
     assert.equal(contarOptouts(), 0);
   });
@@ -322,7 +322,7 @@ test('POST com escopo forjado cai no padrao campanha, em vez de recusar o pedido
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582502');
-    const res = await postForm(base, '/descadastro/whatsapp', { token, escopo: 'apagar-tudo' });
+    const res = await postForm(base, '/descadastro-whatsapp', { token, escopo: 'apagar-tudo' });
     assert.equal(res.status, 200);
     assert.equal(db.obterWhatsappOptout('5547999582502').escopo, 'campanha');
   });
@@ -332,10 +332,10 @@ test('desfazer na mesma sessao revoga pelo mesmo token', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582503');
-    await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha' });
+    await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha' });
     assert.equal(optout.estaOptout('5547999582503', 'campanha'), true);
 
-    const res = await postForm(base, '/descadastro/whatsapp/desfazer', { token });
+    const res = await postForm(base, '/descadastro-whatsapp/desfazer', { token });
     assert.equal(res.status, 200);
     assert.match(await res.text(), /Desfeito/);
     assert.equal(optout.estaOptout('5547999582503', 'campanha'), false);
@@ -346,7 +346,7 @@ test('desfazer com token invalido: 404, sem tocar em nada', async () => {
   await comServidor(async (base) => {
     zerar();
     optout.registrarOptout({ telefone: '5547999582504', origem: 'link' });
-    const res = await postForm(base, '/descadastro/whatsapp/desfazer', { token: 'x.y' });
+    const res = await postForm(base, '/descadastro-whatsapp/desfazer', { token: 'x.y' });
     assert.equal(res.status, 404);
     assert.equal(optout.estaOptout('5547999582504', 'campanha'), true);
   });
@@ -356,15 +356,15 @@ test('as paginas nao carregam rastreio (GTM/Pixel)', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582500');
-    const html = await (await fetch(`${base}/descadastro/${token}`)).text();
+    const html = await (await fetch(`${base}/descadastro-whatsapp/${token}`)).text();
     assert.doesNotMatch(html, /googletagmanager|fbevents/);
   });
 });
 
 test('o fluxo de descadastro por E-MAIL continua intacto', async () => {
   await comServidor(async (base) => {
-    // A rota nova mora em /descadastro/:token; a antiga em /descadastro?e=..&t=.. — os dois
-    // caminhos convivem sem que um capture o outro.
+    // A rota de WhatsApp mora em /descadastro-whatsapp/:token; a de e-mail em
+    // /descadastro?e=..&t=.. — sao IRMAS, e nenhuma alcanca a outra.
     const email = 'pessoa@exemplo.com';
     const t = descadastroEmail.gerarToken(email);
     const e = Buffer.from(email, 'utf8').toString('base64url');

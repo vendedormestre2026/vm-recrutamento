@@ -8,8 +8,8 @@ ação humana e deliberada — o código não a faz.
 ## A decisão
 
 O botão será do tipo **URL ("Acessar o site")**, com a URL marcada como dinâmica e o parâmetro
-recebendo o token de descadastro. O clique abre a página `/descadastro/<token>`, que já existe
-e está no ar.
+recebendo o token de descadastro. O clique abre a página `/descadastro-whatsapp/<token>`, que já
+existe e está no ar.
 
 O botão de **resposta rápida ("Personalizado") está descartado**: o clique volta como mensagem
 recebida, e a Central Whats não tem canal de entrada (ver `docs/webhook-entrada-centralwhats.md`),
@@ -110,16 +110,30 @@ Idêntico nos três templates, exceto pelo índice que ele ocupa.
 | tipo | **URL** ("Acessar o site") |
 | rótulo | `Não quero mais receber` |
 | tipo de URL | **Dinâmica** |
-| URL base | `https://entrevista.vendedormestre.com.br/descadastro/` |
 | variável | `{{1}}` no fim da URL |
 
 O rótulo tem **22 caracteres**, dentro do limite de 25 da Meta.
 
-A URL completa que a Meta monta fica assim:
+### A URL base — copie esta linha
 
 ```
-https://entrevista.vendedormestre.com.br/descadastro/{{1}}
+https://entrevista.vendedormestre.com.br/descadastro-whatsapp/
 ```
+
+Seguida da variável, a URL completa que a Meta monta fica assim:
+
+```
+https://entrevista.vendedormestre.com.br/descadastro-whatsapp/{{1}}
+```
+
+> ⚠️ **Não é `/descadastro/`.** Aquele caminho é do descadastro por **e-mail**, e os dois são
+> irmãos, nunca aninhados. Um `/descadastro/<token>` levaria a pessoa a um 404.
+>
+> O caminho foi movido de propósito **antes** deste cadastro. Na versão anterior a página do
+> WhatsApp ficava sob `/descadastro/`, e a sondagem das rotas reais mostrou o preço:
+> `GET /descadastro/whatsapp` respondia 404 enquanto `POST` na mesma URL efetivava o opt-out,
+> e o curinga `:token` engolia qualquer sub-caminho novo do fluxo de e-mail. Corrigir agora
+> custou zero; depois de um template aprovado custaria **resubmissão**.
 
 ### Amostra a preencher no formulário
 
@@ -133,7 +147,7 @@ djE6NTU0Nzk5OTk5OTk5.b9c2f85da7a4f6e759cd955f8fe56bbd
 Se o formulário pedir a URL completa de exemplo em vez de só o valor:
 
 ```
-https://entrevista.vendedormestre.com.br/descadastro/djE6NTU0Nzk5OTk5OTk5.b9c2f85da7a4f6e759cd955f8fe56bbd
+https://entrevista.vendedormestre.com.br/descadastro-whatsapp/djE6NTU0Nzk5OTk5OTk5.b9c2f85da7a4f6e759cd955f8fe56bbd
 ```
 
 > O token real é diferente para cada destinatário e é gerado no momento do envio. O ponto e os
@@ -170,8 +184,11 @@ Entre um e outro, confirme que o anterior voltou a **APPROVED**.
 5. Em **Texto do botão**, escreva: `Não quero mais receber`
 6. Em **Tipo de URL**, selecione **Dinâmica**. Se aparecer "Estática" selecionado, troque —
    com URL estática todo mundo receberia o mesmo link e ninguém conseguiria se descadastrar.
-7. Em **URL do site**, cole: `https://entrevista.vendedormestre.com.br/descadastro/`
+7. Em **URL do site**, cole exatamente a linha da seção "A URL base — copie esta linha":
+   `https://entrevista.vendedormestre.com.br/descadastro-whatsapp/`
    O campo da variável aparece logo em seguida e completa a URL com `{{1}}`.
+   Confira que está escrito `descadastro-whatsapp`, com o hífen — `descadastro` sozinho é o
+   caminho do e-mail e daria 404.
 8. Em **amostra / exemplo**, cole o token de amostra da seção anterior.
 9. No `convite_grupo_vagas_vm`, confira que o botão "Entrar no Grupo" continua **em primeiro
    lugar** e o novo em segundo.

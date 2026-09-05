@@ -49,8 +49,8 @@ test('interruptor LIGADO: devolve a URL, e o token dela resolve para o telefone 
   zerar();
   db.definirConfigBool(optout.CHAVE_LINK_ATIVO, true);
   const valor = optout.textoDescadastroPara('5547999582500');
-  assert.match(valor, /\/descadastro\//);
-  const token = valor.split('/descadastro/')[1];
+  assert.match(valor, /\/descadastro-whatsapp\//);
+  const token = valor.split('/descadastro-whatsapp/')[1];
   assert.equal(lerTokenDescadastroWhatsapp(token), '554799582500');
 });
 
@@ -137,8 +137,8 @@ test('ciclo: com o interruptor LIGADO, a variavel 4 chega como URL', async () =>
   assert.equal(r.enviados, 1);
   assert.equal(enviados.length, 1);
   const quarta = enviados[0].variaveis[3];
-  assert.match(quarta, /\/descadastro\//);
-  assert.equal(lerTokenDescadastroWhatsapp(quarta.split('/descadastro/')[1]), '554799582500');
+  assert.match(quarta, /\/descadastro-whatsapp\//);
+  assert.equal(lerTokenDescadastroWhatsapp(quarta.split('/descadastro-whatsapp/')[1]), '554799582500');
 });
 
 test('ciclo: com o interruptor DESLIGADO, a variavel 4 chega como a frase de fallback', async () => {

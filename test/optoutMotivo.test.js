@@ -55,7 +55,7 @@ const MOTIVO_VALIDO = 'Recebo mensagens demais';
 test('a pagina oferece os motivos e o campo de texto livre, todos opcionais', async () => {
   await comServidor(async (base) => {
     zerar();
-    const html = await (await fetch(`${base}/descadastro/${gerarTokenDescadastroWhatsapp('5547999582500')}`)).text();
+    const html = await (await fetch(`${base}/descadastro-whatsapp/${gerarTokenDescadastroWhatsapp('5547999582500')}`)).text();
     assert.match(html, /conte o motivo/);
     assert.match(html, /Recebo mensagens demais/);
     assert.match(html, /Já consegui um emprego/);
@@ -69,7 +69,7 @@ test('SEM motivo: o opt-out e efetivado igual, com motivo NULL', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582500');
-    const res = await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha' });
+    const res = await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha' });
     assert.equal(res.status, 200);
     assert.match(await res.text(), /registramos seu pedido/);
     assert.equal(optout.estaOptout('5547999582500', 'campanha'), true);
@@ -81,7 +81,7 @@ test('COM motivo da lista: grava o rotulo escolhido', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582501');
-    await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha', motivo: MOTIVO_VALIDO });
+    await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha', motivo: MOTIVO_VALIDO });
     assert.equal(db.obterWhatsappOptout('5547999582501').motivo, MOTIVO_VALIDO);
   });
 });
@@ -90,7 +90,7 @@ test('motivo "outro" grava o texto livre', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582502');
-    await postForm(base, '/descadastro/whatsapp', {
+    await postForm(base, '/descadastro-whatsapp', {
       token,
       escopo: 'campanha',
       motivo: 'outro',
@@ -104,7 +104,7 @@ test('"outro" sem texto vira NULL, e o opt-out acontece do mesmo jeito', async (
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582503');
-    const res = await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha', motivo: 'outro' });
+    const res = await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha', motivo: 'outro' });
     assert.equal(res.status, 200);
     assert.equal(optout.estaOptout('5547999582503', 'campanha'), true);
     assert.equal(db.obterWhatsappOptout('5547999582503').motivo, null);
@@ -115,7 +115,7 @@ test('motivo FORJADO (fora da lista) e ignorado, e nao impede a saida', async ()
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582504');
-    const res = await postForm(base, '/descadastro/whatsapp', {
+    const res = await postForm(base, '/descadastro-whatsapp', {
       token,
       escopo: 'campanha',
       motivo: '<script>alert(1)</script>',
@@ -130,7 +130,7 @@ test('texto livre e cortado no teto, nunca recusado', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582505');
-    await postForm(base, '/descadastro/whatsapp', {
+    await postForm(base, '/descadastro-whatsapp', {
       token,
       escopo: 'campanha',
       motivo: 'outro',
@@ -145,7 +145,7 @@ test('o motivo tambem vale no bloqueio TOTAL', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582506');
-    await postForm(base, '/descadastro/whatsapp', { token, escopo: 'total', motivo: MOTIVO_VALIDO });
+    await postForm(base, '/descadastro-whatsapp', { token, escopo: 'total', motivo: MOTIVO_VALIDO });
     const linha = db.obterWhatsappOptout('5547999582506');
     assert.equal(linha.escopo, 'total');
     assert.equal(linha.motivo, MOTIVO_VALIDO);
@@ -158,15 +158,15 @@ test('segundo clique PREENCHE motivo vazio, mas NUNCA sobrescreve um ja informad
     const token = gerarTokenDescadastroWhatsapp('5547999582507');
 
     // 1. Sai sem dizer o motivo.
-    await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha' });
+    await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha' });
     assert.equal(db.obterWhatsappOptout('5547999582507').motivo, null);
 
     // 2. Volta e informa: o vazio e preenchido.
-    await postForm(base, '/descadastro/whatsapp', { token, escopo: 'campanha', motivo: MOTIVO_VALIDO });
+    await postForm(base, '/descadastro-whatsapp', { token, escopo: 'campanha', motivo: MOTIVO_VALIDO });
     assert.equal(db.obterWhatsappOptout('5547999582507').motivo, MOTIVO_VALIDO);
 
     // 3. Volta de novo com outro motivo: o primeiro e preservado.
-    await postForm(base, '/descadastro/whatsapp', {
+    await postForm(base, '/descadastro-whatsapp', {
       token,
       escopo: 'campanha',
       motivo: 'Já consegui um emprego',
@@ -181,7 +181,7 @@ test('o GET com motivo na query continua sem escrever nada', async () => {
   await comServidor(async (base) => {
     zerar();
     const token = gerarTokenDescadastroWhatsapp('5547999582508');
-    await fetch(`${base}/descadastro/${token}?motivo=${encodeURIComponent(MOTIVO_VALIDO)}`);
+    await fetch(`${base}/descadastro-whatsapp/${token}?motivo=${encodeURIComponent(MOTIVO_VALIDO)}`);
     assert.equal(contar(), 0);
   });
 });

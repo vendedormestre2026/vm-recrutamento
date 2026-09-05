@@ -17,7 +17,10 @@ const {
   lerEmailDaUrl,
   ORIGEM_LINK_EMAIL,
 } = require('../lib/descadastro');
-const { lerTokenDescadastroWhatsapp } = require('../lib/descadastroWhatsapp');
+const {
+  lerTokenDescadastroWhatsapp,
+  CAMINHO_DESCADASTRO_WHATSAPP,
+} = require('../lib/descadastroWhatsapp');
 const optout = require('../lib/optoutWhatsapp');
 const {
   calcularPontuacaoGeral,
@@ -1496,7 +1499,7 @@ router.post('/descadastro', (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────
-// Descadastro por WHATSAPP — GET /descadastro/:token + POST /descadastro/whatsapp
+// Descadastro por WHATSAPP — /descadastro-whatsapp
 // ──────────────────────────────────────────────────────────────
 //
 // Publicas, alcancadas pelo link que vai dentro da mensagem de campanha. Irmas das rotas de
@@ -1512,12 +1515,19 @@ router.post('/descadastro', (req, res) => {
 //      que quem tem um link quebrado, e a rota nunca pode virar um oraculo de "este numero
 //      esta na base?".
 //
-// ── POR QUE O POST NAO E EM /descadastro ──
-// Aquele caminho ja e do fluxo de E-MAIL, inclusive do One-Click (RFC 8058), que faz POST
+// ── POR QUE NADA DISTO MORA SOB /descadastro ──
+// Aquele caminho e do fluxo de E-MAIL, inclusive do One-Click (RFC 8058), que faz POST
 // direto na URL sem corpo de formulario. Somar um segundo esquema de autorizacao no mesmo
 // handler significaria decidir, a cada requisicao, qual dos dois esta chegando — e errar
-// essa decisao descadastra a pessoa errada do canal errado. Divergencia registrada em
-// relacao ao enunciado, que pedia POST /descadastro.
+// essa decisao descadastra a pessoa errada do canal errado.
+//
+// A primeira versao ficou no meio do caminho: o POST saiu para /descadastro/whatsapp, mas a
+// PAGINA ficou em /descadastro/<token>, aninhada sob o e-mail. Sondagem das rotas reais
+// mostrou o preco disso — GET /descadastro/whatsapp devolvia 404 (caia no :token) enquanto
+// POST na mesma URL efetivava o opt-out, e o curinga :token engolia qualquer sub-caminho
+// novo que alguem acrescentasse ao fluxo de e-mail. Agora os dois sao IRMAOS, e o Express
+// casa segmento literal: um nunca alcanca o outro. Ver o cabecalho de
+// lib/descadastroWhatsapp.js para o porque de o caminho ser congelado.
 //
 // As duas passam semRastreio: true — nao se carrega GTM/Pixel na tela em que o titular
 // exerce o direito de sair.
@@ -1608,8 +1618,12 @@ function blocoMotivos() {
     </div>`;
 }
 
-// ── GET /descadastro/:token ── confirmacao (NAO altera nada) ──
-router.get('/descadastro/:token', (req, res) => {
+// ── GET /descadastro-whatsapp/:token ── confirmacao (NAO altera nada) ──
+//
+// O caminho e IRMAO de /descadastro (e-mail), nunca filho — ver o bloco sobre precedencia
+// no cabecalho de lib/descadastroWhatsapp.js. Registrado a partir da constante de la para
+// a rota e a URL do botao do template nao poderem divergir.
+router.get(`${CAMINHO_DESCADASTRO_WHATSAPP}/:token`, (req, res) => {
   const canonico = lerTokenDescadastroWhatsapp(req.params.token);
   if (!canonico) return avisoLinkWhatsappInvalido(res);
 
@@ -1628,7 +1642,7 @@ router.get('/descadastro/:token', (req, res) => {
            separados; com o campo de motivo no meio, formularios irmaos deixariam o motivo
            preso a um dos dois — e formulario aninhado e invalido em HTML. Cada botao carrega
            o proprio name="escopo", que e o valor enviado quando ELE e o botao acionado. -->
-      <form method="POST" action="/descadastro/whatsapp" style="width:100%">
+      <form method="POST" action="${CAMINHO_DESCADASTRO_WHATSAPP}" style="width:100%">
         <input type="hidden" name="token" value="${token}">
         ${blocoMotivos()}
 
@@ -1654,12 +1668,12 @@ router.get('/descadastro/:token', (req, res) => {
   res.send(pagina({ titulo: 'Descadastro', tema: 'claro', semRastreio: true, conteudo }));
 });
 
-// ── POST /descadastro/whatsapp ── efetiva ──
+// ── POST /descadastro-whatsapp ── efetiva ──
 //
 // IDEMPOTENTE por construcao: registrarOptout nao duplica nem sobrescreve a data original, e
 // a tela abaixo e a MESMA quando o pedido acabou de ser criado e quando ja existia — para o
 // titular os dois desfechos sao "estou fora", e o estado do nosso banco nao e assunto dele.
-router.post('/descadastro/whatsapp', (req, res) => {
+router.post(CAMINHO_DESCADASTRO_WHATSAPP, (req, res) => {
   const b = req.body || {};
   // Revalidacao COMPLETA, do zero. O formulario e dado externo como qualquer outro: o fato
   // de o GET ter validado antes nao prova nada sobre este POST.
@@ -1705,7 +1719,7 @@ router.post('/descadastro/whatsapp', (req, res) => {
           : 'Você não vai mais receber divulgação de vagas por WhatsApp.'
       }</p>
       ${ehTotal ? '' : NOTA_ESCOPO_WHATSAPP}
-      <form method="POST" action="/descadastro/whatsapp/desfazer" class="vm-acoes" style="width:100%">
+      <form method="POST" action="${CAMINHO_DESCADASTRO_WHATSAPP}/desfazer" class="vm-acoes" style="width:100%">
         <input type="hidden" name="token" value="${token}">
         <button type="submit" class="vm-btn">Desfazer</button>
       </form>
@@ -1714,12 +1728,12 @@ router.post('/descadastro/whatsapp', (req, res) => {
   res.send(pagina({ titulo: 'Descadastro concluído', tema: 'claro', semRastreio: true, conteudo }));
 });
 
-// ── POST /descadastro/whatsapp/desfazer ── revoga, pelo mesmo token ──
+// ── POST /descadastro-whatsapp/desfazer ── revoga, pelo mesmo token ──
 //
 // A revogacao aqui e o UNICO caminho automatico que desfaz um opt-out — e ele exige um
 // clique explicito de quem tem o link. Candidatura nova NUNCA revoga nada (P2); ver o
 // cabecalho de lib/optoutWhatsapp.js.
-router.post('/descadastro/whatsapp/desfazer', (req, res) => {
+router.post(`${CAMINHO_DESCADASTRO_WHATSAPP}/desfazer`, (req, res) => {
   const canonico = lerTokenDescadastroWhatsapp((req.body || {}).token);
   if (!canonico) return avisoLinkWhatsappInvalido(res);
 

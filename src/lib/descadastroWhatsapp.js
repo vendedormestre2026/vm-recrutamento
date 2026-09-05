@@ -66,6 +66,36 @@ const crypto = require('node:crypto');
 const { config } = require('../config');
 const { chaveCanonicaTelefone } = require('./chaveTelefone');
 
+// ══════════════════════════════════════════════════════════════
+// O CAMINHO DA PAGINA — /descadastro-whatsapp/<token>
+// ══════════════════════════════════════════════════════════════
+//
+// IRMAO de /descadastro (o descadastro por E-MAIL), e nao FILHO dele. A primeira versao
+// morava em /descadastro/<token>, aninhado sob o caminho do e-mail, e isso era ambiguo de
+// tres formas — todas confirmadas por sondagem das rotas de verdade:
+//
+//   1. GET /descadastro/whatsapp devolvia 404 (caia no :token com o valor "whatsapp"),
+//      enquanto POST /descadastro/whatsapp EFETIVAVA o opt-out. A mesma URL significava
+//      coisas diferentes conforme o metodo.
+//   2. `/descadastro/:token` e um curinga que engole QUALQUER sub-caminho novo sob
+//      /descadastro/. Uma rota literal acrescentada depois dele ao fluxo de e-mail nasceria
+//      morta, e o sintoma seria um 404 que ninguem associa a este arquivo.
+//   3. Dois subsistemas de opt-out, com esquemas de token diferentes e chaves diferentes,
+//      compartilhando prefixo — a leitura de "de quem e esta URL?" dependia de contar
+//      segmentos.
+//
+// Agora os dois sao irmaos e nao ha sobreposicao nenhuma: /descadastro e do e-mail,
+// /descadastro-whatsapp e do WhatsApp, e o Express casa segmento literal, entao um nunca
+// alcanca o outro.
+//
+// ── ESTE VALOR VAI PARA DENTRO DE UM TEMPLATE APROVADO PELA META ──
+// A URL base e cadastrada no botao do template, e a Meta so aprova o PADRAO. Mudar este
+// caminho depois de um template aprovado exige RESUBMISSAO e nova revisao — e, se ja houver
+// mensagem enviada, quebra os links que estao no aparelho das pessoas. Foi por isso que a
+// mudanca aconteceu ANTES do primeiro cadastro na Meta, quando ela ainda custava zero.
+// NAO altere sem reler docs/template-opt-out-meta.md.
+const CAMINHO_DESCADASTRO_WHATSAPP = '/descadastro-whatsapp';
+
 // Prefixo de dominio do HMAC — ver "O PREFIXO DE DOMINIO CONTINUA" no cabecalho. Com chaves
 // separadas ele deixou de ser a unica barreira contra um token de e-mail valer aqui, mas
 // continua sendo a defesa que sobrevive a alguem apontar as duas variaveis para o mesmo
@@ -212,10 +242,11 @@ function lerTokenDescadastroWhatsapp(token) {
 // LANCA pelas mesmas razoes de gerarTokenDescadastroWhatsapp (falha cedo, antes do envio).
 function montarUrlDescadastroWhatsapp(telefone, baseUrl) {
   const base = String(baseUrl || config.baseUrl || '').replace(/\/+$/, '');
-  return `${base}/descadastro/${gerarTokenDescadastroWhatsapp(telefone)}`;
+  return `${base}${CAMINHO_DESCADASTRO_WHATSAPP}/${gerarTokenDescadastroWhatsapp(telefone)}`;
 }
 
 module.exports = {
+  CAMINHO_DESCADASTRO_WHATSAPP,
   DOMINIO_HMAC,
   VERSAO,
   TAMANHO_HMAC,
