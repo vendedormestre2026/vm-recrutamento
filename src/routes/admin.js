@@ -55,6 +55,7 @@ const { criarRouterWhatsapp } = require('./admin_whatsapp');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
 const campanhaWhatsapp = require('../lib/campanhaWhatsapp');
 const optoutWhatsapp = require('../lib/optoutWhatsapp');
+const { criarRouterOptout, seloOptout, botaoMarcarOptout } = require('./admin_optout');
 const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
@@ -714,6 +715,12 @@ function selectStatusRecrutadorLinha(c) {
 // JSON da config e no value do checkbox; `rotulo` e o <th>; `celula(c)` monta o conteudo
 // da <td> a partir da linha da listagem.
 //
+// `celula(c, ctx)` — o SEGUNDO parametro e opcional e foi acrescentado pelo Incremento 3
+// (opt-out). Ele carrega o que a coluna precisa saber sobre o REQUEST inteiro, e nao sobre
+// a linha: hoje o mapa de opt-outs ativos (carregado uma vez, para a coluna nao fazer uma
+// consulta por linha) e a URL atual (para o POST voltar para a mesma pagina e filtros).
+// Toda coluna anterior ignora o segundo argumento e renderiza exatamente como antes.
+//
 // NAO entram aqui as colunas FIXAS (checkbox de selecao, Nome e Acao/"Ver relatorio"):
 // elas sempre aparecem e nao sao togglaveis.
 //
@@ -732,6 +739,26 @@ const COLUNAS_CANDIDATOS = [
         telefone: c.telefone,
         contatadoEm: c.contatado_whatsapp_em,
       })}`,
+  },
+  {
+    chave: 'optout',
+    rotulo: 'Opt-out',
+    // ── ACAO DE 1 CLIQUE (Incremento 3) ──
+    // Existe para o gesto que acontece de verdade hoje: o Jean ve o pedido no Live Chat do
+    // Central Whats e precisa registra-lo sem sair da listagem. Um clique, escopo `campanha`
+    // (o pedido real das pessoas), confirmacao antes de gravar, e volta para a MESMA pagina
+    // e filtros — marcar alguem na pagina 4 nao pode jogar o operador de volta na pagina 1.
+    celula: (c, ctx) =>
+      botaoMarcarOptout(
+        {
+          telefone: c.telefone,
+          redirect: (ctx && ctx.urlAtual) || '/admin',
+          jaTemOptout: Boolean(
+            ctx && ctx.mapaOptout && ctx.mapaOptout.get(optoutWhatsapp.chaveCanonicaTelefone(c.telefone) || ''),
+          ),
+        },
+        { escapeHtml },
+      ),
   },
   { chave: 'email', rotulo: 'E-mail', celula: (c) => escapeHtml(c.email || '—') },
   {
@@ -786,6 +813,10 @@ const CHAVE_COLUNAS_CANDIDATOS = 'admin_colunas_candidatos';
 // configuracoes, a lista renderiza exatamente como renderizava.
 const COLUNAS_CANDIDATOS_PADRAO = [
   'telefone',
+  // Acrescentada no Incremento 3 (opt-out). Entra no PADRAO, e nao so na lista de colunas
+  // disponiveis: uma acao que so aparece depois de alguem descobrir o painel "Colunas" nao
+  // e uma acao de 1 clique. Instalacoes que ja tem preferencia salva nao mudam.
+  'optout',
   'vaga',
   'status',
   'status_ia',
@@ -837,6 +868,21 @@ function sanearBusca(valor) {
 }
 
 // ── GET /admin ── lista de candidatos (com filtros por status, data e busca, via query string) ──
+// URL da listagem SEM os parametros vazios. Usada como destino de volta das acoes de linha
+// (hoje o botao de opt-out): preserva filtros e pagina, mas trata `/admin?q=` como `/admin`
+// — que e o que eles sao. Ver o uso em ctxColunas, logo abaixo.
+function urlCanonicaDaListagem(req) {
+  const params = new URLSearchParams();
+  for (const [chave, valor] of Object.entries(req.query || {})) {
+    // APARADO antes de decidir se e vazio: a propria listagem trata `?q=   ` como "sem
+    // busca" (sanearBusca), entao a URL canonica precisa concordar com ela.
+    const texto = String((Array.isArray(valor) ? valor[0] : valor) ?? '').trim();
+    if (texto !== '') params.set(chave, texto);
+  }
+  const qs = params.toString();
+  return qs ? `/admin?${qs}` : '/admin';
+}
+
 router.get('/', (req, res) => {
   const q = req.query || {};
   // Saneamento: status so vale se for um dos valores conhecidos; datas no formato YYYY-MM-DD.
@@ -904,6 +950,20 @@ router.get('/', (req, res) => {
   // colunas, nenhuma consulta extra acontece.
   const precisaAplicacao = colunas.some((col) => col.exigeAplicacao);
 
+  // Contexto de REQUEST das colunas (ver o comentario de `celula` em COLUNAS_CANDIDATOS).
+  // O mapa e lido do banco CRU (db.mapaWhatsappOptoutAtivo, e nao o helper que respeita o
+  // kill-switch): a coluna mostra o que esta REGISTRADO, e um interruptor desligado nao
+  // apaga o registro — esconder o selo ali faria o painel mentir sobre o proprio estado.
+  //
+  // `urlAtual` e a URL CANONICA (parametros vazios descartados), e nao req.originalUrl cru.
+  // Duas razoes, e as duas importam: `/admin` e `/admin?q=` sao a MESMA tela e precisam
+  // render identico (ha teste que compara os dois byte a byte, em busca-candidatos.test);
+  // e o destino do redirect fica mais curto e legivel no HTML de cada linha.
+  const ctxColunas = {
+    mapaOptout: db.mapaWhatsappOptoutAtivo(),
+    urlAtual: urlCanonicaDaListagem(req),
+  };
+
   const linhas = candidatos
     .map((c) => {
       const podeVerRelatorio = c.status === 'concluido' && c.report_interview_id != null;
@@ -913,7 +973,7 @@ router.get('/', (req, res) => {
       // A linha da listagem tem precedencia (traz os campos derivados: vaga_titulo,
       // video_url, report_interview_id); a aplicacao so preenche o que falta.
       const dados = precisaAplicacao ? { ...(db.obterAplicacao(c.id) || {}), ...c } : c;
-      const celulas = colunas.map((col) => `<td>${col.celula(dados)}</td>`).join('');
+      const celulas = colunas.map((col) => `<td>${col.celula(dados, ctxColunas)}</td>`).join('');
       // Arquivado: so aparece nos modos 'arquivados'/'todos' (no modo padrao a query ja
       // filtrou). Distingue por DOIS sinais reusando CSS existente — linha esmaecida
       // (.linha-zero) e chip cinza (.badge--encerrada) —, para nao depender so da cor.
@@ -1161,6 +1221,7 @@ router.get('/', (req, res) => {
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
         <a class="btn btn--ghost" href="/admin/talentos">Banco de talentos</a>
         <a class="btn btn--ghost" href="/admin/divulgacao-vagas">Divulgação de Vagas</a>
+        <a class="btn btn--ghost" href="/admin/optouts">Opt-outs</a>
         <a class="btn btn--ghost" href="/admin/config">Configurações</a>
       </div>
     </div>
@@ -1532,9 +1593,32 @@ router.get('/candidato/:id', (req, res) => {
       `${situacaoVideo.confirmado ? 'Revisar confirmação do vídeo' : 'Marcar vídeo recebido'}</a>`
     : `<button type="button" class="btn btn--off" disabled title="O WA2 ainda não foi enviado para este candidato.">Marcar vídeo recebido</button>`;
 
+  // ── SELO DE OPT-OUT (Incremento 3) ──
+  // Aparece na ficha SEMPRE que houver opt-out ativo, com escopo, origem e data — as tres
+  // coisas que o recrutador precisa saber antes de decidir se manda alguma mensagem para
+  // esta pessoa. Consulta CRUA (nao passa pelo kill-switch): o selo informa o que esta
+  // REGISTRADO, e um interruptor desligado nao apaga o pedido de ninguem.
+  const optoutDoCandidato = db.obterWhatsappOptout(cand.telefone);
+  const seloOptoutHtml = seloOptout(optoutDoCandidato, { escapeHtml, formatarDataHora });
+
+  // Marcar (1 clique) ou revogar, direto da ficha. `redirect` volta para esta mesma ficha.
+  const acaoOptout = optoutDoCandidato
+    ? `<form method="POST" action="/admin/optouts/revogar" style="margin:0;display:inline;"
+             data-confirm="Revogar o opt-out deste número? Ele volta a receber campanhas de divulgação."
+             data-confirm-titulo="Revogar opt-out?" data-confirm-texto="Revogar">
+         <input type="hidden" name="telefone" value="${escapeHtml(String(cand.telefone || ''))}">
+         <input type="hidden" name="redirect" value="/admin/candidato/${cand.id}">
+         <button type="submit" class="btn btn--ghost">Revogar opt-out</button>
+       </form>`
+    : botaoMarcarOptout(
+        { telefone: cand.telefone, redirect: `/admin/candidato/${cand.id}`, jaTemOptout: false },
+        { escapeHtml },
+      );
+
   const blocoSequenciaWa = `
     <section class="rel-sec">
       <h2>Sequência de WhatsApp</h2>
+      ${seloOptoutHtml}
       <dl class="rel-id">
         ${linhaEtapa('WA1 (imediato)', wa1)}
         ${linhaEtapa('WA2 (+' + sequenciaWhatsapp.WA2_ATRASO_MINUTOS + 'min, pede vídeo)', wa2)}
@@ -1615,6 +1699,7 @@ router.get('/candidato/:id', (req, res) => {
         ${botaoRelatorio}
         ${botaoReprocessar}
         ${botaoVideo}
+        ${acaoOptout}
         ${botaoArquivarRestaurar}
       </div>
     </section>`;
@@ -5578,6 +5663,9 @@ router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmt
 // cima, igual as demais telas do painel.
 router.use('/whatsapp', criarRouterWhatsapp({ paginaAdmin, escapeHtml }));
 router.use('/campanhas-whatsapp', criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBusca }));
+// Opt-outs de WhatsApp. Mesmo mount protegido das telas acima — ver o comentario da
+// Promocao de Vagas sobre o que acontece se esta linha subir para antes do adminAuth.
+router.use('/optouts', criarRouterOptout({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }));
 
 // ── ROTULO_STATUS_CAMPANHA_EMAIL_RESUMO / linhaResumoWhatsapp: badges replicados, nao
 // importados ──
