@@ -13,7 +13,8 @@ const path = require('node:path');
 process.env.DATABASE_PATH = path.join(os.tmpdir(), `vm-test-desc-wa-${process.pid}-${Date.now()}.db`);
 process.env.INTERVIEW_MOCK = 'true';
 process.env.SESSION_SECRET = 'segredo-de-teste';
-process.env.DESCADASTRO_SECRET = 'segredo-hmac-de-teste';
+process.env.DESCADASTRO_SECRET = 'segredo-do-email-de-teste';
+process.env.OPTOUT_TOKEN_SECRET = 'segredo-do-whatsapp-de-teste';
 process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
@@ -100,19 +101,69 @@ test('token: versao desconhecida e recusada, nunca interpretada', () => {
   assert.equal(lerTokenDescadastroWhatsapp(`${corpo}.${'a'.repeat(32)}`), null);
 });
 
-test('token de E-MAIL nao vale como token de WhatsApp (separacao de dominio)', () => {
-  // Os dois esquemas usam o MESMO segredo; o que os separa e o prefixo de dominio do HMAC.
+test('token de E-MAIL nao vale como token de WhatsApp', () => {
+  // Duas barreiras independentes: chaves diferentes E prefixo de dominio no HMAC.
   const tokenEmail = descadastroEmail.gerarToken('pessoa@exemplo.com');
   const corpo = Buffer.from('v1:554799582500', 'utf8').toString('base64url');
   assert.equal(lerTokenDescadastroWhatsapp(`${corpo}.${tokenEmail}`), null);
 });
 
+test('token de WHATSAPP nao vale como token de e-mail', () => {
+  // O caminho inverso, que o teste acima nao cobria. verificarToken do e-mail recebe o
+  // hmac do WhatsApp e precisa recusar.
+  const tokenWa = gerarTokenDescadastroWhatsapp('5547999582500').split('.')[1];
+  assert.equal(descadastroEmail.verificarToken('pessoa@exemplo.com', tokenWa), false);
+});
+
+test('as duas chaves sao INDEPENDENTES: trocar a do e-mail nao invalida token de WhatsApp', () => {
+  const token = gerarTokenDescadastroWhatsapp('5547999582500');
+  const antigoEmail = config.descadastro.segredo;
+  config.descadastro.segredo = 'outro-segredo-de-email';
+  try {
+    assert.equal(
+      lerTokenDescadastroWhatsapp(token),
+      '554799582500',
+      'rotacionar o segredo do e-mail nao pode tocar nos links de WhatsApp',
+    );
+  } finally {
+    config.descadastro.segredo = antigoEmail;
+  }
+});
+
+test('e o inverso: trocar a chave do WhatsApp nao invalida token de e-mail', () => {
+  const email = 'pessoa@exemplo.com';
+  const tokenEmail = descadastroEmail.gerarToken(email);
+  const antigoWa = config.optoutToken.segredo;
+  config.optoutToken.segredo = 'outro-segredo-de-whatsapp';
+  try {
+    assert.equal(descadastroEmail.verificarToken(email, tokenEmail), true);
+  } finally {
+    config.optoutToken.segredo = antigoWa;
+  }
+});
+
+test('mesmo com as duas variaveis apontando para o MESMO valor, os esquemas nao se cruzam', () => {
+  // Cenario de copia-e-cola: o prefixo de dominio do HMAC e o que sobra como defesa.
+  const antigoWa = config.optoutToken.segredo;
+  config.optoutToken.segredo = config.descadastro.segredo;
+  try {
+    const tokenEmail = descadastroEmail.gerarToken('pessoa@exemplo.com');
+    const corpo = Buffer.from('v1:554799582500', 'utf8').toString('base64url');
+    assert.equal(lerTokenDescadastroWhatsapp(`${corpo}.${tokenEmail}`), null);
+
+    const tokenWa = gerarTokenDescadastroWhatsapp('5547999582500').split('.')[1];
+    assert.equal(descadastroEmail.verificarToken('pessoa@exemplo.com', tokenWa), false);
+  } finally {
+    config.optoutToken.segredo = antigoWa;
+  }
+});
+
 test('token: rotacao de segredo mantem os links ja enviados validos', () => {
-  const antigo = config.descadastro.segredo;
+  const antigo = config.optoutToken.segredo;
   const token = gerarTokenDescadastroWhatsapp('5547999582500');
 
-  config.descadastro.segredoAnterior = antigo;
-  config.descadastro.segredo = 'segredo-novo-de-teste';
+  config.optoutToken.segredoAnterior = antigo;
+  config.optoutToken.segredo = 'segredo-novo-de-teste';
   try {
     assert.equal(lerTokenDescadastroWhatsapp(token), '554799582500', 'link antigo continua valendo');
     // E o link NOVO usa a chave nova.
@@ -120,19 +171,39 @@ test('token: rotacao de segredo mantem os links ja enviados validos', () => {
     assert.notEqual(novo, token);
     assert.equal(lerTokenDescadastroWhatsapp(novo), '554799582500');
   } finally {
-    config.descadastro.segredo = antigo;
-    config.descadastro.segredoAnterior = '';
+    config.optoutToken.segredo = antigo;
+    config.optoutToken.segredoAnterior = '';
   }
 });
 
-test('token: sem segredo, gerar LANCA e ler devolve null', () => {
-  const antigo = config.descadastro.segredo;
-  config.descadastro.segredo = '';
+test('token: sem segredo, gerar LANCA e ler devolve null — e nada mais quebra', () => {
+  const antigo = config.optoutToken.segredo;
+  config.optoutToken.segredo = '';
   try {
-    assert.throws(() => gerarTokenDescadastroWhatsapp('5547999582500'), /DESCADASTRO_SECRET/);
+    assert.throws(() => gerarTokenDescadastroWhatsapp('5547999582500'), /OPTOUT_TOKEN_SECRET/);
     assert.equal(lerTokenDescadastroWhatsapp('YWJj.aaaa'), null);
+    // O descadastro por E-MAIL continua funcionando: as chaves sao independentes.
+    const email = 'pessoa@exemplo.com';
+    assert.equal(descadastroEmail.verificarToken(email, descadastroEmail.gerarToken(email)), true);
   } finally {
-    config.descadastro.segredo = antigo;
+    config.optoutToken.segredo = antigo;
+  }
+});
+
+test('sem segredo: o servidor sobe e as rotas publicas respondem 404, sem 500', async () => {
+  const antigo = config.optoutToken.segredo;
+  config.optoutToken.segredo = '';
+  try {
+    await comServidor(async (base) => {
+      zerar();
+      const res = await fetch(`${base}/descadastro/qualquer.coisa`);
+      assert.equal(res.status, 404, 'nunca 500');
+      const post = await postForm(base, '/descadastro/whatsapp', { token: 'x.y', escopo: 'campanha' });
+      assert.equal(post.status, 404);
+      assert.equal(contarOptouts(), 0);
+    });
+  } finally {
+    config.optoutToken.segredo = antigo;
   }
 });
 

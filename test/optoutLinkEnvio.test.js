@@ -11,7 +11,7 @@ const path = require('node:path');
 
 process.env.DATABASE_PATH = path.join(os.tmpdir(), `vm-test-optout-link-${process.pid}-${Date.now()}.db`);
 process.env.INTERVIEW_MOCK = 'true';
-process.env.DESCADASTRO_SECRET = 'segredo-hmac-de-teste';
+process.env.OPTOUT_TOKEN_SECRET = 'segredo-hmac-de-teste';
 process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
@@ -62,12 +62,12 @@ test('P6: falha ao montar o link NAO lanca e NAO devolve vazio', () => {
   assert.equal(optout.textoDescadastroPara('   '), optout.TEXTO_FALLBACK_DESCADASTRO);
 
   // Segredo ausente: tambem LANCA la dentro.
-  const antigo = config.descadastro.segredo;
-  config.descadastro.segredo = '';
+  const antigo = config.optoutToken.segredo;
+  config.optoutToken.segredo = '';
   try {
     assert.equal(optout.textoDescadastroPara('5547999582500'), optout.TEXTO_FALLBACK_DESCADASTRO);
   } finally {
-    config.descadastro.segredo = antigo;
+    config.optoutToken.segredo = antigo;
   }
 });
 
@@ -154,15 +154,15 @@ test('ciclo: link quebrado NAO aborta — a mensagem sai com o fallback', async 
   campanhaComVariavelDeDescadastro('5547999582502');
   db.definirConfigBool(optout.CHAVE_LINK_ATIVO, true);
 
-  const antigo = config.descadastro.segredo;
-  config.descadastro.segredo = ''; // quebra a geracao do token
+  const antigo = config.optoutToken.segredo;
+  config.optoutToken.segredo = ''; // quebra a geracao do token
   try {
     const { r, enviados } = await rodarCiclo();
     assert.equal(r.abortado, undefined, 'o ciclo NAO pode abortar por causa do link');
     assert.equal(r.enviados, 1, 'a mensagem sai mesmo assim');
     assert.equal(enviados[0].variaveis[3], optout.TEXTO_FALLBACK_DESCADASTRO);
   } finally {
-    config.descadastro.segredo = antigo;
+    config.optoutToken.segredo = antigo;
   }
 });
 

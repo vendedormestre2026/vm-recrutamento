@@ -8,27 +8,31 @@
 // normalizacao que nao se parecem.
 //
 // ══════════════════════════════════════════════════════════════
-// POR QUE REUSAR DESCADASTRO_SECRET, EM VEZ DE CRIAR UM ENV NOVO
+// CHAVE DEDICADA: OPTOUT_TOKEN_SECRET
 // ══════════════════════════════════════════════════════════════
 //
-// O enunciado previa criar OPTOUT_TOKEN_SECRET "se nao houver segredo reaproveitavel". Ha:
-// DESCADASTRO_SECRET ja existe, ja esta definido em producao, e ja vem com uma JANELA DE
-// ROTACAO pronta (DESCADASTRO_SECRET_ANTERIOR), que e a parte dificil de acertar e a que
-// mais custa caro se faltar — um link de opt-out quebrado e pior do que nao ter link.
+// A primeira versao deste modulo assinava com DESCADASTRO_SECRET, o segredo do descadastro
+// por e-mail, separando os dois esquemas por um prefixo de dominio no HMAC. O argumento era
+// que a variavel ja existia em producao e ja trazia a janela de rotacao pronta.
 //
-// Criar um env novo significaria: mais uma variavel para definir no Railway antes de o
-// deploy funcionar, e uma janela em que o codigo novo esta no ar e o segredo ainda nao, na
-// qual TODO link de descadastro emitido seria invalido. O ganho seria isolamento de chave
-// entre dois canais que ja pertencem ao mesmo dono e tem o mesmo nivel de sensibilidade.
+// ── POR QUE MUDOU ──
+// Aquele desenho ACOPLAVA A ROTACAO dos dois canais. Rotacionar por causa de um incidente no
+// e-mail derrubaria junto todos os links de WhatsApp ja enviados, e vice-versa; e como so
+// existe UM slot de segredo anterior, duas rotacoes seguidas invalidam os links mais antigos
+// dos dois canais de uma vez. Sao canais com volumes e ciclos de vida diferentes, e nao ha
+// razao de dominio para compartilharem destino.
 //
-// ── O ISOLAMENTO QUE IMPORTA VEM DA SEPARACAO DE DOMINIO, NAO DE OUTRA CHAVE ──
-// O HMAC daqui e calculado sobre uma string PREFIXADA (`optout-wa:v1:<canonico>`), enquanto
-// o de e-mail e calculado sobre o e-mail cru. Nao existe entrada que produza a mesma
-// mensagem nos dois esquemas, entao um token de e-mail NUNCA valida como token de telefone,
-// nem o contrario — que e a unica confusao que duas chaves separadas evitariam.
+// ── POR QUE A TROCA SAIU DE GRACA ──
+// Foi feita ANTES do primeiro envio. Nenhum token de WhatsApp jamais circulou: o link esta
+// atras de `optout_link_campanha_ativo`, que nasce desligado e depende de um template ainda
+// nao aprovado pela Meta (docs/template-opt-out-meta.md). Nao havia nada a preservar.
+// Depois da primeira campanha com link, a mesma migracao exigiria aceitar as duas chaves por
+// tempo indeterminado — a complexidade que a decisao original queria evitar.
 //
-// Quem quiser separar as chaves um dia: troque `segredos()` abaixo para ler as suas
-// proprias variaveis. O resto do modulo nao muda.
+// ── O PREFIXO DE DOMINIO CONTINUA ──
+// Com chaves separadas ele deixou de ser a unica barreira, mas continua sendo barato e
+// correto: um token so vale no esquema para o qual foi emitido, mesmo que alguem um dia
+// aponte as duas variaveis para o mesmo valor por engano de copia-e-cola.
 //
 // ══════════════════════════════════════════════════════════════
 // FORMATO DO TOKEN
@@ -62,9 +66,10 @@ const crypto = require('node:crypto');
 const { config } = require('../config');
 const { chaveCanonicaTelefone } = require('./chaveTelefone');
 
-// Prefixo de dominio do HMAC. Ver o bloco sobre reuso de segredo, acima: e ELE que impede um
-// token de e-mail de valer como token de telefone. NAO mude sem invalidar todos os links ja
-// enviados.
+// Prefixo de dominio do HMAC — ver "O PREFIXO DE DOMINIO CONTINUA" no cabecalho. Com chaves
+// separadas ele deixou de ser a unica barreira contra um token de e-mail valer aqui, mas
+// continua sendo a defesa que sobrevive a alguem apontar as duas variaveis para o mesmo
+// valor. NAO mude sem invalidar todos os links ja enviados.
 const DOMINIO_HMAC = 'optout-wa';
 
 // Versao do payload. Sobe quando o FORMATO mudar, nunca por mudanca de texto de pagina.
@@ -78,10 +83,15 @@ const TAMANHO_HMAC = 32;
 // Lidos a CADA chamada (nao capturados no load do modulo) para o teste conseguir simular
 // rotacao e ausencia de segredo sem recarregar o cache de modulos. Mesma disciplina de
 // lib/descadastro.js.
+//
+// `config.optoutToken`, e NUNCA `config.descadastro`: sao chaves separadas desde a migracao
+// descrita no cabecalho. Nao ha fallback de uma para a outra de proposito — um fallback
+// silencioso faria os links funcionarem hoje com a chave do e-mail e quebrarem no dia em que
+// OPTOUT_TOKEN_SECRET fosse definida, invalidando todo token ja enviado.
 function segredos() {
   return {
-    atual: config.descadastro.segredo || '',
-    anterior: config.descadastro.segredoAnterior || '',
+    atual: config.optoutToken.segredo || '',
+    anterior: config.optoutToken.segredoAnterior || '',
   };
 }
 
@@ -117,8 +127,14 @@ function iguais(esperado, recebido) {
 //
 // LANCA quando o telefone nao canoniza ou quando o segredo falta. Falhar aqui e barulhento e
 // corrigivel; um token gerado com segredo improvisado iria para dentro de uma mensagem que
-// nao da para reemitir. Quem chama no caminho de ENVIO precisa tratar isso — ver P6 e o
-// fallback textual em lib/campanhaWhatsapp.
+// nao da para reemitir.
+//
+// ── LANCAR AQUI NAO DERRUBA NADA, E ESSA E A PARTE QUE IMPORTA ──
+// O UNICO chamador no caminho de envio e lib/optoutWhatsapp.textoDescadastroPara, que
+// captura, LOGA e devolve a linha de texto de fallback — a mensagem sai sem link em vez de
+// nao sair. O servidor tambem nunca cai por isto: `validar()` (config.js) so AVISA no boot,
+// e as rotas publicas chamam lerTokenDescadastroWhatsapp, que nunca lanca. Ver P6 no
+// cabecalho de lib/optoutWhatsapp.js.
 function gerarTokenDescadastroWhatsapp(telefone) {
   const canonico = chaveCanonicaTelefone(telefone);
   if (!canonico) {
@@ -127,8 +143,9 @@ function gerarTokenDescadastroWhatsapp(telefone) {
   const { atual } = segredos();
   if (!atual) {
     throw new Error(
-      'DESCADASTRO_SECRET ausente. Defina a variavel no .env antes de gerar links de ' +
-        'descadastro — sem ela, os links enviados nao poderiam ser validados depois.',
+      'OPTOUT_TOKEN_SECRET ausente. Defina a variavel no .env antes de gerar links de ' +
+        'descadastro por WhatsApp — sem ela, os links enviados nao poderiam ser validados ' +
+        'depois. Gere com `openssl rand -hex 32`.',
     );
   }
   const payload = `${VERSAO}:${canonico}`;
@@ -142,10 +159,13 @@ function gerarTokenDescadastroWhatsapp(telefone) {
 // chama e uma rota publica, e uma excecao ali viraria 500 numa pagina que deveria
 // simplesmente dizer "link invalido".
 //
-// Aceita o segredo ATUAL ou o ANTERIOR, pela mesma razao do link de e-mail: sem a janela de
-// dois segredos, trocar a chave invalidaria de uma vez TODOS os links de descadastro ja
-// enviados, e quem nao consegue sair de uma lista denuncia a mensagem — que no WhatsApp
-// custa o numero, nao a reputacao de um dominio.
+// Aceita OPTOUT_TOKEN_SECRET ou OPTOUT_TOKEN_SECRET_ANTERIOR, pela mesma razao do link de
+// e-mail: sem a janela de dois segredos, trocar a chave invalidaria de uma vez TODOS os
+// links de descadastro ja enviados, e quem nao consegue sair de uma lista denuncia a
+// mensagem — que no WhatsApp custa o numero, nao a reputacao de um dominio.
+//
+// Procedimento de rotacao (documentado tambem no .env.example): mover o valor atual para
+// OPTOUT_TOKEN_SECRET_ANTERIOR, por o novo em OPTOUT_TOKEN_SECRET, reiniciar.
 function lerTokenDescadastroWhatsapp(token) {
   if (typeof token !== 'string' || !token) return null;
 

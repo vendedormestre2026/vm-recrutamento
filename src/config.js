@@ -81,6 +81,40 @@ const config = {
     segredoAnterior: process.env.DESCADASTRO_SECRET_ANTERIOR || '',
   },
 
+  // Opt-out de WhatsApp — segredo do HMAC que assina os links de /descadastro/:token.
+  //
+  // ── CHAVE DEDICADA, E NAO DESCADASTRO_SECRET ──
+  // A primeira versao reaproveitava o segredo do e-mail, com separacao de dominio dentro do
+  // HMAC. Funcionava, mas ACOPLAVA A ROTACAO: trocar a chave por causa de um incidente no
+  // e-mail derrubaria junto os links de WhatsApp ja enviados, e vice-versa. Sao canais com
+  // volumes e ciclos de vida diferentes, e nao ha razao de dominio para compartilharem
+  // destino.
+  //
+  // A troca saiu de graca porque foi feita ANTES do primeiro envio: nenhum token de WhatsApp
+  // jamais circulou (o link esta atras de `optout_link_campanha_ativo`, que nasce desligado
+  // e depende de um template ainda nao aprovado pela Meta). Depois da primeira campanha com
+  // link, a mesma migracao exigiria aceitar as duas chaves por tempo indeterminado.
+  //
+  // ── SEM FALLBACK PARA DESCADASTRO_SECRET, de proposito ──
+  // Um fallback silencioso faria os links funcionarem hoje com a chave do e-mail e
+  // quebrarem no dia em que OPTOUT_TOKEN_SECRET fosse definida — todo token ja enviado
+  // viraria invalido. E o mesmo raciocinio que o bloco acima aplica a SESSION_SECRET.
+  //
+  // ── A AUSENCIA AQUI E MAIS BRANDA QUE NO E-MAIL ──
+  // La, gerar link falha ANTES do disparo e o e-mail nao sai. Aqui, quem monta o valor da
+  // variavel de template (lib/optoutWhatsapp.textoDescadastroPara) captura a falha e devolve
+  // a linha de texto de fallback ("Para não receber mais, responda SAIR"), entao a MENSAGEM
+  // SAI do mesmo jeito, sem link. Ver P6 no cabecalho de lib/optoutWhatsapp.js. `validar()`
+  // avisa no boot para a ausencia nao passar despercebida.
+  //
+  // `segredoAnterior` e a janela de rotacao, mesmo contrato do descadastro por e-mail:
+  // mover o valor atual para OPTOUT_TOKEN_SECRET_ANTERIOR, por o novo em OPTOUT_TOKEN_SECRET,
+  // reiniciar. Links antigos seguem validos indefinidamente.
+  optoutToken: {
+    segredo: process.env.OPTOUT_TOKEN_SECRET || '',
+    segredoAnterior: process.env.OPTOUT_TOKEN_SECRET_ANTERIOR || '',
+  },
+
   agente: {
     nome: process.env.AGENT_NAME || 'Vera',
   },
@@ -337,6 +371,24 @@ function validar() {
   // sentido para quem de fato vai enviar pelo ZeptoMail, e um default diferente do real
   // faria este bloco avisar sobre um transporte que ninguem selecionou — ou, pior, calar
   // sobre o que esta selecionado.
+  // ── OPTOUT_TOKEN_SECRET ausente: aviso, nunca gate ──
+  //
+  // O efeito de faltar e PARCIAL e silencioso, que e o que justifica o aviso: a campanha
+  // continua saindo (o valor da variavel cai na linha de texto de fallback), so que sem o
+  // link clicavel. Ninguem percebe pelo comportamento — as mensagens saem, o ciclo nao
+  // aborta, e a unica pista e um console.warn por destinatario.
+  //
+  // So avisa quando o link esta LIGADO seria melhor, mas `validar()` roda no boot e nao tem
+  // banco disponivel para ler o kill-switch. Avisar sempre e barato; calar seria o modo de
+  // falha caro.
+  if (!config.optoutToken.segredo) {
+    avisos.push(
+      'OPTOUT_TOKEN_SECRET nao definido. Os links de descadastro por WhatsApp nao serao ' +
+        'gerados: as campanhas continuam saindo, mas com a linha de texto de fallback no ' +
+        'lugar do link. Gere com `openssl rand -hex 32`.',
+    );
+  }
+
   const transacionalZepto = (process.env.EMAIL_TRANSPORTE || 'resend') === 'zeptomail';
   const campanhaZepto = (process.env.EMAIL_CAMPANHA_TRANSPORTE || 'api') === 'zeptomail';
   if ((transacionalZepto || campanhaZepto) && !config.provedores.zeptomail.token) {
