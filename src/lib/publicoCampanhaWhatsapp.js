@@ -194,12 +194,20 @@ function aplicarInvariantes(pessoas, deps = {}) {
   // listarPublicoStatusCandidatura mais abaixo.
   const mapaOptout = optout.mapaOptoutAtivo({ db });
 
-  return pessoas.filter((p) => {
+  // Contador de suprimidos por materializacao (Incremento 7). Sem ele, uma campanha que sai
+  // menor que a previa nao tem explicacao em lugar nenhum — e "o publico encolheu" e a
+  // primeira coisa que alguem nota e a ultima que consegue justificar.
+  let suprimidosOptout = 0;
+
+  const filtradas = pessoas.filter((p) => {
     if (optOut.has(p.telefone)) return false;
     // A tabela ANTIGA (whatsapp_opt_out, linha acima) continua valendo junto com a nova. Uma
     // supressao a mais nunca e risco; deixar de ler a antiga poderia ressuscitar alguem que
     // pediu para sair antes desta feature existir.
-    if (optout.optoutAtivoNoMapa(mapaOptout, p.telefone, optout.CONSULTA_CAMPANHA)) return false;
+    if (optout.optoutAtivoNoMapa(mapaOptout, p.telefone, optout.CONSULTA_CAMPANHA)) {
+      suprimidosOptout += 1;
+      return false;
+    }
     // Suprimido por aprovacao (ETAPA B, Incremento B6): mesma logica do Incremento B1/B5,
     // agora batida em lote — ver o comentario acima.
     if (statusPorTelefone.get(p.telefone) === 'aprovado') return false;
@@ -211,6 +219,14 @@ function aplicarInvariantes(pessoas, deps = {}) {
     p.cidadesUteis = new Set(cidades);
     return true;
   });
+
+  if (suprimidosOptout) {
+    console.log(
+      `[campanha-wa] publico: ${suprimidosOptout} pessoa(s) suprimida(s) por opt-out de ` +
+        `campanha; ${filtradas.length} restante(s).`,
+    );
+  }
+  return filtradas;
 }
 
 // Formata a saida. `cidade` e UMA praca — a primeira em ordem alfabetica quando a pessoa tem

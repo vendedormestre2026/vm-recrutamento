@@ -182,9 +182,25 @@ async function listarPendentesPorCidade(cidade, deps = {}) {
   // Depois do merge, como o filtro de ja-enviados e pela mesma razao: a chave e o telefone
   // normalizado, que so existe depois do merge.
   const mapaOptout = optout.mapaOptoutAtivo({ db });
-  const restantes = [...porTelefone.values()].filter(
-    (p) => !jaEnviados.has(p.telefone) && !optout.optoutAtivoNoMapa(mapaOptout, p.telefone, optout.CONSULTA_CAMPANHA),
-  );
+  // Contado a parte de `jaEnviados` de proposito (Incremento 7): "a fila veio menor do que eu
+  // esperava" e uma pergunta que alguem faz, e sem este numero a unica resposta possivel
+  // seria "nao sei". Suprimido por opt-out e um desfecho diferente de "ja recebeu", e o log
+  // e o unico lugar onde a diferenca aparece — estes registros nao entram em tela nenhuma.
+  let suprimidos = 0;
+  const restantes = [...porTelefone.values()].filter((p) => {
+    if (jaEnviados.has(p.telefone)) return false;
+    if (optout.optoutAtivoNoMapa(mapaOptout, p.telefone, optout.CONSULTA_CAMPANHA)) {
+      suprimidos += 1;
+      return false;
+    }
+    return true;
+  });
+  if (suprimidos) {
+    console.log(
+      `[disparo-wpp] ${praca}: ${suprimidos} pessoa(s) suprimida(s) por opt-out de campanha; ` +
+        `${restantes.length} na fila.`,
+    );
+  }
 
   // ── 4. EXISTENCIA REAL (Incremento 4) ──
   // UMA chamada de rede pra toda a leva (onWhatsAppLote monta uma USyncQuery so), no mesmo
