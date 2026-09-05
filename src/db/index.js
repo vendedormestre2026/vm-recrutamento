@@ -219,4 +219,17 @@ module.exports = {
   registrarOptOutWhatsapp: driver.registrarOptOutWhatsapp,
   estaOptOutWhatsapp: driver.estaOptOutWhatsapp,
 
+  // ── Opt-out COM ESCOPO (tabela whatsapp_optout) ──
+  // Sucessor das duas linhas acima, que continuam expostas porque a tabela antiga continua
+  // sendo lida pelos motores. Ver a secao homonima em db/sqlite.js.
+  registrarWhatsappOptout: driver.registrarWhatsappOptout,
+  estaWhatsappOptout: driver.estaWhatsappOptout,
+  mapaWhatsappOptoutAtivo: driver.mapaWhatsappOptoutAtivo,
+  revogarWhatsappOptout: driver.revogarWhatsappOptout,
+  obterWhatsappOptout: driver.obterWhatsappOptout,
+  listarWhatsappOptouts: driver.listarWhatsappOptouts,
+  resumoWhatsappOptouts: driver.resumoWhatsappOptouts,
+  ESCOPOS_OPTOUT: driver.ESCOPOS_OPTOUT,
+  ORIGENS_OPTOUT: driver.ORIGENS_OPTOUT,
+  OPTOUTS_POR_PAGINA: driver.OPTOUTS_POR_PAGINA,
 };

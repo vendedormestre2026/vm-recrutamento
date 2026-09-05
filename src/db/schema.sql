@@ -732,3 +732,62 @@ CREATE TABLE IF NOT EXISTS whatsapp_opt_out (
   origem    TEXT,                     -- 'resposta_webhook' | 'manual'
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ──────────────────────────────────────────────────────────────
+-- Opt-out de WhatsApp COM ESCOPO — sucessor de whatsapp_opt_out
+-- ──────────────────────────────────────────────────────────────
+--
+-- ── POR QUE UMA TABELA NOVA, E NAO COLUNAS EM whatsapp_opt_out ──
+-- A tabela antiga tem o TELEFONE como PRIMARY KEY, e e exatamente essa escolha que precisa
+-- mudar: a identidade de supressao nao pode ser o numero como ele foi gravado, porque a
+-- MESMA pessoa aparece na base com e sem o nono digito (7 casos reais em producao, 14
+-- numeros distintos). Trocar a PK de uma tabela no SQLite exige recriar a tabela; criar a
+-- nova ao lado nao exige nada e deixa a antiga intacta para quem ainda a le.
+--
+-- As duas convivem de proposito. whatsapp_opt_out continua sendo consultada pelos motores
+-- (uma supressao a mais nunca e um risco), e esta tabela e a fonte nova. Nao ha migracao de
+-- dados porque a antiga esta VAZIA em producao (conferido 2026-09-05, leitura via railway
+-- ssh) — o unico caminho que escrevia nela e o webhook da Meta, dormente desde a troca para
+-- o Central Whats.
+--
+-- ── ESCOPO E O CAMPO QUE FALTAVA ──
+--   'campanha'  suprime SO divulgacao/convite — mensagem que nos iniciamos, nao solicitada.
+--               E o default de todo opt-out automatico (link, resposta, botao).
+--   'total'     suprime tambem o transacional (WA1/WA2, resultado de candidatura), que e
+--               consequencia direta de um ato recente da propria pessoa.
+--
+-- Quem pede "nao me mandem mais" quase sempre quer dizer "parem de me oferecer vagas", e
+-- nao "me ignorem se eu me candidatar de novo". Suprimir o transacional por engano trava o
+-- processo seletivo de quem se candidatou — por isso 'total' so nasce de escolha explicita.
+--
+-- ── revogado_em, E NAO DELETE ──
+-- Diferente de descadastros e de whatsapp_opt_out (onde desfazer e apagar a linha), aqui a
+-- revogacao e datada. A razao e a regra de negocio: candidatura nova NUNCA revoga opt-out
+-- automaticamente, e provar isso depois exige o historico — "esta pessoa pediu para sair em
+-- marco, candidatou-se em abril, e continuou fora das campanhas" e uma frase que so o
+-- registro datado sustenta.
+--
+-- NULL = ativo. E o unico predicado de "esta suprimido"; nao existe flag booleana paralela
+-- que um bug pudesse inverter em massa.
+CREATE TABLE IF NOT EXISTS whatsapp_optout (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- DDI + DDD + ULTIMOS 8 DIGITOS (ver chaveCanonicaTelefone em lib/chaveTelefone.js).
+  -- UNIQUE porque e a identidade da pessoa aqui: uma linha por numero, com ou sem o 9.
+  telefone_canonico TEXT NOT NULL UNIQUE,
+  -- O numero como ele chegou, so para auditoria/exibicao. NADA decide por esta coluna.
+  telefone_original TEXT,
+  escopo            TEXT NOT NULL DEFAULT 'campanha'
+                      CHECK (escopo IN ('campanha', 'total')),
+  origem            TEXT NOT NULL
+                      CHECK (origem IN ('link', 'resposta', 'botao', 'manual', 'importacao')),
+  motivo            TEXT,
+  criado_em         TEXT NOT NULL DEFAULT (datetime('now')),
+  -- NULL = opt-out ATIVO. Preenchida = revogado (a pessoa pediu para voltar, ou o
+  -- recrutador desfez). Reregistrar depois de revogar cria um opt-out NOVO, com data nova.
+  revogado_em       TEXT
+);
+
+-- Listagem do painel e o resumo de observabilidade (7 dias, por origem, por escopo) — as
+-- duas filtram por "ativo" e ordenam por data.
+CREATE INDEX IF NOT EXISTS idx_whatsapp_optout_ativo
+  ON whatsapp_optout(revogado_em, criado_em);

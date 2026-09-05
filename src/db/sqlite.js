@@ -36,6 +36,10 @@ const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 // quais templates da mesma conta Central Whats sao da Vendedor Mestre. Mesma justificativa
 // dos demais requires de lib/ nesta secao.
 const { pertenceVendedorMestre } = require('../lib/templatesWhatsapp');
+// Mesmo criterio dos requires acima: lib/chaveTelefone e modulo-FOLHA. E a identidade de
+// supressao da tabela whatsapp_optout — quem grava e quem le passam por ele, sempre, para
+// as duas pontas usarem literalmente a mesma chave (ver o cabecalho de la).
+const { chaveCanonicaTelefone } = require('../lib/chaveTelefone');
 
 let _db = null;
 
@@ -3897,6 +3901,247 @@ function estaOptOutWhatsapp(telefone) {
   return Boolean(getDb().prepare('SELECT 1 FROM whatsapp_opt_out WHERE telefone = ?').get(telefone));
 }
 
+// ──────────────────────────────────────────────────────────────
+// Opt-out de WhatsApp COM ESCOPO (tabela whatsapp_optout)
+// ──────────────────────────────────────────────────────────────
+//
+// Sucessor das duas funcoes acima. Nomes deliberadamente em ordem DIFERENTE das antigas
+// (`...WhatsappOptout` contra `...OptOutWhatsapp`): as duas familias convivem por enquanto,
+// e nomes que diferissem so por uma maiuscula seriam a garantia de alguem chamar a errada.
+//
+// Ver o cabecalho de whatsapp_optout em schema.sql para o porque da tabela nova, e
+// lib/chaveTelefone.js para o porque da chave canonica.
+
+const ESCOPOS_OPTOUT = ['campanha', 'total'];
+const ORIGENS_OPTOUT = ['link', 'resposta', 'botao', 'manual', 'importacao'];
+
+// Registra (ou escala) um opt-out. IDEMPOTENTE, e a idempotencia aqui tem tres regras que
+// nao sao obvias — cada uma existe por um motivo:
+//
+//   1. REREGISTRAR NAO SOBRESCREVE A DATA. Se o opt-out ja esta ativo, `criado_em` e
+//      `origem` continuam sendo os do PRIMEIRO registro. E o que a auditoria precisa saber:
+//      "desde quando esta pessoa esta fora, e por qual caminho ela saiu". Um segundo clique
+//      no mesmo link nao pode reescrever essa historia.
+//   2. ESCALAR 'campanha' -> 'total' E PERMITIDO, e so isso muda na linha. E a pessoa
+//      pedindo MAIS supressao do que ja tinha; recusar seria ignorar um pedido explicito.
+//   3. REBAIXAR 'total' -> 'campanha' E IGNORADO. Reduzir supressao e voltar a mandar
+//      mensagem para quem pediu silencio — so por revogacao explicita (revogarOptout) e um
+//      registro novo depois.
+//
+// Reregistrar depois de REVOGADO cria um opt-out NOVO na mesma linha: data nova, origem
+// nova, `revogado_em` de volta a NULL. A regra 1 fala do opt-out ATIVO; um opt-out revogado
+// terminou, e o que vem depois dele e outro fato, com data propria.
+//
+// Devolve { ok, criado, escalado, escopo, telefone_canonico } — nunca lanca por telefone
+// invalido (`ok: false`), porque os chamadores sao rota publica e formulario de painel.
+function registrarWhatsappOptout({ telefone, escopo = 'campanha', origem, motivo = null } = {}) {
+  const canonico = chaveCanonicaTelefone(telefone);
+  if (!canonico) return { ok: false, criado: false, escalado: false, escopo: null, telefone_canonico: null };
+
+  const alvo = ESCOPOS_OPTOUT.includes(escopo) ? escopo : 'campanha';
+  // Origem invalida vira 'manual' em vez de estourar o CHECK: o registro do pedido da
+  // pessoa vale mais que a etiqueta de por onde ele chegou.
+  const via = ORIGENS_OPTOUT.includes(origem) ? origem : 'manual';
+  const texto = motivo == null || String(motivo).trim() === '' ? null : String(motivo).trim();
+
+  const db = getDb();
+  const atual = db
+    .prepare('SELECT id, escopo, revogado_em FROM whatsapp_optout WHERE telefone_canonico = ?')
+    .get(canonico);
+
+  if (!atual) {
+    db.prepare(
+      `INSERT INTO whatsapp_optout (telefone_canonico, telefone_original, escopo, origem, motivo)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(canonico, telefone == null ? null : String(telefone), alvo, via, texto);
+    return { ok: true, criado: true, escalado: false, escopo: alvo, telefone_canonico: canonico };
+  }
+
+  // Estava revogado: reabre como opt-out NOVO (ver a nota acima).
+  if (atual.revogado_em) {
+    db.prepare(
+      `UPDATE whatsapp_optout
+          SET escopo = ?, origem = ?, motivo = ?, telefone_original = ?,
+              criado_em = datetime('now'), revogado_em = NULL
+        WHERE id = ?`,
+    ).run(alvo, via, texto, telefone == null ? null : String(telefone), atual.id);
+    return { ok: true, criado: true, escalado: false, escopo: alvo, telefone_canonico: canonico };
+  }
+
+  // Ativo e o pedido e mais amplo: escala o escopo e SO ele.
+  if (atual.escopo === 'campanha' && alvo === 'total') {
+    db.prepare("UPDATE whatsapp_optout SET escopo = 'total' WHERE id = ?").run(atual.id);
+    return { ok: true, criado: false, escalado: true, escopo: 'total', telefone_canonico: canonico };
+  }
+
+  // Ativo, mesmo escopo ou pedido mais estreito: nada muda.
+  return { ok: true, criado: false, escalado: false, escopo: atual.escopo, telefone_canonico: canonico };
+}
+
+// A pessoa esta suprimida PARA ESTE ESCOPO?
+//
+//   consulta 'campanha'     -> true se houver opt-out ativo de QUALQUER escopo
+//   consulta 'transacional' -> true SO se o opt-out ativo for de escopo 'total'
+//
+// A assimetria e a regra de negocio inteira em duas linhas: quem pediu para sair das
+// campanhas continua recebendo o WA1/WA2 da vaga em que ELE se inscreveu, e quem pediu
+// bloqueio total nao recebe nada. Ver P1/P2 no cabecalho de lib/optoutWhatsapp.js.
+//
+// Telefone irreconhecivel -> false. Nao ha supressao a aplicar sobre um numero que nao
+// existe, e devolver true faria um dado sujo virar bloqueio silencioso de gente legitima.
+function estaWhatsappOptout(telefone, escopo = 'campanha') {
+  const canonico = chaveCanonicaTelefone(telefone);
+  if (!canonico) return false;
+  const linha = getDb()
+    .prepare('SELECT escopo FROM whatsapp_optout WHERE telefone_canonico = ? AND revogado_em IS NULL')
+    .get(canonico);
+  if (!linha) return false;
+  if (linha.escopo === 'total') return true;
+  return escopo === 'campanha';
+}
+
+// Mapa chave_canonica -> escopo de TODOS os opt-outs ativos, UMA varredura.
+//
+// Existe pela mesma razao de mapaStatusRecrutadorPorTelefone: os motores de publico avaliam
+// milhares de pessoas por materializacao, e chamar estaWhatsappOptout por pessoa seria uma
+// consulta por linha. Quem usa este mapa aplica a MESMA regra de escopo de
+// estaWhatsappOptout — ver optoutAtivoNoMapa em lib/optoutWhatsapp.js, que e onde ela mora
+// uma vez so para as duas formas de consulta nunca divergirem.
+function mapaWhatsappOptoutAtivo() {
+  const mapa = new Map();
+  for (const linha of getDb()
+    .prepare('SELECT telefone_canonico, escopo FROM whatsapp_optout WHERE revogado_em IS NULL')
+    .all()) {
+    mapa.set(linha.telefone_canonico, linha.escopo);
+  }
+  return mapa;
+}
+
+// Revoga o opt-out ATIVO. Devolve true se havia algo a revogar.
+//
+// NAO apaga a linha: `revogado_em` datado e o que permite provar depois que a pessoa esteve
+// fora entre duas datas — e o que impede que uma revogacao apague o rastro do pedido
+// original. Ver o cabecalho da tabela em schema.sql.
+function revogarWhatsappOptout(telefone) {
+  const canonico = chaveCanonicaTelefone(telefone);
+  if (!canonico) return false;
+  return (
+    getDb()
+      .prepare(
+        `UPDATE whatsapp_optout SET revogado_em = datetime('now')
+          WHERE telefone_canonico = ? AND revogado_em IS NULL`,
+      )
+      .run(canonico).changes > 0
+  );
+}
+
+// Opt-out ATIVO de um telefone (ou null). Usado pelo selo da ficha do candidato, que
+// precisa mostrar escopo, origem e data — nao so o booleano.
+function obterWhatsappOptout(telefone) {
+  const canonico = chaveCanonicaTelefone(telefone);
+  if (!canonico) return null;
+  return (
+    getDb()
+      .prepare(
+        `SELECT id, telefone_canonico, telefone_original, escopo, origem, motivo, criado_em
+           FROM whatsapp_optout WHERE telefone_canonico = ? AND revogado_em IS NULL`,
+      )
+      .get(canonico) || null
+  );
+}
+
+// Tamanho da pagina da listagem do painel. Mesmo espirito das outras listagens do admin:
+// um numero fixo, sem seletor de tamanho na tela.
+const OPTOUTS_POR_PAGINA = 50;
+
+// Listagem paginada para o painel.
+//
+// `incluirRevogados` default FALSE: a pergunta normal da tela e "quem esta fora agora". O
+// historico de revogados existe (a coluna nunca e apagada) e e alcancavel pelo filtro, mas
+// nao polui a leitura padrao.
+//
+// `busca` casa pela CHAVE CANONICA do que foi digitado, e nao por LIKE no texto: procurar
+// "47 99958-2500" tem que achar a linha gravada como 5547999582500, e um LIKE nunca acharia.
+// Quando o termo nao produz chave canonica (busca por pedaco de numero), cai para LIKE nas
+// duas colunas de telefone — util para quem digita so o final.
+function listarWhatsappOptouts({ escopo = '', pagina = 1, busca = '', incluirRevogados = false } = {}) {
+  const cond = [];
+  const params = [];
+
+  if (!incluirRevogados) cond.push('revogado_em IS NULL');
+  if (ESCOPOS_OPTOUT.includes(escopo)) {
+    cond.push('escopo = ?');
+    params.push(escopo);
+  }
+
+  const termo = String(busca || '').trim();
+  if (termo) {
+    const canonico = chaveCanonicaTelefone(termo);
+    if (canonico) {
+      cond.push('telefone_canonico = ?');
+      params.push(canonico);
+    } else {
+      const digitos = termo.replace(/\D/g, '');
+      const like = `%${digitos || termo}%`;
+      cond.push('(telefone_canonico LIKE ? OR telefone_original LIKE ?)');
+      params.push(like, like);
+    }
+  }
+
+  const where = cond.length ? `WHERE ${cond.join(' AND ')}` : '';
+  const db = getDb();
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM whatsapp_optout ${where}`).get(...params).n;
+
+  const paginaNum = Number.isInteger(pagina) && pagina > 0 ? pagina : 1;
+  const offset = (paginaNum - 1) * OPTOUTS_POR_PAGINA;
+  const itens = db
+    .prepare(
+      `SELECT id, telefone_canonico, telefone_original, escopo, origem, motivo, criado_em, revogado_em
+         FROM whatsapp_optout ${where}
+        ORDER BY criado_em DESC, id DESC
+        LIMIT ? OFFSET ?`,
+    )
+    .all(...params, OPTOUTS_POR_PAGINA, offset);
+
+  return {
+    itens,
+    total,
+    pagina: paginaNum,
+    porPagina: OPTOUTS_POR_PAGINA,
+    paginas: Math.max(1, Math.ceil(total / OPTOUTS_POR_PAGINA)),
+  };
+}
+
+// Numeros do painel (I7). SO o que responde "isto esta funcionando e estamos incomodando
+// muita gente?": total ativo, novos em 7 dias, quebra por origem e por escopo. Sem funil.
+//
+// A janela de 7 dias compara com datetime('now', '-7 days') — o mesmo relogio UTC que
+// preenche `criado_em`, entao nao ha conversao de fuso a errar aqui.
+function resumoWhatsappOptouts() {
+  const db = getDb();
+  const total = db.prepare('SELECT COUNT(*) AS n FROM whatsapp_optout WHERE revogado_em IS NULL').get().n;
+  const ultimos7 = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM whatsapp_optout
+        WHERE revogado_em IS NULL AND criado_em >= datetime('now', '-7 days')`,
+    )
+    .get().n;
+  const porOrigem = db
+    .prepare(
+      `SELECT origem, COUNT(*) AS n FROM whatsapp_optout
+        WHERE revogado_em IS NULL GROUP BY origem ORDER BY n DESC`,
+    )
+    .all();
+  const porEscopo = db
+    .prepare(
+      `SELECT escopo, COUNT(*) AS n FROM whatsapp_optout
+        WHERE revogado_em IS NULL GROUP BY escopo ORDER BY n DESC`,
+    )
+    .all();
+  const revogados = db.prepare('SELECT COUNT(*) AS n FROM whatsapp_optout WHERE revogado_em IS NOT NULL').get().n;
+  return { total, ultimos7, porOrigem, porEscopo, revogados };
+}
+
 // Cidades distintas que existem no banco, para montar as opcoes do filtro de campanha.
 //
 // UNIAO de TRES fontes: `talentos.cidade` (preenchida por backfill nos importados),
@@ -4027,6 +4272,18 @@ module.exports = {
   atualizarStatusPorWamid,
   registrarOptOutWhatsapp,
   estaOptOutWhatsapp,
+  // Opt-out COM ESCOPO (whatsapp_optout). Ver a secao homonima acima para a diferenca
+  // em relacao as duas linhas de cima, que continuam servindo a tabela antiga.
+  registrarWhatsappOptout,
+  estaWhatsappOptout,
+  mapaWhatsappOptoutAtivo,
+  revogarWhatsappOptout,
+  obterWhatsappOptout,
+  listarWhatsappOptouts,
+  resumoWhatsappOptouts,
+  ESCOPOS_OPTOUT,
+  ORIGENS_OPTOUT,
+  OPTOUTS_POR_PAGINA,
   agendarEnvioWhatsapp,
   listarPendentesSequenciaWhatsapp,
   marcarSequenciaWhatsappEnviada,
