@@ -30,6 +30,7 @@ const db = require('../db');
 const { listarCidadesValidas, normalizarCidade } = require('../lib/cidades');
 const { listarPendentesPorCidade } = require('../lib/publicoDisparoWhatsapp');
 const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
+const optout = require('../lib/optoutWhatsapp');
 
 const router = express.Router();
 
@@ -113,7 +114,24 @@ router.get('/disparos/pendentes', async (req, res) => {
     return res.status(400).json({ erro: err.message, cidades_validas: listarCidadesValidas() });
   }
 
-  return res.json(pendentes);
+  // ── LINK DE DESCADASTRO POR DESTINATARIO (Incremento 5) ──
+  //
+  // Campo ADITIVO: o n8n ignora chave que nao usa, entao nenhum fluxo existente muda de
+  // comportamento por esta linha existir. Ele passa a valer quando o fluxo do n8n colocar
+  // `link_descadastro` no texto da mensagem.
+  //
+  // Este e o UNICO canal de campanha em que o link pode sair hoje sem passar pela Meta: o
+  // n8n compoe texto livre, nao template aprovado. Ainda assim respeita o mesmo interruptor
+  // dos templates, para o Jean ligar o link em todos os canais de uma vez — e nao descobrir
+  // depois que uma metade das campanhas tem link e a outra nao.
+  //
+  // NUNCA vazio: em qualquer falha vem a linha de texto de fallback (P6).
+  const comLink = pendentes.map((p) => ({
+    ...p,
+    link_descadastro: optout.textoDescadastroPara(p.telefone),
+  }));
+
+  return res.json(comLink);
 });
 
 // ── POST /api/disparos/marcar-status ──

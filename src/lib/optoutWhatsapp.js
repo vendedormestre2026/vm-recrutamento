@@ -131,9 +131,64 @@ function ativo(deps = {}) {
   return db.obterConfigBool(CHAVE_ATIVO, true);
 }
 
+// ── KILL-SWITCH DO LINK NAS MENSAGENS (Incremento 5) ──
+//
+// Separado de CHAVE_ATIVO de proposito: sao duas perguntas independentes. "Respeitar quem
+// pediu para sair" (CHAVE_ATIVO) precisa estar ligado desde sempre; "colocar o link de
+// descadastro dentro da mensagem" (esta) depende de um template APROVADO pela Meta que
+// tenha uma variavel para receber o link — e hoje nenhum template ativo tem.
+//
+// Default FALSE, e este e o unico default "desligado" do subsistema. Nao e conservadorismo
+// generico: ligar isto sem o template novo faria a variavel `link_descadastro` ser resolvida
+// para um template que nao a declara, o que nao quebra nada — mas tambem nao coloca link
+// nenhum na mensagem, e daria a impressao falsa de que o link ja esta saindo. Ver
+// docs/template-opt-out-meta.md para o texto proposto e o passo a passo de ativacao.
+const CHAVE_LINK_ATIVO = 'optout_link_campanha_ativo';
+
+function linkAtivo(deps = {}) {
+  const db = deps.db || dbPadrao;
+  return db.obterConfigBool(CHAVE_LINK_ATIVO, false);
+}
+
+// ── FALLBACK TEXTUAL (P6) ──
+//
+// O ENVIO NUNCA ABORTA POR CAUSA DO LINK. Se a geracao falhar (DESCADASTRO_SECRET ausente,
+// telefone sem chave canonica), a variavel recebe esta frase em vez de ficar vazia.
+//
+// Vazia seria o pior dos dois mundos: a Meta trata variavel posicional vazia como AUSENTE e
+// recusa o envio inteiro com o erro 131008 — classificado como 'configuracao', que ABORTA o
+// ciclo e nao marca ninguem. Ou seja, uma falha ao montar um link acessorio pararia a
+// campanha toda. Ja custou uma campanha de 1.463 destinatarios uma vez (ver
+// CARGO_VAGA_PADRAO em lib/campanhaWhatsapp.js); nao vai custar de novo por este motivo.
+//
+// O texto tambem e util por si so: "responda SAIR" e um caminho que funciona hoje, sem
+// nenhuma pagina — o pedido chega no Live Chat e o Jean registra pelo painel.
+const TEXTO_FALLBACK_DESCADASTRO = 'Para não receber mais, responda SAIR';
+
 // ══════════════════════════════════════════════════════════════
 // API que os motores e as rotas usam
 // ══════════════════════════════════════════════════════════════
+
+// Valor da variavel `link_descadastro` para UM destinatario. NUNCA devolve string vazia e
+// NUNCA lanca — ver P6 e TEXTO_FALLBACK_DESCADASTRO acima.
+//
+// `montarUrl` e injetavel so para teste (o modulo real e lib/descadastroWhatsapp, importado
+// preguicosamente aqui dentro para nao criar dependencia de carga entre os dois modulos).
+function textoDescadastroPara(telefone, deps = {}) {
+  const db = deps.db || dbPadrao;
+  if (!linkAtivo({ db })) return TEXTO_FALLBACK_DESCADASTRO;
+  try {
+    const montarUrl = deps.montarUrl || require('./descadastroWhatsapp').montarUrlDescadastroWhatsapp;
+    const url = montarUrl(telefone);
+    return url || TEXTO_FALLBACK_DESCADASTRO;
+  } catch (err) {
+    console.warn(
+      `[optout-wa] falha ao montar o link de descadastro (${err.message}); ` +
+        'usando a linha de texto de fallback. O ENVIO SEGUE NORMALMENTE.',
+    );
+    return TEXTO_FALLBACK_DESCADASTRO;
+  }
+}
 
 // Registra (ou escala) um opt-out. Delega a idempotencia ao repositorio — ver
 // registrarWhatsappOptout em db/sqlite.js para as tres regras.
@@ -204,6 +259,10 @@ module.exports = {
   escopoDoTipoMensagem,
   CHAVE_ATIVO,
   ativo,
+  CHAVE_LINK_ATIVO,
+  linkAtivo,
+  TEXTO_FALLBACK_DESCADASTRO,
+  textoDescadastroPara,
   registrarOptout,
   estaOptout,
   optoutAtivoNoMapa,

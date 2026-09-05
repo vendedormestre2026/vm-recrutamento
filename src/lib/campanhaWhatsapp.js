@@ -261,6 +261,18 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
       link_grupo_regiao: link,
       link_vaga: linkVaga,
       cidade: linha.cidade || '',
+      // ── LINK DE DESCADASTRO (Incremento 5) ──
+      // Resolvido POR DESTINATARIO, no momento do envio: o token e funcao do telefone, e
+      // nao ha nada a materializar na fila. Nenhum template ATIVO declara esta variavel
+      // hoje (os tres tem as tres posicoes ocupadas) — quando um template com ela for
+      // aprovado na Meta, basta mapea-la e ligar o interruptor. Ver
+      // docs/template-opt-out-meta.md.
+      //
+      // NUNCA vazio e NUNCA lanca: textoDescadastroPara cai na linha de texto de fallback
+      // em qualquer falha (P6). Variavel vazia e o erro 131008 da Meta, que e classificado
+      // como 'configuracao' e ABORTA o ciclo inteiro — uma falha ao montar um link acessorio
+      // nao pode parar a campanha.
+      link_descadastro: optout.textoDescadastroPara(telefone, { db }),
     });
 
     // ── BOTAO DINAMICO (Incremento 3, ajustado apos diagnostico do 404 real) ──

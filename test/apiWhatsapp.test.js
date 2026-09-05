@@ -167,20 +167,28 @@ test('cidade invalida: 400, e nao 200 com lista vazia', async () => {
   });
 });
 
-test('fluxo feliz: devolve telefone normalizado, primeiro nome e cargo', async () => {
+test('fluxo feliz: devolve telefone normalizado, primeiro nome, cargo e link de descadastro', async () => {
   cenarioJoinville();
   await comServidor(async (base) => {
     const res = await pendentes(base, 'Joinville');
     assert.equal(res.status, 200);
     const lista = await res.json();
     assert.equal(lista.length, 2);
-    // Contrato exato consumido pelo n8n — as tres chaves, e so elas.
-    assert.deepEqual(Object.keys(lista[0]).sort(), ['cargo', 'nome_primeiro', 'telefone']);
-    assert.deepEqual(lista[0], {
-      telefone: '5547999582500',
-      nome_primeiro: 'Ana',
-      cargo: 'CLOSER',
-    });
+    // Contrato exato consumido pelo n8n — estas quatro chaves, e so elas.
+    //
+    // `link_descadastro` entrou no Incremento 5 (opt-out) e e ADITIVA: o n8n ignora chave
+    // que nao usa, entao o fluxo existente nao muda de comportamento por ela existir. Ela
+    // passa a valer quando o fluxo colocar o valor no texto da mensagem.
+    assert.deepEqual(
+      Object.keys(lista[0]).sort(),
+      ['cargo', 'link_descadastro', 'nome_primeiro', 'telefone'],
+    );
+    assert.equal(lista[0].telefone, '5547999582500');
+    assert.equal(lista[0].nome_primeiro, 'Ana');
+    assert.equal(lista[0].cargo, 'CLOSER');
+    // NUNCA vazia (P6): com o interruptor do link desligado — o default — vem a linha de
+    // texto de fallback, e nunca string vazia.
+    assert.equal(lista[0].link_descadastro, 'Para não receber mais, responda SAIR');
   });
 });
 

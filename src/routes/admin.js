@@ -5183,6 +5183,10 @@ const CHAVE_CAMPANHA_WA = campanhaWhatsapp.CHAVE_ATIVO;
 // Interruptor da SUPRESSAO por opt-out. Unico do painel que nasce LIGADO — ver P5 no
 // cabecalho de lib/optoutWhatsapp.js: os outros ligam um envio, este liga uma supressao.
 const CHAVE_OPTOUT_WA = optoutWhatsapp.CHAVE_ATIVO;
+// Interruptor do LINK dentro da mensagem. Pergunta INDEPENDENTE da de cima e com default
+// OPOSTO (desligado): depende de um template aprovado pela Meta que tenha variavel para
+// receber o link, e nenhum template ativo tem hoje.
+const CHAVE_OPTOUT_LINK = optoutWhatsapp.CHAVE_LINK_ATIVO;
 
 // Endereco fixo do e-mail de TESTE da Promocao de Vagas. Mesma logica de propriedade das
 // chaves acima: mora em lib/emailTestePromocao, dono do subsistema. Vive no painel (e nao
@@ -5249,6 +5253,7 @@ router.get('/config', (req, res) => {
   const campanhaWaAtiva = db.obterConfigBool(CHAVE_CAMPANHA_WA, false);
   // Default TRUE, ao contrario de todos os outros desta tela.
   const optoutWaAtivo = optoutWhatsapp.ativo();
+  const optoutLinkAtivo = optoutWhatsapp.linkAtivo();
   const resumoOptout = db.resumoWhatsappOptouts();
 
   // Endereco do e-mail de teste de campanha. Vazio por padrao, de proposito: sem ele o
@@ -5405,10 +5410,19 @@ router.get('/config', (req, res) => {
               <b>Desmarcar volta a mandar campanha para essas pessoas.</b>
             </span>
           </label>
-          <p style="margin:.4rem 0 0;color:var(--cinza);font-size:.9rem;">
+          <p style="margin:.4rem 0 .8rem;color:var(--cinza);font-size:.9rem;">
             ${fmtInt(resumoOptout.total)} pessoa(s) fora hoje, ${fmtInt(resumoOptout.ultimos7)} nos últimos 7 dias.
             <a href="/admin/optouts">Ver a lista</a>.
           </p>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="optout_link_campanha_ativo" value="1"${optoutLinkAtivo ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Link nas mensagens</b> —
+              incluir o link de descadastro nas campanhas.
+              <b>Só ligue depois que a Meta aprovar o template novo</b> — nenhum template
+              atual tem variável para o link.
+            </span>
+          </label>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
         </section>
 
@@ -5609,6 +5623,7 @@ router.post('/config/notificacoes', (req, res) => {
   // as duas linhas de formulario abaixo: checkbox desmarcado nao e 'chave ausente', e sem
   // este definirConfigBool nao haveria como desligar a supressao pela tela.
   db.definirConfigBool(CHAVE_OPTOUT_WA, marcado('optout_whatsapp_ativo'));
+  db.definirConfigBool(CHAVE_OPTOUT_LINK, marcado('optout_link_campanha_ativo'));
   // Formulario de candidatura (ETAPA B, Incremento 2) — default TRUE: checkbox
   // desmarcado != "chave ausente", entao aqui e ALWAYS um definirConfigBool explicito
   // (mesmo padrao das demais linhas acima), nunca "so grava se marcado".
