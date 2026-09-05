@@ -197,6 +197,14 @@ function criarRouterOptout({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }
       resumo.porOrigem.map((o) => `${escapeHtml(rotuloOrigem(o.origem))}: ${fmtInt(o.n)}`).join(' · ') || '—';
     const porEscopo =
       resumo.porEscopo.map((e) => `${escapeHtml(rotuloEscopo(e.escopo))}: ${fmtInt(e.n)}`).join(' · ') || '—';
+    // Motivo e texto livre (por causa do "outro" da pagina publica), entao a quebra e uma
+    // lista, nao um mapa de rotulos. "(não informado)" ja vem do SQL como balde proprio: o
+    // campo e opcional e nunca bloqueia a conclusao, entao quantos NAO responderam faz parte
+    // da leitura. Uma linha por motivo, para o texto livre nao ser truncado numa frase so.
+    const porMotivo =
+      resumo.porMotivo
+        .map((m) => `<li>${escapeHtml(String(m.motivo))} — <b>${fmtInt(m.n)}</b></li>`)
+        .join('') || '<li>—</li>';
 
     const conteudo = `
       <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
@@ -219,6 +227,8 @@ function criarRouterOptout({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }
         </p>
         <p style="margin:.2rem 0;color:var(--cinza);font-size:.9rem;">Por origem — ${porOrigem}</p>
         <p style="margin:.2rem 0;color:var(--cinza);font-size:.9rem;">Por escopo — ${porEscopo}</p>
+        <p style="margin:.6rem 0 .2rem;color:var(--cinza);font-size:.9rem;">Por motivo</p>
+        <ul style="margin:0;padding-left:1.2rem;color:var(--cinza);font-size:.9rem;">${porMotivo}</ul>
       </section>
 
       <section class="rel-sec">

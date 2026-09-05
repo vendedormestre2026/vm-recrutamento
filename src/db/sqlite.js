@@ -3979,7 +3979,10 @@ function registrarWhatsappOptout({ telefone, escopo = 'campanha', origem, motivo
 
   const db = getDb();
   const atual = db
-    .prepare('SELECT id, escopo, revogado_em FROM whatsapp_optout WHERE telefone_canonico = ?')
+    // `motivo` entra no SELECT porque a regra de "preenche o vazio, nunca sobrescreve"
+    // (abaixo) depende dele. Sem a coluna aqui, `atual.motivo` seria sempre undefined e a
+    // guarda deixaria passar TODA reescrita — o oposto do que ela existe para fazer.
+    .prepare('SELECT id, escopo, motivo, revogado_em FROM whatsapp_optout WHERE telefone_canonico = ?')
     .get(canonico);
 
   if (!atual) {
@@ -4001,13 +4004,26 @@ function registrarWhatsappOptout({ telefone, escopo = 'campanha', origem, motivo
     return { ok: true, criado: true, escalado: false, escopo: alvo, telefone_canonico: canonico };
   }
 
+  // ── MOTIVO: PREENCHE O VAZIO, NUNCA SOBRESCREVE ──
+  //
+  // Excecao ESTREITA a regra 1 (reregistrar nao reescreve a historia), e ela vale a pena: se
+  // a linha ainda nao tem motivo e a pessoa acabou de informar um, guardar e ganho puro —
+  // nao ha nada a preservar. Sobrescrever um motivo JA existente seria outra coisa: apagaria
+  // o que ela disse da primeira vez.
+  //
+  // O caso real: alguem clica no link, sai sem escolher motivo, e depois clica de novo e
+  // escolhe. Sem esta linha o segundo clique seria um no-op e o motivo se perderia.
+  if (texto && !atual.motivo) {
+    db.prepare('UPDATE whatsapp_optout SET motivo = ? WHERE id = ?').run(texto, atual.id);
+  }
+
   // Ativo e o pedido e mais amplo: escala o escopo e SO ele.
   if (atual.escopo === 'campanha' && alvo === 'total') {
     db.prepare("UPDATE whatsapp_optout SET escopo = 'total' WHERE id = ?").run(atual.id);
     return { ok: true, criado: false, escalado: true, escopo: 'total', telefone_canonico: canonico };
   }
 
-  // Ativo, mesmo escopo ou pedido mais estreito: nada muda.
+  // Ativo, mesmo escopo ou pedido mais estreito: nada muda (fora o motivo acima).
   return { ok: true, criado: false, escalado: false, escopo: atual.escopo, telefone_canonico: canonico };
 }
 
@@ -4171,8 +4187,19 @@ function resumoWhatsappOptouts() {
         WHERE revogado_em IS NULL GROUP BY escopo ORDER BY n DESC`,
     )
     .all();
+  // Quebra por MOTIVO. Sem motivo informado e o caso NORMAL (o campo e opcional e nunca
+  // bloqueia a conclusao), entao NULL vira um balde proprio em vez de sumir da contagem —
+  // saber quantos nao disseram nada e parte da leitura.
+  const porMotivo = db
+    .prepare(
+      `SELECT COALESCE(NULLIF(TRIM(motivo), ''), '(não informado)') AS motivo, COUNT(*) AS n
+         FROM whatsapp_optout
+        WHERE revogado_em IS NULL
+        GROUP BY 1 ORDER BY n DESC`,
+    )
+    .all();
   const revogados = db.prepare('SELECT COUNT(*) AS n FROM whatsapp_optout WHERE revogado_em IS NOT NULL').get().n;
-  return { total, ultimos7, porOrigem, porEscopo, revogados };
+  return { total, ultimos7, porOrigem, porEscopo, porMotivo, revogados };
 }
 
 // Cidades distintas que existem no banco, para montar as opcoes do filtro de campanha.

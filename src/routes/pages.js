@@ -1547,6 +1547,67 @@ const NOTA_ESCOPO_WHATSAPP = `
     candidatar depois.</p>
   </div>`;
 
+// ── MOTIVOS OFERECIDOS NA PAGINA (B4) ──
+//
+// Lista CURTA e fechada, mais "outro" com texto livre. O campo e OPCIONAL e NUNCA bloqueia a
+// conclusao: sem escolha nenhuma, o opt-out e efetivado igual e `motivo` fica NULL. Pedir o
+// motivo como condicao para sair seria transformar o exercicio de um direito numa pesquisa —
+// e a pessoa que nao quer responder simplesmente marcaria qualquer coisa, o que estragaria o
+// dado que a pergunta existe para coletar.
+//
+// O VALOR gravado e o proprio rotulo, e nao um codigo: a coluna e texto livre (por causa do
+// "outro"), a quebra do painel agrupa por ela, e um mapa codigo->rotulo seria uma segunda
+// fonte de verdade para o mesmo texto. A allowlist abaixo e o que impede um valor forjado de
+// entrar — quem posta um motivo fora da lista cai em "outro" ou em vazio.
+const MOTIVOS_DESCADASTRO = [
+  'Não tenho interesse nas vagas',
+  'Recebo mensagens demais',
+  'Já consegui um emprego',
+  'Não me lembro de ter me cadastrado',
+];
+
+// Teto do texto livre. A coluna nao tem limite, mas a rota e publica: sem teto, um POST
+// forjado gravaria um romance no banco.
+const MAX_MOTIVO_LIVRE = 200;
+
+// Resolve o motivo a partir do corpo do POST. Devolve null quando nao ha nada utilizavel —
+// que e o caso normal, nao um erro.
+function lerMotivoDescadastro(corpo) {
+  const escolha = String((corpo && corpo.motivo) || '').trim();
+  if (!escolha) return null;
+  if (escolha === 'outro') {
+    const livre = String((corpo && corpo.motivo_outro) || '').trim();
+    return livre ? livre.slice(0, MAX_MOTIVO_LIVRE) : null;
+  }
+  // Valor fora da allowlist e IGNORADO (vira null), nunca gravado: e a unica forma de a rota
+  // publica nao virar um campo de texto arbitrario disfarcado de radio.
+  return MOTIVOS_DESCADASTRO.includes(escolha) ? escolha : null;
+}
+
+// Os radios + o campo de "outro". Sem `required` em lugar nenhum, de proposito.
+function blocoMotivos() {
+  const opcoes = MOTIVOS_DESCADASTRO.map(
+    (m) => `
+        <label style="display:block;margin:.35rem 0;">
+          <input type="radio" name="motivo" value="${escapeHtml(m)}"> ${escapeHtml(m)}
+        </label>`,
+  ).join('');
+  return `
+    <div class="vm-card">
+      <p><b>Se quiser, conte o motivo</b> — é opcional e não muda nada no seu pedido.</p>
+      ${opcoes}
+      <label style="display:block;margin:.35rem 0;">
+        <input type="radio" name="motivo" value="outro"> Outro
+      </label>
+      <label style="display:block;margin:.35rem 0 0;">
+        <span class="vm-lead" style="font-size:.9rem">Se marcou "Outro", pode escrever aqui:</span>
+        <input type="text" name="motivo_outro" maxlength="${MAX_MOTIVO_LIVRE}"
+               style="width:100%;padding:.5rem;margin-top:.25rem;"
+               placeholder="opcional">
+      </label>
+    </div>`;
+}
+
 // ── GET /descadastro/:token ── confirmacao (NAO altera nada) ──
 router.get('/descadastro/:token', (req, res) => {
   const canonico = lerTokenDescadastroWhatsapp(req.params.token);
@@ -1563,23 +1624,28 @@ router.get('/descadastro/:token', (req, res) => {
       <p class="vm-lead">Você está prestes a sair da divulgação de vagas por WhatsApp.</p>
       ${NOTA_ESCOPO_WHATSAPP}
 
-      <form method="POST" action="/descadastro/whatsapp" class="vm-acoes" style="width:100%">
+      <!-- UM formulario so, com DOIS botoes de submit. Antes eram dois formularios
+           separados; com o campo de motivo no meio, formularios irmaos deixariam o motivo
+           preso a um dos dois — e formulario aninhado e invalido em HTML. Cada botao carrega
+           o proprio name="escopo", que e o valor enviado quando ELE e o botao acionado. -->
+      <form method="POST" action="/descadastro/whatsapp" style="width:100%">
         <input type="hidden" name="token" value="${token}">
-        <input type="hidden" name="escopo" value="campanha">
-        <button type="submit" class="vm-btn vm-btn--primario">Parar de receber vagas</button>
-      </form>
+        ${blocoMotivos()}
 
-      <div class="vm-card">
-        <p><b>Prefere não receber absolutamente nenhuma mensagem?</b></p>
-        <p>Isso inclui as mensagens dos processos seletivos em que você se inscrever —
-        você <b>não vai mais receber</b> a confirmação da inscrição nem o resultado de
-        uma candidatura sua.</p>
-        <form method="POST" action="/descadastro/whatsapp" style="width:100%">
-          <input type="hidden" name="token" value="${token}">
-          <input type="hidden" name="escopo" value="total">
-          <button type="submit" class="vm-btn">Bloquear tudo</button>
-        </form>
-      </div>
+        <div class="vm-acoes" style="width:100%">
+          <button type="submit" name="escopo" value="campanha" class="vm-btn vm-btn--primario">
+            Parar de receber vagas
+          </button>
+        </div>
+
+        <div class="vm-card">
+          <p><b>Prefere não receber absolutamente nenhuma mensagem?</b></p>
+          <p>Isso inclui as mensagens dos processos seletivos em que você se inscrever —
+          você <b>não vai mais receber</b> a confirmação da inscrição nem o resultado de
+          uma candidatura sua.</p>
+          <button type="submit" name="escopo" value="total" class="vm-btn">Bloquear tudo</button>
+        </div>
+      </form>
 
       <p class="vm-lead" style="font-size:.95rem">Se você chegou aqui sem querer, é só
         fechar esta página — nada foi alterado.</p>
@@ -1605,8 +1671,11 @@ router.post('/descadastro/whatsapp', (req, res) => {
   // destrutivo dos dois.
   const escopo = b.escopo === optout.ESCOPO_TOTAL ? optout.ESCOPO_TOTAL : optout.ESCOPO_CAMPANHA;
 
+  // Motivo OPCIONAL: null nao impede nada. Ver lerMotivoDescadastro e MOTIVOS_DESCADASTRO.
+  const motivo = lerMotivoDescadastro(b);
+
   try {
-    optout.registrarOptout({ telefone: canonico, escopo, origem: optout.ORIGEM_LINK });
+    optout.registrarOptout({ telefone: canonico, escopo, origem: optout.ORIGEM_LINK, motivo });
   } catch (err) {
     console.error(`[descadastro-wa] falha ao registrar opt-out: ${err.message}`);
     return paginaAviso(res, 500, {
