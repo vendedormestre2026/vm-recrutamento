@@ -30,6 +30,7 @@ const dbPadrao = require('../db');
 const conexao = require('./connection');
 const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('../lib/whatsapp');
 const { montarTextoWA1, montarTextoWA2, montarTextoReprovacao } = require('../lib/whatsappSequencia');
+const optout = require('../lib/optoutWhatsapp');
 
 // Interruptor de DISPARO, no mesmo store `configuracoes` das outras cinco varreduras.
 // Confirmado no diagnostico: e config de banco (obterConfigBool), nao variavel de ambiente —
@@ -301,6 +302,37 @@ async function processarCicloSequencia(deps = {}) {
       continue;
     }
 
+    // ── OPT-OUT (Incremento 2) ──
+    //
+    // As tres etapas desta fila (wa1, wa2, reprovacao) sao TRANSACIONAIS: cada uma e
+    // consequencia direta de um ato recente da propria pessoa — ela se candidatou, ou o
+    // recrutador decidiu sobre a candidatura DELA. Por isso o escopo consultado e
+    // `transacional`, e SO um opt-out `total` suprime aqui.
+    //
+    // ── O CENARIO QUE ESTA LINHA PRECISA ACERTAR (P2) ──
+    // Pessoa pede descadastro em marco; em abril se candidata a uma vaga nova com o mesmo
+    // numero. Ela DEVE receber WA1 e WA2 — foi ela quem se inscreveu, agora — e DEVE
+    // continuar fora das campanhas. As duas coisas ao mesmo tempo so acontecem porque o
+    // escopo aqui e diferente do escopo dos motores de campanha. E tambem por isso nada
+    // neste arquivo revoga opt-out: a candidatura nova nao apaga o pedido de marco.
+    //
+    // Escopo consultado por ETAPA, e nao fixo: se uma etapa de natureza diferente entrar
+    // nesta fila um dia, ela e classificada em ESCOPO_POR_TIPO_MENSAGEM (lib/optoutWhatsapp)
+    // e nao aqui — e o default de la, para etapa desconhecida, e o escopo mais restritivo.
+    const escopoEtapa = optout.escopoDoTipoMensagem(linha.etapa);
+    if (optout.estaOptout(telefone, escopoEtapa, { db })) {
+      // Status TERMINAL, nunca retentavel: em 'pendente' esta linha voltaria em todo ciclo,
+      // para sempre, ocupando uma vaga do teto por ciclo. Ver marcarSequenciaWhatsappOptout
+      // em db/sqlite.js.
+      db.marcarSequenciaWhatsappOptout(linha.id);
+      resumo.pulados += 1;
+      console.log(
+        `[wa-seq] ${linha.etapa} da application ${linha.application_id}: ${mascarar(telefone)} ` +
+          'com opt-out de escopo total; nao enviado.',
+      );
+      continue;
+    }
+
     const texto = textoDaEtapa(linha, db);
 
     if (mock) {
@@ -375,10 +407,13 @@ async function processarCicloSequencia(deps = {}) {
     if (i < pendentes.length - 1) await dormir(intervalo);
   }
 
-  if (resumo.enviados || resumo.falhas || resumo.retentar) {
+  // `pulados` entra na condicao E no texto: um ciclo em que TUDO foi suprimido por opt-out
+  // ficaria completamente silencioso sem isso, e "nao saiu nada e o log nao diz por que" e o
+  // sintoma mais caro de diagnosticar que este projeto ja teve.
+  if (resumo.enviados || resumo.falhas || resumo.retentar || resumo.pulados) {
     console.log(
       `[wa-seq] ciclo concluido — enviados: ${resumo.enviados}, falhas: ${resumo.falhas}, ` +
-        `a retentar: ${resumo.retentar}${mock ? ' (MOCK)' : ''}`,
+        `a retentar: ${resumo.retentar}, suprimidos por opt-out: ${resumo.pulados}${mock ? ' (MOCK)' : ''}`,
     );
   }
   return resumo;

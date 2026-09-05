@@ -28,6 +28,7 @@ const { normalizarTelefoneRecebido } = require('./whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
 const { montarUrlVaga, UTM_SOURCE_WHATSAPP } = require('./ctaCampanha');
 const { precisaBotaoDinamico } = require('./templatesWhatsapp');
+const optout = require('./optoutWhatsapp');
 
 // Interruptor de DISPARO, no store `configuracoes` — mesmo padrao de promocao_ativa e
 // whatsapp_sequencia_ativa. Config de BANCO, com checkbox no painel; nao e env.
@@ -188,10 +189,24 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
       resumo.falhas += 1;
       continue;
     }
-    if (db.estaOptOutWhatsapp(telefone)) {
+    //
+    // ── DUAS TABELAS DE OPT-OUT, E O ESCOPO VEM DO TIPO DA MENSAGEM ──
+    // A antiga (whatsapp_opt_out, sem escopo) continua sendo lida: uma supressao a mais
+    // nunca e risco, e quem saiu antes desta feature nao pode voltar a receber por causa
+    // dela. A nova (whatsapp_optout) responde por ESCOPO, e o escopo depende do que esta
+    // sendo enviado — nao do motor.
+    //
+    // `linha.tipo_mensagem` ja vem na fila (campanhas_whatsapp.tipo_mensagem, materializado
+    // por linha), entao nao ha consulta nova. Convite de grupo e divulgacao de vaga sao
+    // `campanha`; status_candidatura e `transacional` e so o opt-out `total` a bloqueia —
+    // ver a tabela ESCOPO_POR_TIPO_MENSAGEM em lib/optoutWhatsapp.js para o porque.
+    const escopoMensagem = optout.escopoDoTipoMensagem(linha.tipo_mensagem);
+    if (db.estaOptOutWhatsapp(telefone) || optout.estaOptout(telefone, escopoMensagem, { db })) {
       db.marcarEnvioWhatsappOptOut(linha.id);
       resumo.optOut += 1;
-      console.log(`[campanha-wa] ${mascarar(telefone)} em opt-out; nao enviado.`);
+      console.log(
+        `[campanha-wa] ${mascarar(telefone)} em opt-out (escopo consultado: ${escopoMensagem}); nao enviado.`,
+      );
       continue;
     }
 

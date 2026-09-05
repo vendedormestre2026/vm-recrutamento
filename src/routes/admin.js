@@ -54,6 +54,7 @@ const { criarRouterPromocao } = require('./admin_promocao');
 const { criarRouterWhatsapp } = require('./admin_whatsapp');
 const sequenciaWhatsapp = require('../whatsapp/sequenciaOutbox');
 const campanhaWhatsapp = require('../lib/campanhaWhatsapp');
+const optoutWhatsapp = require('../lib/optoutWhatsapp');
 const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
@@ -5094,6 +5095,9 @@ const CHAVE_PROMOCAO_ATIVA = dispararPromocao.CHAVE_ATIVO;
 const CHAVE_WHATSAPP_SEQ = sequenciaWhatsapp.CHAVE_ATIVO;
 // Interruptor da CAMPANHA por WhatsApp (Meta Cloud API). Frente separada da sequencia.
 const CHAVE_CAMPANHA_WA = campanhaWhatsapp.CHAVE_ATIVO;
+// Interruptor da SUPRESSAO por opt-out. Unico do painel que nasce LIGADO — ver P5 no
+// cabecalho de lib/optoutWhatsapp.js: os outros ligam um envio, este liga uma supressao.
+const CHAVE_OPTOUT_WA = optoutWhatsapp.CHAVE_ATIVO;
 
 // Endereco fixo do e-mail de TESTE da Promocao de Vagas. Mesma logica de propriedade das
 // chaves acima: mora em lib/emailTestePromocao, dono do subsistema. Vive no painel (e nao
@@ -5158,6 +5162,9 @@ router.get('/config', (req, res) => {
   const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
   const whatsappSeqAtiva = db.obterConfigBool(CHAVE_WHATSAPP_SEQ, false);
   const campanhaWaAtiva = db.obterConfigBool(CHAVE_CAMPANHA_WA, false);
+  // Default TRUE, ao contrario de todos os outros desta tela.
+  const optoutWaAtivo = optoutWhatsapp.ativo();
+  const resumoOptout = db.resumoWhatsappOptouts();
 
   // Endereco do e-mail de teste de campanha. Vazio por padrao, de proposito: sem ele o
   // botao de teste na tela de campanha so sabe dizer "configure aqui primeiro".
@@ -5304,6 +5311,19 @@ router.get('/config', (req, res) => {
               enviar as <b>campanhas por WhatsApp</b> (Meta Cloud API)
             </span>
           </label>
+          <h3 style="margin:1.5rem 0 .5rem;">Opt-out (quem pediu para não receber)</h3>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="optout_whatsapp_ativo" value="1"${optoutWaAtivo ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Respeitar opt-out</b> —
+              não enviar para quem pediu para sair.
+              <b>Desmarcar volta a mandar campanha para essas pessoas.</b>
+            </span>
+          </label>
+          <p style="margin:.4rem 0 0;color:var(--cinza);font-size:.9rem;">
+            ${fmtInt(resumoOptout.total)} pessoa(s) fora hoje, ${fmtInt(resumoOptout.ultimos7)} nos últimos 7 dias.
+            <a href="/admin/optouts">Ver a lista</a>.
+          </p>
           <button type="submit" form="form-notificacoes" class="btn">Salvar</button>
         </section>
 
@@ -5500,6 +5520,10 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
   db.definirConfigBool(CHAVE_WHATSAPP_SEQ, marcado('whatsapp_sequencia_ativa'));
   db.definirConfigBool(CHAVE_CAMPANHA_WA, marcado('campanha_whatsapp_ativa'));
+  // Default TRUE no LEITOR (optoutWhatsapp.ativo), mas gravado SEMPRE explicito aqui, como
+  // as duas linhas de formulario abaixo: checkbox desmarcado nao e 'chave ausente', e sem
+  // este definirConfigBool nao haveria como desligar a supressao pela tela.
+  db.definirConfigBool(CHAVE_OPTOUT_WA, marcado('optout_whatsapp_ativo'));
   // Formulario de candidatura (ETAPA B, Incremento 2) — default TRUE: checkbox
   // desmarcado != "chave ausente", entao aqui e ALWAYS um definirConfigBool explicito
   // (mesmo padrao das demais linhas acima), nunca "so grava se marcado".

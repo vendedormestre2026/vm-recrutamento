@@ -34,6 +34,11 @@ const dbPadrao = require('../db');
 const conexaoPadrao = require('../whatsapp/connection');
 const { normalizarCidade } = require('./cidades');
 const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('./whatsapp');
+// Opt-out COM ESCOPO (Incremento 2). ATE AQUI ESTE MOTOR NAO TINHA SUPRESSAO NENHUMA — nem
+// a antiga whatsapp_opt_out, que os outros dois ja liam. Era o furo mais largo do
+// diagnostico: o convite de grupo por praca, o disparo de maior volume do projeto (4.960
+// linhas em disparos_whatsapp em producao), ia para quem tivesse pedido para sair.
+const optout = require('./optoutWhatsapp');
 
 // Sentinela de `talentos.cidade`: marca presenca em QUALQUER praca (531 pessoas no legado).
 //
@@ -167,7 +172,19 @@ async function listarPendentesPorCidade(cidade, deps = {}) {
   // telefone (reprocessar e decisao humana) e um convite de outra praca ja entregue nao
   // deve virar um segundo convite.
   const jaEnviados = db.listarTelefonesDisparados();
-  const restantes = [...porTelefone.values()].filter((p) => !jaEnviados.has(p.telefone));
+
+  // ── 3b. QUEM PEDIU PARA SAIR SAI (Incremento 2) ──
+  // Escopo `campanha`: o convite de grupo e mensagem que NOS iniciamos. Suprimido aqui NAO
+  // vira linha em disparos_whatsapp — simplesmente nunca chega ao n8n. E o certo: aquela
+  // tabela e o livro-razao do que foi ENVIADO, e gravar "enviado" para quem nao recebeu
+  // nada contaminaria a fila de pendentes (ela e calculada pela ausencia de linha).
+  //
+  // Depois do merge, como o filtro de ja-enviados e pela mesma razao: a chave e o telefone
+  // normalizado, que so existe depois do merge.
+  const mapaOptout = optout.mapaOptoutAtivo({ db });
+  const restantes = [...porTelefone.values()].filter(
+    (p) => !jaEnviados.has(p.telefone) && !optout.optoutAtivoNoMapa(mapaOptout, p.telefone, optout.CONSULTA_CAMPANHA),
+  );
 
   // ── 4. EXISTENCIA REAL (Incremento 4) ──
   // UMA chamada de rede pra toda a leva (onWhatsAppLote monta uma USyncQuery so), no mesmo

@@ -35,6 +35,12 @@ const { aplicarFiltroAtributo, aplicarFiltroMulti, CIDADE_TODAS, PERFIS_VALIDOS 
 // mesma pessoa — e no caso do novo, materializando um numero que a Meta ou recusa (gastando
 // tier) ou entrega a OUTRA pessoa.
 const { telefoneUtilizavel } = require('./publicoDisparoWhatsapp');
+// Opt-out COM ESCOPO (Incremento 2). Entra na SELECAO DE PUBLICO, alem do guard por
+// registro que ja existe no momento do envio (lib/campanhaWhatsapp.js) — defesa em
+// profundidade deliberada: a selecao evita materializar a linha (e portanto evita gastar uma
+// vaga do UNIQUE(campanha_id, telefone), que e irreversivel), e o guard do envio pega quem
+// pediu para sair DEPOIS da materializacao, que e o caso mais comum de todos.
+const optout = require('./optoutWhatsapp');
 
 // ── AS EXCLUSOES AUTOMATICAS, QUE NAO SAO OPCAO DE TELA ──
 // Mesmo principio de promocaoVagas: sao invariantes, e transformar qualquer uma em checkbox
@@ -181,9 +187,19 @@ function aplicarInvariantes(pessoas, deps = {}) {
   // vem NORMALIZADO de coletarPessoas (normalizarTelefoneWhatsapp), mesma chave que o mapa
   // usa — ver o comentario de mapaStatusRecrutadorPorTelefone em sqlite.js.
   const statusPorTelefone = db.mapaStatusRecrutadorPorTelefone();
+  // Opt-out COM ESCOPO. Mapa carregado UMA vez, mesmo motivo de statusPorTelefone acima.
+  // O escopo e `campanha` porque aplicarInvariantes serve os objetivos 1 e 2 (convite de
+  // grupo, divulgacao de vaga) — os dois sao mensagem que NOS iniciamos. O objetivo 3
+  // (status da candidatura) nao passa por aqui e usa escopo transacional; ver
+  // listarPublicoStatusCandidatura mais abaixo.
+  const mapaOptout = optout.mapaOptoutAtivo({ db });
 
   return pessoas.filter((p) => {
     if (optOut.has(p.telefone)) return false;
+    // A tabela ANTIGA (whatsapp_opt_out, linha acima) continua valendo junto com a nova. Uma
+    // supressao a mais nunca e risco; deixar de ler a antiga poderia ressuscitar alguem que
+    // pediu para sair antes desta feature existir.
+    if (optout.optoutAtivoNoMapa(mapaOptout, p.telefone, optout.CONSULTA_CAMPANHA)) return false;
     // Suprimido por aprovacao (ETAPA B, Incremento B6): mesma logica do Incremento B1/B5,
     // agora batida em lote — ver o comentario acima.
     if (statusPorTelefone.get(p.telefone) === 'aprovado') return false;
@@ -361,6 +377,18 @@ function listarPublicoStatusCandidatura(jobId, statusList, deps = {}) {
   // cabecalho do arquivo). `status_recrutador IN (...)` no SQL ja exclui NULL ("sem decisao")
   // sozinho — IN nunca casa com NULL —, entao nao ha checagem extra a fazer aqui para isso.
   const optOut = db.listarTelefonesOptOutWhatsapp();
+  // ── ESCOPO TRANSACIONAL AQUI, E CAMPANHA NOS OUTROS DOIS OBJETIVOS ──
+  //
+  // Esta e a mesma linha divisoria que o comentario extenso acima ja traca para a supressao
+  // por aprovacao, agora aplicada ao opt-out. Informar o RESULTADO de uma candidatura e
+  // consequencia direta de um ato da propria pessoa: ela se inscreveu e espera saber se
+  // passou. Suprimir isso por um opt-out de escopo `campanha` faria alguem que so pediu
+  // "parem de me oferecer vagas" nunca mais descobrir que foi aprovado — que e precisamente
+  // o oposto do que ela pediu.
+  //
+  // Escopo `total` continua bloqueando: quem pediu silencio COMPLETO, com o aviso na tela
+  // dizendo o que isso significa, escolheu isto de olhos abertos.
+  const mapaOptout = optout.mapaOptoutAtivo({ db });
   const porTelefone = new Map();
 
   for (const linha of db.listarCandidatosPorVagaEStatusRecrutador(alvo, statusValidos)) {
@@ -368,6 +396,7 @@ function listarPublicoStatusCandidatura(jobId, statusList, deps = {}) {
     if (!telefone) continue;
     if (!telefoneUtilizavel(telefone, `application ${linha.id}`)) continue;
     if (optOut.has(telefone)) continue;
+    if (optout.optoutAtivoNoMapa(mapaOptout, telefone, optout.CONSULTA_TRANSACIONAL)) continue;
     if (porTelefone.has(telefone)) continue; // duplicata por telefone: a primeira (menor id) vence
     porTelefone.set(telefone, {
       telefone,

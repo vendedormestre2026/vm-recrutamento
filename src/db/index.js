@@ -178,6 +178,7 @@ module.exports = {
   marcarSequenciaWhatsappEnviada: driver.marcarSequenciaWhatsappEnviada,
   registrarTentativaSequenciaWhatsapp: driver.registrarTentativaSequenciaWhatsapp,
   marcarSequenciaWhatsappFalha: driver.marcarSequenciaWhatsappFalha,
+  marcarSequenciaWhatsappOptout: driver.marcarSequenciaWhatsappOptout,
   contarSequenciaWhatsapp: driver.contarSequenciaWhatsapp,
   listarSequenciaWhatsappDaApplication: driver.listarSequenciaWhatsappDaApplication,
   confirmarVideoWa2: driver.confirmarVideoWa2,

@@ -3155,6 +3155,31 @@ function marcarSequenciaWhatsappFalha(id, erro) {
     .run(String(erro || '').slice(0, 300), id).changes;
 }
 
+// Estado TERMINAL de supressao na fila da sequencia (P5).
+//
+// ── POR QUE 'optout' E NAO 'falha' ──
+// 'falha' e problema tecnico e conta tentativa; a pessoa ter pedido silencio nao e falha de
+// nada. Misturar os dois apagaria a unica metrica que diz se estamos incomodando, e ainda
+// somaria uma tentativa a um envio que nunca deve acontecer.
+//
+// ── POR QUE TERMINAL E NAO RETENTAVEL ──
+// Um estado retentavel deixaria a linha em 'pendente' e ela voltaria em TODO ciclo, para
+// sempre, ocupando uma vaga do teto por ciclo. E exatamente o head-of-line blocking que
+// custou uma campanha inteira no diagnostico do erro 131008 (ver classificarErroCentralWhats
+// em providers/centralWhats): a leitura de N por ciclo devolvia sempre os MESMOS N.
+//
+// A coluna `status` de whatsapp_sequencia_envios nao tem CHECK (ver schema.sql), entao o
+// valor novo entra sem alteracao de constraint — nada a recriar.
+function marcarSequenciaWhatsappOptout(id) {
+  return getDb()
+    .prepare(
+      `UPDATE whatsapp_sequencia_envios
+          SET status = 'optout', erro = 'opt-out ativo de escopo total'
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(id).changes;
+}
+
 // As duas etapas de UMA candidatura, para a ficha do candidato.
 //
 // UMA consulta que devolve as duas linhas, e nao duas consultas por etapa: a ficha ja faz
@@ -4289,6 +4314,7 @@ module.exports = {
   marcarSequenciaWhatsappEnviada,
   registrarTentativaSequenciaWhatsapp,
   marcarSequenciaWhatsappFalha,
+  marcarSequenciaWhatsappOptout,
   contarSequenciaWhatsapp,
   listarSequenciaWhatsappDaApplication,
   confirmarVideoWa2,
