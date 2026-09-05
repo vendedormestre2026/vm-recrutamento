@@ -182,6 +182,19 @@ async function listarPendentesPorCidade(cidade, deps = {}) {
   // Depois do merge, como o filtro de ja-enviados e pela mesma razao: a chave e o telefone
   // normalizado, que so existe depois do merge.
   const mapaOptout = optout.mapaOptoutAtivo({ db });
+  // ── LEITURA DUPLA: a tabela ANTIGA tambem (ajuste A3, pre-deploy) ──
+  //
+  // whatsapp_opt_out (sem escopo) esta VAZIA em producao — conferido por leitura em
+  // 2026-09-05 —, entao esta linha nao muda nada hoje. Ela existe porque a ASSIMETRIA e que
+  // era o problema: os outros dois motores de campanha ja liam as duas tabelas, e este lia
+  // so a nova. Um motor que suprime menos que os outros e a origem classica do bug que
+  // ninguem procura, porque o sintoma ("essa pessoa recebeu, mas so por um dos canais")
+  // nao aponta para lugar nenhum.
+  //
+  // A tabela antiga suprime SEM escopo, e aqui isso e correto: este motor so manda convite
+  // de grupo, que e campanha por definicao. O mesmo NAO vale para whatsapp/sequenciaOutbox —
+  // ver a nota de la sobre por que ela deliberadamente nao le esta tabela.
+  const optOutAntigo = db.listarTelefonesOptOutWhatsapp();
   // Contado a parte de `jaEnviados` de proposito (Incremento 7): "a fila veio menor do que eu
   // esperava" e uma pergunta que alguem faz, e sem este numero a unica resposta possivel
   // seria "nao sei". Suprimido por opt-out e um desfecho diferente de "ja recebeu", e o log
@@ -189,7 +202,7 @@ async function listarPendentesPorCidade(cidade, deps = {}) {
   let suprimidos = 0;
   const restantes = [...porTelefone.values()].filter((p) => {
     if (jaEnviados.has(p.telefone)) return false;
-    if (optout.optoutAtivoNoMapa(mapaOptout, p.telefone, optout.CONSULTA_CAMPANHA)) {
+    if (optOutAntigo.has(p.telefone) || optout.optoutAtivoNoMapa(mapaOptout, p.telefone, optout.CONSULTA_CAMPANHA)) {
       suprimidos += 1;
       return false;
     }

@@ -319,6 +319,16 @@ async function processarCicloSequencia(deps = {}) {
     // Escopo consultado por ETAPA, e nao fixo: se uma etapa de natureza diferente entrar
     // nesta fila um dia, ela e classificada em ESCOPO_POR_TIPO_MENSAGEM (lib/optoutWhatsapp)
     // e nao aqui — e o default de la, para etapa desconhecida, e o escopo mais restritivo.
+    //
+    // ── ⚠️ ESTE MOTOR NAO LE whatsapp_opt_out (a tabela ANTIGA), E ISSO E DELIBERADO ──
+    // Os tres motores de CAMPANHA leem as duas tabelas, porque uma supressao a mais ali
+    // nunca e risco. Aqui seria: a tabela antiga NAO TEM ESCOPO, entao qualquer linha dela
+    // valeria como bloqueio TOTAL e passaria a suprimir WA1/WA2 — travando o processo
+    // seletivo de quem so tinha pedido para parar de receber ofertas. E exatamente o erro
+    // que a coluna `escopo` da tabela nova existe para impedir (P1).
+    // Quem estiver na tabela antiga e quiser bloqueio total precisa de um registro
+    // `total` na tabela nova, feito por acao explicita.
+    // Nao "corrija" esta ausencia por simetria com os outros motores sem reler isto.
     const escopoEtapa = optout.escopoDoTipoMensagem(linha.etapa);
     if (optout.estaOptout(telefone, escopoEtapa, { db })) {
       // Status TERMINAL, nunca retentavel: em 'pendente' esta linha voltaria em todo ciclo,

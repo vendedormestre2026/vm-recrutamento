@@ -168,6 +168,51 @@ test('disparo por praca: suprimido NAO vira linha em disparos_whatsapp', async (
   assert.equal(db.getDb().prepare('SELECT COUNT(*) AS n FROM disparos_whatsapp').get().n, 0);
 });
 
+test('disparo por praca: le TAMBEM a tabela antiga whatsapp_opt_out (ajuste A3)', async () => {
+  zerar();
+  candidatura(vagaCom('Joinville'), 'Ana', '+55 47 90000-2035');
+  candidatura(vagaCom('Joinville'), 'Bruno', '+55 47 90000-2036');
+
+  // So na tabela ANTIGA, sem escopo. Antes do A3 este motor a ignorava — e era o unico dos
+  // tres de campanha que ignorava.
+  db.registrarOptOutWhatsapp('5547900002035', 'resposta_webhook');
+
+  const fila = await publicoDisparo.listarPendentesPorCidade('Joinville', semChecagemDeExistencia);
+  assert.deepEqual(
+    fila.map((p) => p.telefone),
+    ['5547900002036'],
+  );
+});
+
+test('paridade da tabela ANTIGA: os tres motores de campanha suprimem igual', async () => {
+  zerar();
+  const vagaAlvo = vagaCom('Joinville');
+  candidatura(vagaCom('Joinville'), 'Ana', '+55 47 90000-2037');
+  db.registrarOptOutWhatsapp('5547900002037', 'resposta_webhook');
+
+  assert.equal(publicoCampanha.listarPublicoConviteGrupo({}).total, 0, 'convite de grupo');
+  assert.equal(publicoCampanha.listarPublicoDivulgacaoVaga(vagaAlvo, {}).total, 0, 'divulgacao');
+  assert.equal(
+    (await publicoDisparo.listarPendentesPorCidade('Joinville', semChecagemDeExistencia)).length,
+    0,
+    'disparo por praca',
+  );
+});
+
+test('a SEQUENCIA continua NAO lendo a tabela antiga: WA1/WA2 saem (P1)', async () => {
+  zerar();
+  db.definirConfigBool(sequencia.CHAVE_ATIVO, true);
+  const id = candidatura(vagaCom('Joinville'), 'Ana', '+55 47 90000-2038');
+  agendar(id, '5547900002038', 'wa1');
+  // Linha na tabela ANTIGA, que nao tem escopo. Le-la aqui valeria como bloqueio TOTAL e
+  // travaria o processo seletivo de quem so pediu para sair das ofertas.
+  db.registrarOptOutWhatsapp('5547900002038', 'resposta_webhook');
+
+  const r = await rodarSequencia();
+  assert.equal(r.enviados, 1, 'a tabela antiga nao pode suprimir transacional');
+  assert.equal(r.pulados, 0);
+});
+
 // ══════════════════════════════════════════════════════════════
 // PARIDADE entre os motores
 // ══════════════════════════════════════════════════════════════
