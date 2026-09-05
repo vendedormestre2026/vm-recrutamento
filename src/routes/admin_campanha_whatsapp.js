@@ -29,7 +29,11 @@ const { PERFIS_VALIDOS } = require('../lib/promocaoVagas');
 const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
 const optout = require('../lib/optoutWhatsapp');
-const { precisaBotaoDinamico } = require('../lib/templatesWhatsapp');
+const {
+  precisaBotaoDinamico,
+  botoesDoTemplate,
+  indiceBotaoDescadastro,
+} = require('../lib/templatesWhatsapp');
 
 // Os TRES objetivos de campanha (ETAPA B, Incremento 12 — redesenho da segmentacao). O valor
 // gravado em campanhas_whatsapp.tipo_mensagem continua o mesmo de sempre (a coluna perdeu o
@@ -168,7 +172,73 @@ function checkboxes(escapeHtml, nome, pares, marcados) {
     .join('');
 }
 
-function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
+// ── COLUNA "BOTOES" DA TABELA DE TEMPLATES ──
+//
+// Existe porque, ate aqui, a unica forma de confirmar que um template ganhou botao depois de
+// uma sincronizacao era consultar o banco a mao. O passo "confira que o template aparece com
+// o botao de descadastro" do docs/template-opt-out-meta.md nao tinha onde ser conferido.
+//
+// ── OS TRES ESTADOS SAO DIFERENTES, E CONFUNDI-LOS CUSTA CARO ──
+//   botoes_json NULL  -> o sync NUNCA rodou desde que a coluna existe. NAO significa "sem
+//                        botao": significa que nao sabemos. Este e o estado de TODOS os
+//                        templates de producao agora (a coluna nasceu no deploy de hoje).
+//   botoes_json '[]'  -> o sync rodou e o template REALMENTE nao tem botao.
+//   com itens         -> o sync rodou e estes sao os botoes aprovados.
+//
+// Mostrar "nenhum" para o primeiro caso seria mentir, e a mentira e acionavel: alguem
+// concluiria que a Meta nao salvou o botao e resubmeteria um template que ja esta correto.
+function celulaBotoesTemplate(t, escapeHtml) {
+  if (t.botoes_json == null) {
+    return (
+      '<span style="color:var(--cinza);" ' +
+      'title="A lista de botões só é preenchida pela sincronização. Clique em ' +
+      '&quot;Sincronizar templates&quot; para saber.">não sincronizado</span>'
+    );
+  }
+
+  const botoes = botoesDoTemplate(t.botoes_json);
+  if (!botoes.length) return '<span style="color:var(--cinza);">nenhum</span>';
+
+  // O RECONHECIMENTO DO BOTAO DE DESCADASTRO E PELA URL, e nao pelo rotulo — e e a MESMA
+  // funcao que o motor de envio usa (indiceBotaoDescadastro). Marcar pelo texto do botao
+  // faria a tela dizer "descadastro ok" para um botao com o rotulo certo e a URL errada,
+  // enquanto o envio silenciosamente nao preencheria o parametro. A tela precisa refletir a
+  // opiniao do MOTOR, nao a aparencia.
+  const indiceSaida = indiceBotaoDescadastro(botoes);
+
+  return botoes
+    .map((b) => {
+      const selo =
+        b.indice === indiceSaida
+          ? ' <span class="badge badge--ativa" title="É este que recebe o token de descadastro no envio.">descadastro</span>'
+          : '';
+      const rotulo = String(b.texto || '').trim() || '(sem rótulo)';
+      return `<div style="white-space:nowrap"><code>${b.indice}</code> ${escapeHtml(rotulo)}${selo}</div>`;
+    })
+    .join('');
+}
+
+// ── COLUNA "SINCRONIZACAO" ──
+//
+// ⚠️ `atualizado_em` SOZINHO NAO RESPONDE A PERGUNTA. Ele e antigo em producao (27/08, da
+// ultima sincronizacao) enquanto `botoes_json` e NULL — ou seja, houve sync, mas ANTES de a
+// coluna de botoes existir. Uma coluna que mostrasse so a data diria "sincronizado em 27/08"
+// para um template cujo dado de botao nunca foi capturado, que e exatamente a leitura errada.
+//
+// Por isso o ESTADO vem de `botoes_json` e a data e informacao complementar.
+function celulaSincronizacaoTemplate(t, escapeHtml, formatarDataHora) {
+  const quando = t.atualizado_em ? escapeHtml(formatarDataHora(t.atualizado_em)) : null;
+  if (t.botoes_json == null) {
+    return (
+      '<span style="color:var(--cinza);" title="Sincronize para capturar os botões deste ' +
+      'template.">pendente</span>' +
+      (quando ? `<br><small style="color:var(--cinza);">última: ${quando}</small>` : '')
+    );
+  }
+  return quando || '<span style="color:var(--cinza);">—</span>';
+}
+
+function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, query = {} }) {
   const inteiro = (v) => (fmtInt ? fmtInt(v) : String(v));
 
   // ── Aviso pos-sincronizacao de templates, sinalizado por query string apos o redirect ──
@@ -346,14 +416,16 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
       </form>
       <div class="admin-tab-scroll">
         <table class="admin-tab" style="min-width:auto">
-          <thead><tr><th>Nome na Meta</th><th>Idioma</th><th>Categoria</th><th>Variáveis</th></tr></thead>
+          <thead><tr><th>Nome na Meta</th><th>Idioma</th><th>Categoria</th><th>Variáveis</th><th>Botões</th><th>Sincronização</th></tr></thead>
           <tbody>${templates.map((t) => `
             <tr>
               <td><code>${escapeHtml(t.nome_meta)}</code></td>
               <td>${escapeHtml(t.idioma)}</td>
               <td>${escapeHtml(t.categoria)}</td>
               <td style="font-size:.85rem">${escapeHtml(t.variaveis)}</td>
-            </tr>`).join('') || '<tr><td colspan="4">Nenhum template. Rode o seed.</td></tr>'}
+              <td style="font-size:.85rem">${celulaBotoesTemplate(t, escapeHtml)}</td>
+              <td style="font-size:.85rem">${celulaSincronizacaoTemplate(t, escapeHtml, formatarDataHora)}</td>
+            </tr>`).join('') || '<tr><td colspan="6">Nenhum template. Rode o seed.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -756,12 +828,24 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query = {} }) {
     </section>`;
 }
 
-function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBusca, transporte = transportePadrao }) {
+function criarRouterCampanhaWhatsapp({
+  paginaAdmin,
+  escapeHtml,
+  fmtInt,
+  sanearBusca,
+  formatarDataHora,
+  transporte = transportePadrao,
+}) {
   const router = express.Router();
 
   // ── GET / ── a tela ──
   router.get('/', (req, res) => {
-    const conteudo = montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, query: req.query || {} });
+    const conteudo = montarConteudoCampanhaWhatsapp({
+      escapeHtml,
+      fmtInt,
+      formatarDataHora,
+      query: req.query || {},
+    });
     res.send(paginaAdmin({ titulo: 'Campanha por WhatsApp', conteudo }));
   });
 

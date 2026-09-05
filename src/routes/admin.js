@@ -5677,7 +5677,10 @@ router.use('/promocao', criarRouterPromocao({ paginaAdmin, formatarDataHora, fmt
 // Tela de pareamento do WhatsApp. Sem auth propria — herda o router.use(adminAuth) la em
 // cima, igual as demais telas do painel.
 router.use('/whatsapp', criarRouterWhatsapp({ paginaAdmin, escapeHtml }));
-router.use('/campanhas-whatsapp', criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBusca }));
+router.use(
+  '/campanhas-whatsapp',
+  criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBusca, formatarDataHora }),
+);
 // Opt-outs de WhatsApp. Mesmo mount protegido das telas acima — ver o comentario da
 // Promocao de Vagas sobre o que acontece se esta linha subir para antes do adminAuth.
 router.use('/optouts', criarRouterOptout({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }));

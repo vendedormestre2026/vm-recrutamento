@@ -2253,6 +2253,137 @@ test('admin: os DOIS selects de escolha (Nova campanha, Testar envio avulso) so 
   });
 });
 
+// ══════════════════ Coluna "Botoes" da tabela de templates ══════════════════
+//
+// A tela era cega para botoes: depois de sincronizar, a unica forma de confirmar que um
+// template ganhou o botao de descadastro era consultar o banco a mao. Os TRES estados
+// precisam ser distinguiveis, e confundir os dois primeiros e o erro caro: "nao
+// sincronizado" nao e "sem botao".
+
+const URL_SAIDA = 'https://entrevista.vendedormestre.com.br/descadastro-whatsapp/{{1}}';
+const URL_GRUPO = 'https://entrevista.vendedormestre.com.br/grupo/{{1}}';
+
+function criarTemplateComBotoes(nomeMeta, botoes) {
+  return Number(
+    exec(
+      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botoes_json, ativo)
+       VALUES (?, 'pt_BR', 'marketing', ?, ?, 1)`,
+      nomeMeta,
+      JSON.stringify(TEMPLATE.variaveis),
+      botoes === null ? null : JSON.stringify(botoes),
+    ).lastInsertRowid,
+  );
+}
+
+// Recorta a linha <tr> da tabela que contem o nome do template, para as assercoes nao
+// casarem por acidente com texto de outra linha.
+function linhaDoTemplate(html, nomeMeta) {
+  const linhas = html.split('<tr>');
+  const achada = linhas.find((l) => l.includes(nomeMeta));
+  assert.ok(achada, `linha de ${nomeMeta} nao encontrada na tabela`);
+  return achada;
+}
+
+test('coluna Botoes: template NUNCA sincronizado diz "não sincronizado", nunca "nenhum"', async () => {
+  zerar();
+  criarTemplateComBotoes('tpl_nunca_sync_vm', null);
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    const linha = linhaDoTemplate(html, 'tpl_nunca_sync_vm');
+    assert.match(linha, /não sincronizado/);
+    assert.doesNotMatch(linha, />nenhum</, 'dizer "nenhum" aqui seria mentir: nao sabemos');
+    // E a coluna de sincronizacao acompanha.
+    assert.match(linha, /pendente/);
+  });
+});
+
+test('coluna Botoes: template sincronizado SEM botao diz "nenhum"', async () => {
+  zerar();
+  criarTemplateComBotoes('tpl_sync_zero_vm', []);
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    const linha = linhaDoTemplate(html, 'tpl_sync_zero_vm');
+    assert.match(linha, />nenhum</);
+    assert.doesNotMatch(linha, /não sincronizado/);
+    assert.doesNotMatch(linha, /pendente/);
+  });
+});
+
+test('coluna Botoes: lista rotulo e indice na ordem, e marca o de descadastro', async () => {
+  zerar();
+  criarTemplateComBotoes('tpl_dois_botoes_vm', [
+    { indice: 0, tipo: 'URL', texto: 'Entrar no Grupo', url: URL_GRUPO },
+    { indice: 1, tipo: 'URL', texto: 'Não quero mais receber', url: URL_SAIDA },
+  ]);
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    const linha = linhaDoTemplate(html, 'tpl_dois_botoes_vm');
+    assert.match(linha, /Entrar no Grupo/);
+    assert.match(linha, /Não quero mais receber/);
+    assert.match(linha, /<code>0<\/code>/);
+    assert.match(linha, /<code>1<\/code>/);
+    // O selo aparece UMA vez so — no botao de descadastro, nao no do grupo.
+    assert.equal((linha.match(/>descadastro</g) || []).length, 1);
+    // E ele vem DEPOIS do rotulo certo.
+    assert.match(linha, /Não quero mais receber\s*<span class="badge[^>]*>descadastro/);
+  });
+});
+
+test('coluna Botoes: template so com o botao do grupo NAO ganha o selo de descadastro', async () => {
+  zerar();
+  criarTemplateComBotoes('tpl_so_grupo_vm', [
+    { indice: 0, tipo: 'URL', texto: 'Entrar no Grupo', url: URL_GRUPO },
+  ]);
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    const linha = linhaDoTemplate(html, 'tpl_so_grupo_vm');
+    assert.match(linha, /Entrar no Grupo/);
+    assert.doesNotMatch(linha, />descadastro</);
+  });
+});
+
+test('coluna Botoes: o selo segue a URL, e NAO o rotulo do botao', async () => {
+  zerar();
+  // Rotulo certo, URL errada (aponta para o caminho do e-mail). O motor de envio NAO
+  // preencheria o parametro; a tela nao pode dizer que esta tudo certo.
+  criarTemplateComBotoes('tpl_rotulo_enganoso_vm', [
+    { indice: 0, tipo: 'URL', texto: 'Não quero mais receber', url: 'https://x/descadastro/{{1}}' },
+  ]);
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    const linha = linhaDoTemplate(html, 'tpl_rotulo_enganoso_vm');
+    assert.match(linha, /Não quero mais receber/, 'o botao aparece na lista');
+    assert.doesNotMatch(linha, />descadastro</, 'mas sem selo: a URL nao casa com a rota');
+  });
+});
+
+test('coluna Botoes: botao sem rotulo nao quebra a celula', async () => {
+  zerar();
+  criarTemplateComBotoes('tpl_sem_rotulo_vm', [{ indice: 0, tipo: 'URL', texto: '', url: URL_SAIDA }]);
+  await comAdmin(async (base, h) => {
+    const html = await (await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h })).text();
+    const linha = linhaDoTemplate(html, 'tpl_sem_rotulo_vm');
+    assert.match(linha, /\(sem rótulo\)/);
+    assert.match(linha, />descadastro</, 'o selo depende da URL, entao continua valendo');
+  });
+});
+
+test('coluna Botoes: botoes_json corrompido nao derruba a tela', async () => {
+  zerar();
+  exec(
+    `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botoes_json, ativo)
+     VALUES ('tpl_json_ruim_vm', 'pt_BR', 'marketing', ?, '{nao e json', 1)`,
+    JSON.stringify(TEMPLATE.variaveis),
+  );
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, { headers: h });
+    assert.equal(res.status, 200);
+    const linha = linhaDoTemplate(await res.text(), 'tpl_json_ruim_vm');
+    // botoesDoTemplate devolve [] para JSON invalido; a celula cai em "nenhum".
+    assert.match(linha, />nenhum</);
+  });
+});
+
 test('admin: POST / com template INATIVO -> erro claro, nenhuma campanha criada', async () => {
   zerar();
   const inativoId = criarTemplateInativo('tpl_post_inativo_9');
