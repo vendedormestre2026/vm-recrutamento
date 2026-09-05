@@ -1248,11 +1248,27 @@ test('opt-out por PALAVRA-CHAVE grava; resposta comum NAO grava', async () => {
 });
 
 test('pedeOptOut: casa a mensagem inteira, nao "contem a palavra"', () => {
-  for (const sim of ['parar', 'PARAR', 'Sair', 'stop', 'cancelar!', 'parar por favor', 'nao quero']) {
+  for (const sim of ['parar', 'PARAR', 'Sair', 'stop', 'cancelar!', 'parar por favor']) {
     assert.equal(webhook.pedeOptOut(sim), true, sim);
   }
   for (const nao of ['obrigado', 'quero saber mais', 'nao posso parar de agradecer', '', null]) {
     assert.equal(webhook.pedeOptOut(nao), false, String(nao));
+  }
+});
+
+// ── MUDANCA DE COMPORTAMENTO DELIBERADA (Incremento 6 do opt-out) ──
+//
+// 'nao quero' saiu da lista e ERA um caso `true` neste teste ate aqui. A regra antiga casava
+// por PREFIXO, entao "nao quero parar de receber" — que diz o CONTRARIO de um pedido de
+// saida — comecava com "nao quero " e virava descadastro. O comentario da versao antiga ja
+// registrava esse risco como conhecido e nao tratado.
+//
+// A lista nova exige palavra EXATA em mensagem curta, e qualquer negacao desqualifica. O
+// custo e deixar de reconhecer "nao quero" solto; o beneficio e nunca descadastrar quem
+// escreveu que NAO quer sair. Ver lib/pedidoSaidaWhatsapp.js.
+test('pedeOptOut: negacao NAO vira opt-out (regressao do falso positivo antigo)', () => {
+  for (const nao of ['nao quero parar de receber', 'nao quero parar', 'nao quero', 'nunca parar']) {
+    assert.equal(webhook.pedeOptOut(nao), false, nao);
   }
 });
 

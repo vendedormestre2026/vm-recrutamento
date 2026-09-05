@@ -40,43 +40,30 @@ const crypto = require('node:crypto');
 const db = require('../db');
 const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
+const { pedeSaida, PALAVRAS_SAIDA } = require('../lib/pedidoSaidaWhatsapp');
+const optout = require('../lib/optoutWhatsapp');
 
 const router = express.Router();
 
-// ── DECISAO: OPT-OUT POR PALAVRA-CHAVE, e nao por qualquer resposta ──
+// ── OPT-OUT POR PALAVRA-CHAVE ──
 //
-// Na ausencia de instrucao, esta e a escolha CONSERVADORA — e conservador aqui significa
-// "nao descadastrar quem nao pediu". Uma campanha que convida para um grupo naturalmente
-// gera respostas do tipo "obrigado", "qual o horario?", "ainda tem vaga?". Tratar cada uma
-// dessas como opt-out removeria da base exatamente as pessoas MAIS interessadas.
+// A heuristica MUDOU no Incremento 6 do opt-out e agora mora em lib/pedidoSaidaWhatsapp.js,
+// modulo-folha compartilhado — porque a MESMA regra vai valer no webhook de entrada da
+// Central Whats quando ele existir (especificado em docs/webhook-entrada-centralwhats.md), e
+// duas copias dela divergiriam no primeiro ajuste.
 //
-// O risco do outro lado existe e esta registrado: alguem escreve "não quero mais receber"
-// (frase que contem "quero", nao a palavra exata) e continua na base. Por isso a lista
-// abaixo cobre as formas mais comuns, e a comparacao ignora acento, caixa e pontuacao.
+// ── O QUE A VERSAO ANTERIOR ERRAVA ──
+// Ela casava por PREFIXO (`t.startsWith(palavra + ' ')`) e tinha "nao quero" na lista. A
+// combinacao produzia um falso positivo grave: "nao quero parar de receber" comeca com
+// "nao quero " e virava um descadastro — exatamente o oposto do que a pessoa escreveu. O
+// proprio comentario antigo registrava esse risco como conhecido e nao tratado.
 //
-// ⚠️ ESTA DECISAO PRECISA DE CONFIRMACAO HUMANA. Se a resposta for "qualquer resposta e
-// opt-out", a mudanca e trocar a condicao em processarMensagemRecebida por `true`.
-const PALAVRAS_OPT_OUT = ['parar', 'sair', 'pare', 'stop', 'cancelar', 'descadastrar', 'remover', 'nao quero'];
-
-function normalizarTexto(t) {
-  return String(t || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[.!?,;]/g, '')
-    .replace(/\s+/g, ' ');
-}
-
-// A mensagem PEDE para sair?
+// A regra nova exige mensagem CURTA, palavra EXATA, sem negacao e sem contexto de outra
+// coisa. Ver o cabecalho do modulo para as quatro regras e o porque de cada uma.
 //
-// Casa a mensagem INTEIRA (ou o inicio dela), e nao "contem a palavra": "não posso parar de
-// agradecer" contem "parar" e nao e opt-out. Mensagem curta com a palavra e o caso real.
-function pedeOptOut(texto) {
-  const t = normalizarTexto(texto);
-  if (!t) return false;
-  return PALAVRAS_OPT_OUT.some((p) => t === p || t.startsWith(`${p} `) || t === `${p}!`);
-}
+// `pedeOptOut` continua exportado com o mesmo nome e o mesmo contrato (texto -> booleano):
+// e o que o teste existente consome, e nao ha razao para renomear.
+const pedeOptOut = pedeSaida;
 
 // Assinatura em tempo constante. Compara HASHES para os buffers terem sempre o mesmo
 // tamanho — timingSafeEqual LANCA com tamanhos diferentes, e a excecao seria canal lateral.
@@ -189,11 +176,33 @@ function processarMensagemRecebida(msg) {
     return;
   }
 
+  // ── ESCOPO `campanha`, NUNCA `total` ──
+  // Quem escreve "sair" esta respondendo a uma mensagem de divulgacao e quer parar de
+  // receber ofertas. Presumir que ele tambem quer perder o resultado de uma candidatura
+  // futura seria interpretar demais — ver P1 em lib/optoutWhatsapp.js.
+  //
+  // Grava nas DUAS tabelas: a nova (com escopo, que e a fonte de verdade) e a antiga (sem
+  // escopo, que os motores tambem leem). A antiga continua sendo escrita enquanto existir,
+  // porque uma supressao a mais nunca e risco.
+  const r = optout.registrarOptout({
+    telefone,
+    escopo: optout.ESCOPO_CAMPANHA,
+    origem: optout.ORIGEM_RESPOSTA,
+    motivo: 'respondeu pedindo para sair (webhook Meta)',
+  });
   const criou = db.registrarOptOutWhatsapp(telefone, 'resposta_webhook');
   console.log(
-    `[webhook-meta] OPT-OUT de ${mascarar(telefone)} ${criou ? 'registrado' : '(ja existia)'} ` +
-      `— palavra-chave reconhecida.`,
+    `[webhook-meta] OPT-OUT de ${mascarar(telefone)} ${r.criado || criou ? 'registrado' : '(ja existia)'} ` +
+      `— palavra-chave reconhecida, escopo ${optout.ESCOPO_CAMPANHA}.`,
   );
 }
 
-module.exports = { router, pedeOptOut, assinaturaConfere, PALAVRAS_OPT_OUT, processarEventos };
+module.exports = {
+  router,
+  pedeOptOut,
+  assinaturaConfere,
+  // Nome antigo mantido para nao quebrar quem ja importava; a lista agora e uma so, e mora
+  // em lib/pedidoSaidaWhatsapp.
+  PALAVRAS_OPT_OUT: PALAVRAS_SAIDA,
+  processarEventos,
+};
