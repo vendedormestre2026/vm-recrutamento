@@ -119,6 +119,26 @@ function escopoDoTipoMensagem(tipo) {
   return ESCOPO_POR_TIPO_MENSAGEM[String(tipo || '').trim()] || CONSULTA_CAMPANHA;
 }
 
+// ── ESCOPO A PARTIR DA CATEGORIA DO TEMPLATE ──
+//
+// Existe para o envio avulso de teste (POST /admin/campanhas-whatsapp/enviar-teste), que e o
+// unico ponto de envio SEM campanha por tras: ele escolhe um TEMPLATE direto, entao nao ha
+// `tipo_mensagem` para consultar em ESCOPO_POR_TIPO_MENSAGEM.
+//
+// A categoria da Meta ja carrega exatamente essa distincao, e nao e uma aproximacao nossa:
+//   'marketing'       mensagem promocional nao solicitada -> campanha
+//   'utility'         acompanhamento de algo que a pessoa iniciou -> transacional
+//   'authentication'  codigo/verificacao, sempre iniciado por ela -> transacional
+//
+// A propria Meta cobra mais caro por 'marketing' e exige opt-in verificavel para ela, o que
+// confirma a leitura. Categoria desconhecida cai em `campanha`, o escopo mais restritivo —
+// mesmo criterio de escopoDoTipoMensagem.
+function escopoDaCategoriaTemplate(categoria) {
+  const c = String(categoria || '').trim().toLowerCase();
+  if (c === 'utility' || c === 'authentication') return CONSULTA_TRANSACIONAL;
+  return CONSULTA_CAMPANHA;
+}
+
 // ── KILL-SWITCH ──
 // Chave em `configuracoes`, mesmo store de promocao_ativa/campanha_whatsapp_ativa. Config de
 // BANCO e nao env: precisa ser desligavel pelo painel sem deploy.
@@ -257,6 +277,7 @@ module.exports = {
   ORIGEM_IMPORTACAO,
   ESCOPO_POR_TIPO_MENSAGEM,
   escopoDoTipoMensagem,
+  escopoDaCategoriaTemplate,
   CHAVE_ATIVO,
   ativo,
   CHAVE_LINK_ATIVO,

@@ -11,6 +11,25 @@
 // provar que o caminho novo — Recrutador -> Central Whats -> Meta -> aparelho — funciona de
 // ponta a ponta, sem envolver campanha nenhuma.
 //
+// ── ⚠️ ESTE SCRIPT NAO CONSULTA OPT-OUT, E ISSO E DELIBERADO ──
+// Todos os caminhos de envio do PRODUTO passam pelo guard de lib/optoutWhatsapp — os dois
+// motores de publico, os dois motores de envio e o envio avulso do painel
+// (routes/admin_campanha_whatsapp.js, POST /enviar-teste). Este script e a unica excecao.
+//
+// A razao nao e esquecimento: `estaOptout` precisa do BANCO (le whatsapp_optout e o
+// kill-switch em `configuracoes`), e este script hoje nao abre banco nenhum — ele existe
+// para testar o TRANSPORTE isolado, e essa e a propriedade que o torna seguro.
+//
+// Acrescentar a dependencia produziria um modo de falha pior que a ausencia da checagem:
+// rodado fora do container (com `railway run`, ou na maquina local), DATABASE_PATH cai no
+// ./data/app.db de desenvolvimento, e a consulta responderia "nao ha opt-out" lendo um banco
+// vazio. Seria uma checagem que PARECE proteger e nao protege — exatamente o tipo de falso
+// positivo silencioso que o resto deste projeto evita.
+//
+// A protecao real aqui e operacional e ja existe: TESTE_TELEFONE_DESTINO e obrigatoria e
+// digitada a mao, CONFIRMAR_ENVIO_REAL tambem, e o destino e UM numero escolhido por uma
+// pessoa. Antes de usar em numero de terceiro, confira em /admin/optouts.
+//
 // ── POR QUE ELE E MELHOR QUE "rodar uma campanha de teste com 1 destinatario" ──
 // Aquele caminho exige tres coisas perigosas ao mesmo tempo: materializar um publico, ligar o
 // interruptor da campanha e por META_CAMPANHA_MOCK=false NO SERVICO. A terceira e a pior — o

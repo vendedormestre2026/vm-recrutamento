@@ -40,6 +40,7 @@ const { criarApp } = require('../src/server');
 const transporte = require('../src/providers/centralWhats/centralWhats');
 const job = require('../src/lib/campanhaWhatsapp');
 const webhook = require('../src/routes/webhook_meta');
+const optout = require('../src/lib/optoutWhatsapp');
 const { listarCidadesValidas } = require('../src/lib/cidades');
 const { montarConteudoCampanhaWhatsapp, criarRouterCampanhaWhatsapp } = require('../src/routes/admin_campanha_whatsapp');
 const { escapeHtml } = require('../src/views');
@@ -80,6 +81,10 @@ function zerar() {
   exec('DELETE FROM templates_whatsapp');
   exec('DELETE FROM regioes_grupos_whatsapp');
   exec('DELETE FROM whatsapp_opt_out');
+  // Tabela NOVA (com escopo), alem da antiga. Sem esta linha, um opt-out registrado por um
+  // teste vaza para os seguintes e suprime destinatarios que eles esperam ver — foi
+  // exatamente o que aconteceu ao acrescentar os testes do guard de /enviar-teste.
+  exec('DELETE FROM whatsapp_optout');
   db.definirConfigBool(job.CHAVE_ATIVO, false);
 }
 
@@ -2900,6 +2905,144 @@ const enviarTestePost = (base, body) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+
+// ══════════════════════════════════════════════════════════════
+// POST /enviar-teste — guard de opt-out (ajuste A2, pre-deploy)
+// ══════════════════════════════════════════════════════════════
+//
+// Este e o unico ponto de envio do projeto SEM campanha por tras, e ele manda template REAL
+// com forcarEnvioReal:true — fura ate o mock. Escapou do guard dos motores ate a verificacao
+// pre-deploy. O escopo vem da CATEGORIA do template, ja que nao ha `tipo_mensagem`.
+//
+// Os tres testes usam `transporteNuncaChamado` nos casos de bloqueio: a prova que importa e
+// que a REDE NUNCA FOI TOCADA, nao so o status HTTP.
+
+function templateDe(nome, categoria) {
+  return Number(
+    exec(
+      'INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis) VALUES (?, ?, ?, ?)',
+      nome,
+      'pt_BR',
+      categoria,
+      JSON.stringify([{ posicao: 1, campo: 'nome_primeiro' }]),
+    ).lastInsertRowid,
+  );
+}
+
+function cenarioEnvioTeste() {
+  zerarSeg(); // ja limpa as duas tabelas de opt-out e os templates
+  exec("DELETE FROM configuracoes WHERE chave = 'optout_whatsapp_ativo'");
+  const j = vagaCom('Joinville');
+  exec(
+    'INSERT OR IGNORE INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, slug) VALUES (?, ?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/A2', 'joinville',
+  );
+  return { appId: candidatura(j, 'Alvo A2', '+55 47 99958-2500') };
+}
+
+test('POST /enviar-teste: opt-out campanha + template MARKETING -> bloqueado, sem tocar a rede', async () => {
+  const { appId } = cenarioEnvioTeste();
+  const tid = templateDe('marketing_a2_vm', 'marketing');
+  optout.registrarOptout({ telefone: '5547999582500', escopo: 'campanha', origem: 'link' });
+
+  await comRotaEnviarTeste(transporteNuncaChamado, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId,
+      templateId: tid,
+      telefoneDestino: '+5547999582500',
+    });
+    assert.equal(res.status, 409);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, false);
+    // A mensagem precisa dizer o que fazer, nao so que falhou.
+    assert.match(corpo.erro, /pediu para não receber/);
+    assert.match(corpo.erro, /\/admin\/optouts/);
+    // E precisa carregar escopo, origem e data.
+    assert.equal(corpo.optout.escopo, 'campanha');
+    assert.equal(corpo.optout.origem, 'link');
+    assert.ok(corpo.optout.criado_em);
+  });
+});
+
+test('POST /enviar-teste: MESMO numero + template UTILITY (transacional) -> permitido', async () => {
+  const { appId } = cenarioEnvioTeste();
+  const tid = templateDe('utility_a2_vm', 'utility');
+  optout.registrarOptout({ telefone: '5547999582500', escopo: 'campanha', origem: 'link' });
+
+  const chamadas = [];
+  const transporteOk = {
+    enviarTemplate: async (args) => {
+      chamadas.push(args);
+      return { wamid: 'wamid-a2', mock: false };
+    },
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+
+  await comRotaEnviarTeste(transporteOk, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId,
+      templateId: tid,
+      telefoneDestino: '+5547999582500',
+    });
+    assert.equal(res.status, 200, 'opt-out de campanha nao pode barrar um template utility');
+    assert.equal(chamadas.length, 1);
+  });
+});
+
+test('POST /enviar-teste: opt-out TOTAL bloqueia ate o template utility', async () => {
+  const { appId } = cenarioEnvioTeste();
+  const tid = templateDe('utility_a2_total_vm', 'utility');
+  optout.registrarOptout({ telefone: '5547999582500', escopo: 'total', origem: 'manual' });
+
+  await comRotaEnviarTeste(transporteNuncaChamado, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId,
+      templateId: tid,
+      telefoneDestino: '+5547999582500',
+    });
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).optout.escopo, 'total');
+  });
+});
+
+test('POST /enviar-teste: com o kill-switch DESLIGADO, o envio passa', async () => {
+  const { appId } = cenarioEnvioTeste();
+  const tid = templateDe('marketing_a2_off_vm', 'marketing');
+  optout.registrarOptout({ telefone: '5547999582500', escopo: 'campanha', origem: 'link' });
+  db.definirConfigBool(optout.CHAVE_ATIVO, false);
+
+  const chamadas = [];
+  const transporteOk = {
+    enviarTemplate: async (args) => {
+      chamadas.push(args);
+      return { wamid: 'wamid-a2-off', mock: false };
+    },
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+
+  try {
+    await comRotaEnviarTeste(transporteOk, async (base) => {
+      const res = await enviarTestePost(base, {
+        applicationId: appId,
+        templateId: tid,
+        telefoneDestino: '+5547999582500',
+      });
+      assert.equal(res.status, 200);
+      assert.equal(chamadas.length, 1);
+    });
+  } finally {
+    db.definirConfigBool(optout.CHAVE_ATIVO, true);
+  }
+});
+
+test('escopoDaCategoriaTemplate: marketing e campanha; utility e authentication sao transacionais', () => {
+  assert.equal(optout.escopoDaCategoriaTemplate('marketing'), 'campanha');
+  assert.equal(optout.escopoDaCategoriaTemplate('utility'), 'transacional');
+  assert.equal(optout.escopoDaCategoriaTemplate('authentication'), 'transacional');
+  // Desconhecida cai no escopo MAIS restritivo, igual a escopoDoTipoMensagem.
+  assert.equal(optout.escopoDaCategoriaTemplate('inventada'), 'campanha');
+  assert.equal(optout.escopoDaCategoriaTemplate(''), 'campanha');
+});
 
 test('GET /buscar-candidato: exige sessao, igual as demais rotas', async () => {
   await comServidor(async (base) => {

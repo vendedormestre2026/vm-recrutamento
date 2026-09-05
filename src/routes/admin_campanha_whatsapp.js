@@ -28,6 +28,7 @@ const { PERFIS_VALIDOS } = require('../lib/promocaoVagas');
 // completo nunca aparece no stdout, mesma disciplina do resto do projeto.
 const { validarTelefoneBrEstrito } = require('../lib/whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
+const optout = require('../lib/optoutWhatsapp');
 const { precisaBotaoDinamico } = require('../lib/templatesWhatsapp');
 
 // Os TRES objetivos de campanha (ETAPA B, Incremento 12 — redesenho da segmentacao). O valor
@@ -990,6 +991,46 @@ function criarRouterCampanhaWhatsapp({ paginaAdmin, escapeHtml, fmtInt, sanearBu
       return res.status(400).json({
         ok: false,
         erro: 'Telefone de destino invalido. Use o formato +55DDNNNNNNNNN, com DDD real e o nono digito no celular.',
+      });
+    }
+
+    // ── OPT-OUT, ANTES DE QUALQUER CHAMADA AO PROVEDOR ──
+    //
+    // Este e o unico ponto de envio do projeto SEM campanha por tras, e por isso escapou do
+    // guard dos motores ate a verificacao pre-deploy. Ele manda template REAL, com
+    // `forcarEnvioReal: true` (fura ate o mock), para um numero digitado a mao — mandar
+    // marketing para quem pediu para sair aqui custa o mesmo que numa campanha de mil.
+    //
+    // O escopo vem da CATEGORIA do template, e nao de `tipo_mensagem`: nao ha campanha, logo
+    // nao ha tipo. A categoria da Meta ('marketing' x 'utility'/'authentication') carrega
+    // exatamente a mesma distincao — ver escopoDaCategoriaTemplate em lib/optoutWhatsapp.js.
+    //
+    // A checagem e sobre `telefone` (o destino digitado), e NAO sobre o telefone do candidato
+    // escolhido: sao campos independentes nesta tela, e quem recebe a mensagem e o primeiro.
+    //
+    // `optout.estaOptout` ja respeita o kill-switch `optout_whatsapp_ativo` internamente, e
+    // por isso ele nao e consultado de novo aqui — uma segunda leitura poderia divergir da
+    // primeira no dia em que a regra mudasse.
+    const escopoTeste = optout.escopoDaCategoriaTemplate(template.categoria);
+    if (optout.estaOptout(telefone, escopoTeste)) {
+      const registro = db.obterWhatsappOptout(telefone);
+      // Se `estaOptout` disse sim, o registro existe — mas a leitura e defensiva porque as
+      // duas consultas nao sao atomicas e a tela nao pode quebrar por causa disso.
+      const detalhe = registro
+        ? `Escopo: ${registro.escopo}. Origem: ${registro.origem}. Desde: ${registro.criado_em}.`
+        : 'Não foi possível ler os detalhes do registro.';
+      console.warn(
+        `[campanha-wa] envio avulso BLOQUEADO por opt-out: ${mascarar(telefone)} ` +
+          `(template '${template.nome_meta}', categoria ${template.categoria}, escopo ${escopoTeste}).`,
+      );
+      return res.status(409).json({
+        ok: false,
+        erro:
+          'Este número pediu para não receber mensagens e o envio foi bloqueado. ' +
+          `${detalhe} Para liberar, revogue o opt-out em /admin/optouts.`,
+        optout: registro
+          ? { escopo: registro.escopo, origem: registro.origem, criado_em: registro.criado_em }
+          : null,
       });
     }
 
