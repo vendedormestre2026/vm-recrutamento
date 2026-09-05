@@ -17,6 +17,8 @@ const {
   lerEmailDaUrl,
   ORIGEM_LINK_EMAIL,
 } = require('../lib/descadastro');
+const { lerTokenDescadastroWhatsapp } = require('../lib/descadastroWhatsapp');
+const optout = require('../lib/optoutWhatsapp');
 const {
   calcularPontuacaoGeral,
   badgeRecomendacaoHtml,
@@ -1491,6 +1493,180 @@ router.post('/descadastro', (req, res) => {
   res.send(
     pagina({ titulo: 'Descadastro concluído', tema: 'claro', semRastreio: true, conteudo }),
   );
+});
+
+// ──────────────────────────────────────────────────────────────
+// Descadastro por WHATSAPP — GET /descadastro/:token + POST /descadastro/whatsapp
+// ──────────────────────────────────────────────────────────────
+//
+// Publicas, alcancadas pelo link que vai dentro da mensagem de campanha. Irmas das rotas de
+// descadastro por e-mail, logo acima, e com as MESMAS duas decisoes estruturais:
+//
+//   1. O GET NAO EFETIVA NADA. Aqui a razao e ainda mais direta que no e-mail: o WhatsApp
+//      PRE-CARREGA os links de uma mensagem para montar a previa, e antivirus e scanners de
+//      seguranca abrem URLs sozinhos. Se o GET mudasse estado, as pessoas seriam
+//      descadastradas sem nunca ter tocado no link — e o sintoma seria "a base encolhe
+//      sozinha", quase impossivel de diagnosticar depois. NAO transforme isto num clique so.
+//   2. Erro GENERICO. Token invalido, malformado, adulterado ou de versao desconhecida
+//      recebem a MESMA pagina 404. Distinguir os casos ajudaria mais quem esta sondando do
+//      que quem tem um link quebrado, e a rota nunca pode virar um oraculo de "este numero
+//      esta na base?".
+//
+// ── POR QUE O POST NAO E EM /descadastro ──
+// Aquele caminho ja e do fluxo de E-MAIL, inclusive do One-Click (RFC 8058), que faz POST
+// direto na URL sem corpo de formulario. Somar um segundo esquema de autorizacao no mesmo
+// handler significaria decidir, a cada requisicao, qual dos dois esta chegando — e errar
+// essa decisao descadastra a pessoa errada do canal errado. Divergencia registrada em
+// relacao ao enunciado, que pedia POST /descadastro.
+//
+// As duas passam semRastreio: true — nao se carrega GTM/Pixel na tela em que o titular
+// exerce o direito de sair.
+
+// 404 GENERICO das duas rotas. Ver a decisao 2, acima.
+function avisoLinkWhatsappInvalido(res) {
+  return paginaAviso(res, 404, {
+    semRastreio: true,
+    titulo: 'Link inválido',
+    descricao:
+      'Este link não é válido ou está incompleto. Confira se ele foi copiado por inteiro ' +
+      'da mensagem. Se o problema continuar, responda a mensagem que você recebeu e nós ' +
+      'cuidamos disso para você.',
+  });
+}
+
+// Aviso lido ANTES de confirmar e repetido na tela de sucesso. E o texto que sustenta a
+// premissa do escopo: o CTA principal para as campanhas, e a pessoa precisa saber que uma
+// candidatura futura dela continua sendo atendida — senao ela clica na opcao errada com
+// medo de perder uma vaga.
+const NOTA_ESCOPO_WHATSAPP = `
+  <div class="vm-card">
+    <p><b>Isto vale para as mensagens de divulgação de vagas.</b></p>
+    <p>Se você se candidatar a uma vaga nossa, <b>continua recebendo</b> as mensagens
+    daquele processo seletivo — a confirmação da inscrição, o próximo passo e o retorno.
+    Sair daqui <b>não cancela</b> nenhuma candidatura e <b>não impede</b> você de se
+    candidatar depois.</p>
+  </div>`;
+
+// ── GET /descadastro/:token ── confirmacao (NAO altera nada) ──
+router.get('/descadastro/:token', (req, res) => {
+  const canonico = lerTokenDescadastroWhatsapp(req.params.token);
+  if (!canonico) return avisoLinkWhatsappInvalido(res);
+
+  // O token e repassado como esta: o POST revalida tudo do zero e nao confia em nada que o
+  // formulario afirme (nem no telefone, que nem chega a aparecer nele).
+  const token = escapeHtml(String(req.params.token));
+
+  const conteudo = `
+    <section class="vm-hero">
+      <p class="vm-kicker">Vendedor Mestre</p>
+      <h1 class="vm-title">Deseja parar de receber nossas mensagens?</h1>
+      <p class="vm-lead">Você está prestes a sair da divulgação de vagas por WhatsApp.</p>
+      ${NOTA_ESCOPO_WHATSAPP}
+
+      <form method="POST" action="/descadastro/whatsapp" class="vm-acoes" style="width:100%">
+        <input type="hidden" name="token" value="${token}">
+        <input type="hidden" name="escopo" value="campanha">
+        <button type="submit" class="vm-btn vm-btn--primario">Parar de receber vagas</button>
+      </form>
+
+      <div class="vm-card">
+        <p><b>Prefere não receber absolutamente nenhuma mensagem?</b></p>
+        <p>Isso inclui as mensagens dos processos seletivos em que você se inscrever —
+        você <b>não vai mais receber</b> a confirmação da inscrição nem o resultado de
+        uma candidatura sua.</p>
+        <form method="POST" action="/descadastro/whatsapp" style="width:100%">
+          <input type="hidden" name="token" value="${token}">
+          <input type="hidden" name="escopo" value="total">
+          <button type="submit" class="vm-btn">Bloquear tudo</button>
+        </form>
+      </div>
+
+      <p class="vm-lead" style="font-size:.95rem">Se você chegou aqui sem querer, é só
+        fechar esta página — nada foi alterado.</p>
+    </section>`;
+
+  res.send(pagina({ titulo: 'Descadastro', tema: 'claro', semRastreio: true, conteudo }));
+});
+
+// ── POST /descadastro/whatsapp ── efetiva ──
+//
+// IDEMPOTENTE por construcao: registrarOptout nao duplica nem sobrescreve a data original, e
+// a tela abaixo e a MESMA quando o pedido acabou de ser criado e quando ja existia — para o
+// titular os dois desfechos sao "estou fora", e o estado do nosso banco nao e assunto dele.
+router.post('/descadastro/whatsapp', (req, res) => {
+  const b = req.body || {};
+  // Revalidacao COMPLETA, do zero. O formulario e dado externo como qualquer outro: o fato
+  // de o GET ter validado antes nao prova nada sobre este POST.
+  const canonico = lerTokenDescadastroWhatsapp(b.token);
+  if (!canonico) return avisoLinkWhatsappInvalido(res);
+
+  // Escopo forjado cai no PADRAO (`campanha`), e nao em erro: o fato (a pessoa quer parar de
+  // receber) importa mais que o rotulo, e o padrao e o pedido mais provavel e o menos
+  // destrutivo dos dois.
+  const escopo = b.escopo === optout.ESCOPO_TOTAL ? optout.ESCOPO_TOTAL : optout.ESCOPO_CAMPANHA;
+
+  try {
+    optout.registrarOptout({ telefone: canonico, escopo, origem: optout.ORIGEM_LINK });
+  } catch (err) {
+    console.error(`[descadastro-wa] falha ao registrar opt-out: ${err.message}`);
+    return paginaAviso(res, 500, {
+      semRastreio: true,
+      titulo: 'Não foi possível concluir',
+      descricao:
+        'Não conseguimos registrar seu pedido agora. Tente novamente em alguns instantes ' +
+        'ou responda a mensagem que você recebeu — nós registramos manualmente.',
+    });
+  }
+
+  const token = escapeHtml(String(b.token || ''));
+  const ehTotal = escopo === optout.ESCOPO_TOTAL;
+
+  // ── DESFAZER NA MESMA SESSAO ──
+  // O botao de desfazer aparece porque o clique anterior foi de uma tela so, e um toque
+  // errado no celular e o cenario mais provavel de todos. Ele reaproveita o MESMO token —
+  // nao ha estado de sessao envolvido, e por isso a acao continua valendo se a pessoa
+  // recarregar a pagina.
+  const conteudo = `
+    <section class="vm-hero">
+      <p class="vm-kicker">Vendedor Mestre</p>
+      <h1 class="vm-title">Pronto, registramos seu pedido</h1>
+      <p class="vm-lead">${
+        ehTotal
+          ? 'Você não vai mais receber nenhuma mensagem nossa por WhatsApp.'
+          : 'Você não vai mais receber divulgação de vagas por WhatsApp.'
+      }</p>
+      ${ehTotal ? '' : NOTA_ESCOPO_WHATSAPP}
+      <form method="POST" action="/descadastro/whatsapp/desfazer" class="vm-acoes" style="width:100%">
+        <input type="hidden" name="token" value="${token}">
+        <button type="submit" class="vm-btn">Desfazer</button>
+      </form>
+    </section>`;
+
+  res.send(pagina({ titulo: 'Descadastro concluído', tema: 'claro', semRastreio: true, conteudo }));
+});
+
+// ── POST /descadastro/whatsapp/desfazer ── revoga, pelo mesmo token ──
+//
+// A revogacao aqui e o UNICO caminho automatico que desfaz um opt-out — e ele exige um
+// clique explicito de quem tem o link. Candidatura nova NUNCA revoga nada (P2); ver o
+// cabecalho de lib/optoutWhatsapp.js.
+router.post('/descadastro/whatsapp/desfazer', (req, res) => {
+  const canonico = lerTokenDescadastroWhatsapp((req.body || {}).token);
+  if (!canonico) return avisoLinkWhatsappInvalido(res);
+
+  // Retorno ignorado DE PROPOSITO: "nao havia o que revogar" e, para o titular, o mesmo
+  // desfecho de "revogado agora" — ele quer saber que voltou, nao o estado do nosso banco.
+  optout.revogarOptout(canonico);
+
+  const conteudo = `
+    <section class="vm-hero">
+      <p class="vm-kicker">Vendedor Mestre</p>
+      <h1 class="vm-title">Desfeito</h1>
+      <p class="vm-lead">Você volta a receber nossas mensagens normalmente. Se mudar de
+        ideia, o link da mensagem continua funcionando.</p>
+    </section>`;
+
+  res.send(pagina({ titulo: 'Descadastro desfeito', tema: 'claro', semRastreio: true, conteudo }));
 });
 
 module.exports = router;
