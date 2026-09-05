@@ -54,9 +54,98 @@ function precisaBotaoDinamico(nomeMeta) {
   return TEMPLATES_COM_BOTAO_DINAMICO.includes(String(nomeMeta || '').trim());
 }
 
+// ══════════════════════════════════════════════════════════════
+// BOTOES DO TEMPLATE APROVADO
+// ══════════════════════════════════════════════════════════════
+//
+// ── O FORMATO REAL, CONFIRMADO CONTRA O CENTRAL WHATS ──
+// O componente e `type: 'BUTTONS'` (PLURAL), com um array `buttons` aninhado:
+//
+//   { type: 'BUTTONS', buttons: [ { type: 'URL', text: 'Entrar no Grupo',
+//                                   url: 'https://.../grupo/{{1}}', example: [...] } ] }
+//
+// Um `components.find(c => c.type === 'BUTTON')` (singular) NUNCA casa — foi o erro que a
+// sessao anterior cometeu e reverteu, e o comentario de sincronizarTemplateWhatsapp em
+// db/sqlite.js registra o incidente.
+//
+// O `url` de um botao de URL DINAMICA contem o PADRAO com o placeholder ainda LITERAL
+// ("https://.../grupo/{{1}}"). A Meta so aprova o padrao; o valor real vai por envio, na
+// chave `button<indice>` de `vars` (ver montarPayload em providers/centralWhats).
+// Botao ESTATICO nao tem placeholder na url e nao aceita parametro.
+
+// Extrai os botoes de `components` na forma que guardamos: [{indice, tipo, texto, url}].
+// O INDICE e a posicao no array, que e o que a Meta usa para casar `button<n>`.
+//
+// Tolerante por contrato: componente ausente, `buttons` que nao e array, botao sem url —
+// tudo vira lista vazia ou entrada com campos vazios, nunca excecao. A origem e uma API
+// externa, e um formato inesperado nao pode derrubar o sync inteiro.
+function extrairBotoes(components) {
+  const bloco = (Array.isArray(components) ? components : []).find(
+    (c) => c && String(c.type || '').toUpperCase() === 'BUTTONS',
+  );
+  const lista = bloco && Array.isArray(bloco.buttons) ? bloco.buttons : [];
+  return lista.map((b, indice) => ({
+    indice,
+    tipo: String((b && b.type) || '').toUpperCase(),
+    texto: String((b && b.text) || ''),
+    url: String((b && b.url) || ''),
+  }));
+}
+
+// O botao tem URL dinamica? E o que distingue "aceita parametro por envio" de "link fixo".
+function botaoEhDinamico(botao) {
+  return Boolean(botao) && botao.tipo === 'URL' && /\{\{\s*\d+\s*\}\}/.test(botao.url || '');
+}
+
+// Caminho da pagina publica de descadastro. E por ele que um botao e reconhecido como "o
+// botao de descadastro" — o RECONHECIMENTO E PELA URL, e nao pelo rotulo: o texto do botao
+// e escrito a mao no painel da Meta e pode variar ("Não quero mais receber", "Sair da
+// lista", com ou sem acento), enquanto a URL e a mesma sempre porque precisa bater com a
+// rota registrada em routes/pages.js.
+const CAMINHO_DESCADASTRO = '/descadastro/';
+
+// Indice do botao de descadastro, ou null quando o template nao tem um.
+//
+// `botoes` e a lista devolvida por extrairBotoes (ou o JSON ja gravado, ver
+// botoesDoTemplate). Exige URL DINAMICA: um botao apontando para /descadastro/ sem
+// placeholder seria um link fixo para a mesma pagina para todo mundo — que nao descadastra
+// ninguem, porque a pagina exige o token no caminho.
+function indiceBotaoDescadastro(botoes) {
+  const lista = Array.isArray(botoes) ? botoes : [];
+  const achado = lista.find((b) => botaoEhDinamico(b) && String(b.url || '').includes(CAMINHO_DESCADASTRO));
+  return achado ? achado.indice : null;
+}
+
+// Le a coluna `botoes_json` com tolerancia a JSON invalido/ausente. Devolve [] no pior caso —
+// que significa "template sem botao", o lado seguro (nao manda parametro nenhum).
+function botoesDoTemplate(botoesJson) {
+  if (Array.isArray(botoesJson)) return botoesJson;
+  if (!botoesJson) return [];
+  try {
+    const lido = JSON.parse(botoesJson);
+    return Array.isArray(lido) ? lido : [];
+  } catch {
+    return [];
+  }
+}
+
+// Monta a URL final EXATAMENTE como a Meta monta: substitui o placeholder do padrao pelo
+// valor do parametro. Existe para o teste poder provar que o link que chega no aparelho da
+// pessoa casa com a rota que o servidor registra — sem isso, um padrao errado no template
+// so apareceria como 404 para o candidato, que e onde ninguem esta olhando.
+function montarUrlDoBotao(padraoUrl, valor) {
+  return String(padraoUrl || '').replace(/\{\{\s*\d+\s*\}\}/, String(valor == null ? '' : valor));
+}
+
 module.exports = {
   pertenceVendedorMestre,
   EXCECOES_PADRAO_VM,
   precisaBotaoDinamico,
   TEMPLATES_COM_BOTAO_DINAMICO,
+  extrairBotoes,
+  botaoEhDinamico,
+  indiceBotaoDescadastro,
+  botoesDoTemplate,
+  montarUrlDoBotao,
+  CAMINHO_DESCADASTRO,
 };

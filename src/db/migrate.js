@@ -361,6 +361,20 @@ function migrar() {
   // manda componente de botao nenhum. Um DEFAULT aqui daria botao a templates que nao tem, e
   // a Meta rejeita componente de botao inexistente com a mesma dureza com que cobra o que falta.
   adicionarColunaSeFaltar('templates_whatsapp', 'botao_parametro_fixo', 'TEXT');
+  // Botoes do template APROVADO na Meta, como o Central Whats os devolve — JSON de
+  // [{indice, tipo, texto, url}]. Preenchida pelo sync (sincronizarTemplateWhatsapp), nunca
+  // a mao.
+  //
+  // Existe porque o INDICE do botao nao e o mesmo em todo template: nova_vaga_v1 e
+  // nova_vaga_v2 nao tem botao nenhum hoje, entao o de descadastro nasce no indice 0; ja
+  // convite_grupo_vagas_vm tem o "Entrar no Grupo" no indice 0, e o de descadastro fica no 1.
+  // Fixar `button0` no codigo mandaria o token de descadastro para o botao do GRUPO naquele
+  // template — o indice precisa ser lido do que esta aprovado la fora.
+  //
+  // Tambem e o que permite saber que um template NAO tem botao, para nao mandar parametro
+  // que a Meta recusa. Ate aqui essa informacao nao existia no espelho local: o sync so lia
+  // `components` para extrair as variaveis do BODY.
+  adicionarColunaSeFaltar('templates_whatsapp', 'botoes_json', 'TEXT');
 
   // Atribuicao de clique da campanha de WhatsApp. IRMA de vaga_acessos.campanha_id, e nao
   // substituta: sao tabelas de campanha DIFERENTES com ids independentes, e reusar a mesma

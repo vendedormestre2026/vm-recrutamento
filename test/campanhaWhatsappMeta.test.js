@@ -127,7 +127,11 @@ const deps = (extra = {}) => ({ intervaloMs: 0, dormir: async () => {}, ...extra
 test('as cinco tabelas existem com as colunas esperadas', () => {
   const esperado = {
     // botao_parametro_fixo entrou com o botao estrutural exigido pela Graph API.
-    templates_whatsapp: ['id', 'nome_meta', 'idioma', 'categoria', 'variaveis', 'botao_parametro_fixo', 'ativo', 'criado_em', 'atualizado_em'],
+    // botoes_json entrou com o botao de descadastro (B3): guarda os botoes do template
+    // APROVADO, como o Central Whats os devolve, porque o INDICE do botao nao e o mesmo em
+    // todo template — cravar `button0` no codigo mandaria o token de descadastro para o
+    // botao do grupo em convite_grupo_vagas_vm.
+    templates_whatsapp: ['id', 'nome_meta', 'idioma', 'categoria', 'variaveis', 'botao_parametro_fixo', 'ativo', 'criado_em', 'atualizado_em', 'botoes_json'],
     // slug entrou com o link curto de convite (GET /grupo/:slug).
     regioes_grupos_whatsapp: ['id', 'cidade', 'link_convite_grupo', 'slug', 'ativo', 'criado_em', 'atualizado_em'],
     // tipo_mensagem/job_id/total_estimado entraram na extensao de dois tipos de campanha.

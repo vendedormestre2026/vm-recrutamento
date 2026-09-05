@@ -35,7 +35,7 @@ const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 // Modulo-FOLHA (nenhum require proprio) — usado por sincronizarTemplateWhatsapp pra decidir
 // quais templates da mesma conta Central Whats sao da Vendedor Mestre. Mesma justificativa
 // dos demais requires de lib/ nesta secao.
-const { pertenceVendedorMestre } = require('../lib/templatesWhatsapp');
+const { pertenceVendedorMestre, extrairBotoes } = require('../lib/templatesWhatsapp');
 // Mesmo criterio dos requires acima: lib/chaveTelefone e modulo-FOLHA. E a identidade de
 // supressao da tabela whatsapp_optout — quem grava e quem le passam por ele, sempre, para
 // as duas pontas usarem literalmente a mesma chave (ver o cabecalho de la).
@@ -3494,6 +3494,12 @@ function sincronizarTemplateWhatsapp(templateCentralWhats) {
 
   const idioma = String(t.language || '').trim() || 'pt_BR';
   const variaveis = JSON.stringify(extrairVariaveisDoBody(t.components));
+  // Botoes do template aprovado. SAO propriedade da Meta, como idioma e categoria — por isso
+  // entram no DO UPDATE SET (ao contrario de `variaveis`, que e mapeamento humano, e de
+  // `botao_parametro_fixo`, que e valor escolhido a mao). Um sync que nao os atualizasse
+  // deixaria o espelho dizendo que o template nao tem botao no dia seguinte a alguem
+  // acrescentar um — e o parametro nunca seria enviado.
+  const botoesJson = JSON.stringify(extrairBotoes(t.components));
 
   const jaExistia = Boolean(
     getDb().prepare('SELECT 1 FROM templates_whatsapp WHERE nome_meta = ?').get(nomeMeta),
@@ -3503,14 +3509,15 @@ function sincronizarTemplateWhatsapp(templateCentralWhats) {
   // DO UPDATE SET (preservado, igual a ativo/variaveis) — o sync nunca escreve nele.
   getDb()
     .prepare(
-      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo)
-       VALUES (@nomeMeta, @idioma, @categoria, @variaveis, 1)
+      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botoes_json, ativo)
+       VALUES (@nomeMeta, @idioma, @categoria, @variaveis, @botoesJson, 1)
        ON CONFLICT(nome_meta) DO UPDATE SET
          idioma = excluded.idioma,
          categoria = excluded.categoria,
+         botoes_json = excluded.botoes_json,
          atualizado_em = datetime('now')`,
     )
-    .run({ nomeMeta, idioma, categoria, variaveis });
+    .run({ nomeMeta, idioma, categoria, variaveis, botoesJson });
 
   return { ignorado: false, novo: !jaExistia, nomeMeta };
 }
@@ -3839,6 +3846,7 @@ function listarPendentesCampanhaWhatsapp({ limite = 50 } = {}) {
               t.nome_meta AS template_nome, t.idioma AS template_idioma,
               t.variaveis AS template_variaveis,
               t.botao_parametro_fixo AS template_botao_parametro_fixo,
+              t.botoes_json AS template_botoes_json,
               j.slug AS job_slug, j.titulo AS job_titulo
          FROM campanha_whatsapp_envios e
          JOIN campanhas_whatsapp c ON c.id = e.campanha_id
