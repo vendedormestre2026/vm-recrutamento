@@ -2868,6 +2868,104 @@ test('502 SEM 131008 continua retentavel — o Central Whats fora do ar nao viro
   assert.equal(classe.teto, 5);
 });
 
+// ══════════════════ 400 de parametro de botao ausente (correcao 2026-09-17) ══════════════════
+
+test('400 "exige a variavel buttonN" e configuracao (aborta o ciclo), nao terminal', () => {
+  // ── POR QUE ESTA EXCECAO AO 400 EXISTE ──
+  // O 400 generico e 'terminal' porque pode variar por destinatario (telefone que a Meta
+  // recusa), e marcar UMA pessoa e melhor que parar a fila. Este 400 NAO varia por
+  // destinatario: o parametro que falta vem do TEMPLATE, e falta igual para a fila inteira.
+  //
+  // Como 'terminal' o custo e o pior deste arquivo: teto null marca falha na PRIMEIRA
+  // tentativa, o UNIQUE(campanha_id, telefone) impede rematerializar, e o ciclo automatico de
+  // 10 min (server.js) drena 30 por passada sem humano no meio.
+  const erro = new Error(
+    'Central Whats retornou HTTP 400 — {"error":"Template \\"nova_vaga_v1\\": o botão de ' +
+      'índice 0 tem URL dinâmica e exige a variável \\"button0\\", que não foi informada."}',
+  );
+  const classe = transporte.classificarErroCentralWhats(erro);
+  assert.equal(classe.categoria, 'configuracao');
+  assert.equal(classe.teto, null);
+  assert.match(classe.motivo, /botao ausente/);
+});
+
+test('400 de parametro de botao vale para qualquer indice (button1, button2...)', () => {
+  const classe = transporte.classificarErroCentralWhats(
+    new Error(
+      'Central Whats retornou HTTP 400 — {"error":"Template \\"convite_grupo_vagas_vm\\": o ' +
+        'botão de índice 1 tem URL dinâmica e exige a variável \\"button1\\", que não foi informada."}',
+    ),
+  );
+  assert.equal(classe.categoria, 'configuracao');
+});
+
+test('400 generico continua TERMINAL — a excecao nao engoliu o resto do 400', () => {
+  // Nao-regressao: um telefone que a Meta recusa nao pode parar a fila dos outros 29.
+  const classe = transporte.classificarErroCentralWhats(
+    new Error('Central Whats retornou HTTP 400 — {"error":"Invalid phone number"}'),
+  );
+  assert.equal(classe.categoria, 'terminal');
+});
+
+test('400 que so MENCIONA um botao, sem cobrar parametro, continua terminal', () => {
+  // O casamento exige as DUAS partes (nome da variavel + a reclamacao) justamente para nao
+  // roubar do 'terminal' um 400 qualquer que fale de botao de passagem.
+  const classe = transporte.classificarErroCentralWhats(
+    new Error('Central Whats retornou HTTP 400 — {"error":"button0 tem rotulo longo demais"}'),
+  );
+  assert.equal(classe.categoria, 'terminal');
+});
+
+test('ciclo: 400 de botao ausente ABORTA e nao marca NINGUEM como falha', async () => {
+  // O teste que prova o que importa: a fila sobrevive. Com o 400 como 'terminal', as duas
+  // linhas abaixo viravam falha PERMANENTE (o UNIQUE impede rematerializar) sem nenhuma
+  // mensagem ter saido.
+  zerar();
+  const tid = Number(
+    exec(
+      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo)
+       VALUES ('nova_vaga_v1', 'pt_BR', 'marketing', ?, NULL)`,
+      JSON.stringify([{ posicao: 1, campo: 'nome_primeiro' }]),
+    ).lastInsertRowid,
+  );
+  const cid = Number(
+    exec(
+      `INSERT INTO campanhas_whatsapp (nome, template_id, base_alvo, tipo_mensagem, status)
+       VALUES ('C400', ?, 'ambos', 'divulgacao_vaga', 'ativa')`,
+      tid,
+    ).lastInsertRowid,
+  );
+  for (const tel of ['5547900000011', '5547900000012']) {
+    exec(
+      `INSERT INTO campanha_whatsapp_envios (campanha_id, telefone, nome, origem_tipo, cidade, status)
+       VALUES (?, ?, 'Ana', 'application', 'Joinville', 'pendente')`,
+      cid,
+      tel,
+    );
+  }
+  db.definirConfigBool(job.CHAVE_ATIVO, true);
+
+  const { r } = await semRuido(() =>
+    job.processarCicloCampanhaWhatsapp({
+      enviarTemplate: async () => {
+        throw new Error(
+          'Central Whats retornou HTTP 400 — {"error":"Template \\"nova_vaga_v1\\": o botão de ' +
+            'índice 0 tem URL dinâmica e exige a variável \\"button0\\", que não foi informada."}',
+        );
+      },
+      intervaloMs: 0,
+    }),
+  );
+
+  assert.equal(r.abortado, true, 'o ciclo tem que abortar');
+  assert.equal(r.falhas, 0, 'ninguem pode ser marcado como falha');
+  const pendentes = todas(
+    "SELECT status FROM campanha_whatsapp_envios WHERE campanha_id = ?",
+    cid,
+  ).map((l) => l.status);
+  assert.deepEqual(pendentes, ['pendente', 'pendente'], 'as duas linhas continuam recuperaveis');
+});
+
 // ══════════════════ montarUrlVaga parametrizado ══════════════════
 
 test('montarUrlVaga: o comportamento do E-MAIL nao mudou', () => {

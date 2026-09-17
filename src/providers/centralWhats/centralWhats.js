@@ -377,6 +377,42 @@ function classificarErroCentralWhats(erro) {
     };
   }
 
+  // ── PARAMETRO DE BOTAO AUSENTE: 'configuracao', e NAO o 'terminal' que o 400 seria ──
+  //
+  // A recusa e esta, literal, vinda da Central Whats:
+  //
+  //   HTTP 400 — {"error":"Template \"nova_vaga_v1\": o botão de índice 0 tem URL dinâmica e
+  //               exige a variável \"button0\", que não foi informada."}
+  //
+  // Mesmo raciocinio (e mesmo precedente) do 131008 logo acima: e erro de CONFIGURACAO, nao
+  // problema daquele destinatario. O parametro que falta vem do TEMPLATE — de `botoes_json`
+  // nao ressincronizado, de um botao aprovado na Meta que o espelho local ainda nao conhece —
+  // e portanto falta igual para a fila inteira. Repetir manda exatamente o mesmo payload.
+  //
+  // ── POR QUE ESTA EXCECAO AO 400 EXISTE, EM VEZ DE DEIXAR CAIR NO 'terminal' GENERICO ──
+  // O 400 esta em 'terminal' porque pode variar por destinatario (um telefone que a Meta
+  // recusa), e marcar UMA pessoa e melhor que parar a fila por causa dela. Este 400
+  // especifico NAO varia por destinatario, e o custo de trata-lo como terminal e o pior que
+  // este arquivo conhece: 'terminal' com teto null marca falha na PRIMEIRA tentativa, o
+  // UNIQUE(campanha_id, telefone) impede rematerializar a pessoa depois, e o ciclo automatico
+  // (server.js:366, a cada 10 min, ate 30 por passada) drena a base sem humano no meio. Uma
+  // fila de mil seria consumida em poucas horas, com zero mensagem entregue e ninguem mais
+  // recuperavel.
+  //
+  // Como 'configuracao' o ciclo para no primeiro, NINGUEM e marcado, o log grita e o proximo
+  // ciclo retoma sozinho depois de Sincronizar templates. O custo da escolha e assimetrico do
+  // mesmo jeito dos 401/403/404 abaixo: no maximo a campanha fica parada.
+  //
+  // O casamento exige as DUAS partes (o nome da variavel e a reclamacao), para nao roubar do
+  // 'terminal' um 400 qualquer que so mencione um botao de passagem.
+  if (/\bbutton\d+/i.test(bruta) && /exige a vari|n[aã]o foi informada|required|missing/i.test(bruta)) {
+    return {
+      categoria: 'configuracao',
+      teto: null,
+      motivo: 'parametro de botao ausente (template com URL dinamica nao ressincronizado)',
+    };
+  }
+
   if (status !== null) {
     // ⚠️ 401/403/404 sao CONFIGURACAO, e nao 'terminal' — divergencia deliberada da lista de
     // mapeamento pedida, registrada aqui porque a diferenca e destrutiva:
