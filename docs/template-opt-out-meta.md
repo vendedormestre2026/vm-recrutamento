@@ -1,7 +1,14 @@
 # Botão de descadastro nos templates de marketing — o que submeter à Meta
 
-**Status: NADA foi submetido.** Este documento é a instrução de trabalho. A submissão é uma
-ação humana e deliberada — o código não a faz.
+**Status: submissão já aconteceu em pelo menos dois templates** — atualizado em 2026-09-17.
+Um envio avulso de teste recebeu, da Central Whats, `o botão de índice 0 tem URL dinâmica e
+exige a variável "button0"` para `nova_vaga_v1` e o equivalente com `button1` para
+`convite_grupo_vagas_vm`. Isso só acontece se o botão já existir no template aprovado. De
+`nova_vaga_v2` não há evidência, e se o espelho local foi ressincronizado depois da aprovação
+(passo 11) ninguém confirmou — a consulta está no fim deste documento.
+
+O resto deste documento continua sendo a instrução de trabalho. A submissão é uma ação humana
+e deliberada — o código não a faz.
 
 ---
 
@@ -206,9 +213,19 @@ Entre um e outro, confirme que o anterior voltou a **APPROVED**.
 
 13. **Configurações → WhatsApp → Opt-out → "Link nas mensagens"**. Marque.
 
-    Enquanto esse interruptor estiver desmarcado, o parâmetro do botão **não é enviado** e o
-    botão não funcionaria. Marque só depois que pelo menos um template estiver aprovado e
-    ressincronizado.
+    ⚠️ **Este passo mudou em 2026-09-17.** O interruptor **não governa mais o parâmetro do
+    botão** — ele governa só a variável de **corpo** `link_descadastro` (o link escrito dentro
+    do texto da mensagem).
+
+    O parâmetro do botão passou a ser enviado **sempre que o template sincronizado tiver o
+    botão**, marcado ou não. A razão é que a Meta passou a **exigir** o parâmetro: com o
+    interruptor desmarcado, o envio não saía "sem link", saía **recusado** com HTTP 400 — e um
+    400 marcava a pessoa como falha permanente, sem chance de rematerializar. Um checkbox
+    desmarcado podia queimar uma base inteira, 30 linhas por ciclo de 10 minutos. Ver o
+    cabeçalho de `src/lib/parametrosBotaoWhatsapp.js`.
+
+    O passo 11 (**ressincronizar**) é que virou obrigatório: é `botoes_json` que diz ao código
+    que o botão existe e em que índice ele está.
 
 ---
 
@@ -221,6 +238,29 @@ Entre um e outro, confirme que o anterior voltou a **APPROVED**.
 - Se o template sincronizado não tiver botão, não manda parâmetro nenhum.
 - Nunca envia parâmetro vazio (o erro 131008 da Meta trata vazio como ausente e recusa o envio
   inteiro).
+- Faz isso **nos dois canais de envio** — campanha em massa e envio avulso de teste do painel —
+  pela mesma função (`src/lib/parametrosBotaoWhatsapp.js`). Até 2026-09-17 cada canal montava o
+  parâmetro por conta própria, e o avulso ficou sem o botão de descadastro: todo teste com
+  `nova_vaga_v1` ou `convite_grupo_vagas_vm` voltava HTTP 400.
+- Se a Central Whats recusar por parâmetro de botão ausente, o ciclo **para e não marca
+  ninguém** (classificado como erro de configuração, não como falha do destinatário). O
+  conserto é ressincronizar os templates; o ciclo seguinte retoma sozinho.
+
+---
+
+## Como confirmar o estado em produção
+
+Duas perguntas, uma consulta só (leitura, não escreve nada). Em produção o banco fica no
+volume do Railway, então é `railway ssh` — `railway run` abriria o banco **local**:
+
+```
+railway ssh "sqlite3 /data/app.db \"SELECT nome_meta, ativo, categoria, botoes_json FROM templates_whatsapp ORDER BY nome_meta;\""
+```
+
+`botoes_json` **NULL** significa que o sync nunca rodou desde que a coluna existe — nesse
+estado o código trata o template como "sem botão" e o envio será recusado se a Meta exigir o
+parâmetro. `[]` significa que o sync rodou e a Meta não tem botão nenhum ali. A tela
+**Campanha por WhatsApp** mostra o mesmo estado na coluna de botões, sem precisar de SQL.
 
 ---
 
