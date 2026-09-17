@@ -160,11 +160,27 @@ test('o sync grava os botoes, e um sync seguinte ATUALIZA quando o template ganh
 // O parametro no ciclo de envio
 // ══════════════════════════════════════════════════════════════
 
-test('interruptor DESLIGADO (o default): nao manda parametro de botao nenhum', async () => {
+// ⚠️ ESTE TESTE FOI INVERTIDO, E A INVERSAO E O PONTO.
+//
+// Ele afirmava o contrario: com `optout_link_campanha_ativo` desligado (o default), NENHUM
+// parametro de botao saia. Aquilo estava certo enquanto o botao nao existia na Meta — o
+// parametro era um extra, e nao mandar so deixava a mensagem sem link.
+//
+// Depois que os botoes foram aprovados, o mesmo comportamento virou destrutivo: a Meta passou
+// a EXIGIR o parametro, e nao mandar recusa o envio com HTTP 400 — que e 'terminal', marca a
+// pessoa como falha PERMANENTE (o UNIQUE impede rematerializar) e drena 30 linhas por ciclo de
+// 10 min sem humano no meio. Um checkbox desmarcado no painel queimaria a base inteira.
+//
+// O interruptor continua governando a VARIAVEL DE CORPO `link_descadastro` — isso e o que
+// test/optoutLinkEnvio.test.js cobre, e nao mudou. Ver o cabecalho de
+// lib/parametrosBotaoWhatsapp.js.
+test('interruptor DESLIGADO (o default): o parametro do BOTAO sai de qualquer forma', async () => {
   zerar();
   cenario({ nomeMeta: 'sem_link_vm', botoes: [botaoDescadastro] });
   const { enviados } = await rodar();
-  assert.equal(enviados[0].parametrosBotao, undefined);
+  const p = enviados[0].parametrosBotao;
+  assert.ok(p, 'o parametro do botao NAO depende do interruptor: a Meta o exige');
+  assert.equal(lerTokenDescadastroWhatsapp(p[0]), '554799582500');
 });
 
 test('interruptor LIGADO: manda o token no indice do botao de descadastro', async () => {
@@ -176,6 +192,19 @@ test('interruptor LIGADO: manda o token no indice do botao de descadastro', asyn
   const p = enviados[0].parametrosBotao;
   assert.ok(p, 'precisa mandar parametro');
   assert.equal(lerTokenDescadastroWhatsapp(p[0]), '554799582500');
+});
+
+// Quem decide se o parametro vai e o TEMPLATE SINCRONIZADO, nao o interruptor. Com o botao
+// ausente de botoes_json nao ha o que preencher — nos dois estados do interruptor.
+test('template SEM botao de descadastro: nao manda parametro, com o interruptor ligado ou nao', async () => {
+  for (const ligado of [false, true]) {
+    zerar();
+    cenario({ nomeMeta: 'sem_botao_interruptor_vm', botoes: [] });
+    if (ligado) db.definirConfigBool(optout.CHAVE_LINK_ATIVO, true);
+    const { r, enviados } = await rodar();
+    assert.equal(r.enviados, 1, `interruptor ${ligado}: a mensagem sai mesmo assim`);
+    assert.equal(enviados[0].parametrosBotao, undefined, `interruptor ${ligado}`);
+  }
 });
 
 test('template com DOIS botoes: o token vai no indice 1, e o indice 0 continua sendo o grupo', async () => {
@@ -195,6 +224,51 @@ test('template com DOIS botoes: o token vai no indice 1, e o indice 0 continua s
   const p = enviados[0].parametrosBotao;
   assert.equal(p[0], 'joinville', 'o botao do grupo NAO pode ser sobrescrito');
   assert.equal(lerTokenDescadastroWhatsapp(p[1]), '554799582500', 'o token vai no indice 1');
+});
+
+// ── ITEM (d): O INDICE DO BOTAO DO GRUPO TAMBEM VEM DE botoes_json ──
+//
+// Enquanto havia UM template com botao de grupo, o indice 0 cravado no codigo (pela lista
+// fechada precisaBotaoDinamico) estava certo por coincidencia. Este teste inverte a ORDEM dos
+// botoes na Meta — descadastro no 0, grupo no 1 — e prova que cada valor segue o botao a que
+// pertence.
+//
+// BUG-PRA-CONFIRMAR: trocando `indiceGrupo === null ? 0 : indiceGrupo` por `0` em
+// lib/parametrosBotaoWhatsapp.js, este teste falha com o slug sobrescrevendo o token no
+// indice 0 (e o botao do grupo saindo sem parametro nenhum).
+test('ordem invertida na Meta: o slug segue o indice do botao do GRUPO, nao o 0 cravado', async () => {
+  zerar();
+  exec(
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, slug) VALUES (?, ?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/X', 'joinville',
+  );
+  cenario({
+    nomeMeta: 'convite_grupo_vagas_vm',
+    botoes: [
+      { indice: 0, tipo: 'URL', texto: 'Não quero mais receber', url: URL_BOTAO_DESCADASTRO },
+      { indice: 1, tipo: 'URL', texto: 'Entrar no Grupo', url: URL_BOTAO_GRUPO },
+    ],
+  });
+
+  const { enviados } = await rodar();
+  const p = enviados[0].parametrosBotao;
+  assert.equal(lerTokenDescadastroWhatsapp(p[0]), '554799582500', 'token no 0, onde a Meta pos o botao de saida');
+  assert.equal(p[1], 'joinville', 'slug no 1, onde a Meta pos o botao do grupo');
+});
+
+// A lista fechada precisaBotaoDinamico sobrevive so como FALLBACK do template ainda nao
+// ressincronizado (botoes_json NULL): nesse estado nao ha indice a ler, e o 0 e o que
+// convite_grupo_vagas_vm tem de verdade na Meta.
+test('botoes_json NULL: o botao do grupo continua caindo no indice 0 (fallback pelo nome)', async () => {
+  zerar();
+  exec(
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, slug) VALUES (?, ?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/X', 'joinville',
+  );
+  cenario({ nomeMeta: 'convite_grupo_vagas_vm', botoes: undefined });
+
+  const { enviados } = await rodar();
+  assert.deepEqual(enviados[0].parametrosBotao, { 0: 'joinville' });
 });
 
 test('template SEM botao de descadastro: nao manda parametro e o envio segue', async () => {

@@ -27,12 +27,11 @@ const transporte = require('../providers/centralWhats/centralWhats');
 const { normalizarTelefoneRecebido } = require('./whatsapp');
 const { mascarar } = require('../whatsapp/sequenciaOutbox');
 const { montarUrlVaga, UTM_SOURCE_WHATSAPP } = require('./ctaCampanha');
-const {
-  precisaBotaoDinamico,
-  indiceBotaoDescadastro,
-  botoesDoTemplate,
-} = require('./templatesWhatsapp');
-const { gerarTokenDescadastroWhatsapp } = require('./descadastroWhatsapp');
+// Os parametros de botao (slug do grupo, token de descadastro) sao montados por um modulo
+// COMPARTILHADO com o envio avulso de teste (routes/admin_campanha_whatsapp.js). Ver o
+// cabecalho de lib/parametrosBotaoWhatsapp.js: a montagem duplicada nos dois canais foi o
+// bug que o criou.
+const { montarParametrosBotao } = require('./parametrosBotaoWhatsapp');
 const optout = require('./optoutWhatsapp');
 
 // Interruptor de DISPARO, no store `configuracoes` — mesmo padrao de promocao_ativa e
@@ -280,85 +279,36 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
       link_descadastro: optout.textoDescadastroPara(telefone, { db }),
     });
 
-    // ── BOTAO DINAMICO (Incremento 3, ajustado apos diagnostico do 404 real) ──
-    // precisaBotaoDinamico(nome_meta) e a mesma lista fechada de lib/templatesWhatsapp.js. A
-    // URL base aprovada na Meta e "https://entrevista.vendedormestre.com.br/grupo/{{1}}"
-    // (confirmado direto no Central Whats), e {{1}} e o SLUG da praca (ex. "joinville") — NAO
-    // o link completo do WhatsApp. Um primeiro envio real usou `link` aqui (o mesmo valor que
-    // alimenta a variavel de CORPO link_grupo_regiao, linha 225 acima — essa continua certa,
-    // nao mexe) e o botao gerou 404. db.obterSlugGrupo(linha.cidade) e o lookup certo — mesma
-    // cidade que ja resolveu `link` alguns passos acima, mesmo contrato de null.
+    // ── PARAMETROS DOS BOTOES ──
     //
-    // ⚠️ RISCO CONHECIDO, NAO REGRESSAO NOVA: o passo 2 (acima) ja recusa a linha ANTES de
-    // chegar aqui quando falta LINK (`!link`) — mas uma praca com link cadastrado e SLUG
-    // vazio (linha antiga nao migrada, por exemplo) passaria por ali e cairia aqui com
-    // slugGrupo=null, saindo sem parametro de botao. Hoje isso vira falha visivel e imediata
-    // (a Central Whats recusa o envio faltando button0 pra este template, mesmo 400 do
-    // diagnostico anterior) — nao um 404 silencioso pro candidato, entao o risco pratico e
-    // baixo, mas o cenario existe.
-    const slugGrupo = precisaBotaoDinamico(linha.template_nome) ? db.obterSlugGrupo(linha.cidade) : null;
-    // `parametrosBotaoFinal` e um objeto sempre presente durante a montagem; so vira o
-    // argumento `parametrosBotao` no fim, e SO se tiver alguma chave. Sem isso, um template
-    // sem botao nenhum passaria a receber `{}` no lugar de `undefined` — mudanca de payload
-    // silenciosa num caminho que hoje funciona.
-    const parametrosBotaoFinal = slugGrupo ? { 0: slugGrupo } : {};
-
-    // ── BOTAO DE DESCADASTRO (B3) ──
+    // Toda a decisao (quais botoes o template tem, em que indice, com que valor) mora em
+    // lib/parametrosBotaoWhatsapp.js, compartilhada com o envio avulso de teste. Aqui so
+    // chega quem recebe. NUNCA lanca e nunca devolve valor vazio — ver o cabecalho de la.
     //
-    // O INDICE VEM DOS BOTOES SINCRONIZADOS, nunca fixo. Nos templates sem botao hoje
-    // (nova_vaga_v1, nova_vaga_v2) o de descadastro nasce no indice 0; em
-    // convite_grupo_vagas_vm, que ja tem o "Entrar no Grupo" no 0, ele fica no 1. Cravar
-    // `0` aqui mandaria o token de descadastro para o botao do GRUPO naquele template — o
-    // candidato clicaria em "Entrar no Grupo" e cairia na pagina de descadastro.
-    //
-    // Tres portas, e passar por todas e o que impede um envio quebrado:
-    //   1. o interruptor `optout_link_campanha_ativo` (optout.linkAtivo) — desligado hoje;
-    //   2. o template sincronizado precisa TER um botao de descadastro (indice != null);
-    //   3. o token precisa ser gerado com sucesso.
-    //
-    // Falhar em qualquer uma NAO aborta nada: o envio segue SEM o parametro, que e
-    // exatamente o comportamento de antes desta feature. Mandar `button` vazio seria o erro
-    // 131008 (a Meta trata vazio como ausente), classificado como 'configuracao', que ABORTA
-    // o ciclo inteiro sem marcar ninguem — por isso o valor so e escrito quando existe.
-    if (optout.linkAtivo({ db })) {
-      const indiceSaida = indiceBotaoDescadastro(botoesDoTemplate(linha.template_botoes_json));
-      if (indiceSaida === null) {
-        console.warn(
-          `[campanha-wa] template '${linha.template_nome}' sem botao de descadastro nos botoes ` +
-            'sincronizados; enviando sem o parametro. Reveja o template na Meta e rode ' +
-            'Sincronizar templates.',
-        );
-      } else {
-        // gerarTokenDescadastroWhatsapp LANCA por contrato (telefone sem chave canonica,
-        // segredo ausente). Aqui a excecao vira "envia sem o botao", nunca ciclo abortado.
-        try {
-          const token = gerarTokenDescadastroWhatsapp(telefone);
-          if (token) {
-            parametrosBotaoFinal[indiceSaida] = token;
-          }
-        } catch (err) {
-          console.warn(
-            `[campanha-wa] falha ao gerar o token de descadastro (${err.message}); ` +
-              'enviando SEM o parametro do botao. O ENVIO SEGUE NORMALMENTE.',
-          );
-        }
-      }
-    }
+    // `template_botoes_json` e `template_categoria` vem na propria linha da fila
+    // (listarPendentesCampanhaWhatsapp), entao isto nao custa uma consulta por envio.
+    const templateEnvio = {
+      nome_meta: linha.template_nome,
+      idioma: linha.template_idioma,
+      categoria: linha.template_categoria,
+      botoes_json: linha.template_botoes_json,
+      // Propriedade do template aprovado na Meta, nao deste destinatario: quando
+      // preenchida, o transporte acrescenta o parametro de botao que a Meta exige (hoje
+      // como a chave "button0" de `vars`, antes como componente da Graph API).
+      // Vem do banco junto com a linha da fila para nao custar uma consulta por envio.
+      botao_parametro_fixo: linha.template_botao_parametro_fixo,
+    };
+    const parametrosBotao = montarParametrosBotao(
+      { template: templateEnvio, telefone, cidade: linha.cidade },
+      { db },
+    );
 
     try {
       const { wamid } = await enviar({
         telefone,
-        template: {
-          nome_meta: linha.template_nome,
-          idioma: linha.template_idioma,
-          // Propriedade do template aprovado na Meta, nao deste destinatario: quando
-          // preenchida, o transporte acrescenta o parametro de botao que a Meta exige (hoje
-          // como a chave "button0" de `vars`, antes como componente da Graph API).
-          // Vem do banco junto com a linha da fila para nao custar uma consulta por envio.
-          botao_parametro_fixo: linha.template_botao_parametro_fixo,
-        },
+        template: templateEnvio,
         variaveis,
-        parametrosBotao: Object.keys(parametrosBotaoFinal).length ? parametrosBotaoFinal : undefined,
+        parametrosBotao,
         httpClient: deps.httpClient,
       });
       db.marcarEnvioWhatsappEnviado(linha.id, wamid);

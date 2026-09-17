@@ -127,6 +127,31 @@ function indiceBotaoDescadastro(botoes) {
   return achado ? achado.indice : null;
 }
 
+// Caminho da pagina publica do GRUPO de vagas — o irmao de CAMINHO_DESCADASTRO acima, e
+// reconhecido pela MESMA regra (pela URL, nunca pelo rotulo: "ENTRAR NO GRUPO", "Entrar no
+// Grupo" e "Quero entrar" sao todos escritos a mao no painel da Meta).
+//
+// A rota que precisa casar e GET /grupo/:slug (routes/pages.js), e o parametro do botao e o
+// SLUG da praca — nao o link do convite. Ver o comentario de montarUrlGrupo em
+// lib/ctaCampanha.js e o do botao dinamico em lib/parametrosBotaoWhatsapp.js.
+const CAMINHO_GRUPO = '/grupo/';
+
+// Indice do botao do GRUPO, ou null quando o template nao tem um.
+//
+// Existe pelo mesmo motivo que indiceBotaoDescadastro: enquanto havia UM template com botao
+// de grupo, o indice 0 cravado no codigo (via precisaBotaoDinamico) estava certo por
+// coincidencia. O dia em que um template puser o botao do grupo DEPOIS de outro, o valor
+// cravado manda o slug para o botao errado — exatamente o bug que indiceBotaoDescadastro
+// nasceu para nao cometer com o token.
+//
+// Exige URL DINAMICA pela mesma razao de la: um /grupo/ sem placeholder e link fixo, que nao
+// aceita parametro nenhum.
+function indiceBotaoGrupo(botoes) {
+  const lista = Array.isArray(botoes) ? botoes : [];
+  const achado = lista.find((b) => botaoEhDinamico(b) && String(b.url || '').includes(CAMINHO_GRUPO));
+  return achado ? achado.indice : null;
+}
+
 // Le a coluna `botoes_json` com tolerancia a JSON invalido/ausente. Devolve [] no pior caso —
 // que significa "template sem botao", o lado seguro (nao manda parametro nenhum).
 function botoesDoTemplate(botoesJson) {
@@ -156,7 +181,9 @@ module.exports = {
   extrairBotoes,
   botaoEhDinamico,
   indiceBotaoDescadastro,
+  indiceBotaoGrupo,
   botoesDoTemplate,
   montarUrlDoBotao,
   CAMINHO_DESCADASTRO,
+  CAMINHO_GRUPO,
 };

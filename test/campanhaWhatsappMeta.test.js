@@ -25,6 +25,10 @@ process.env.ADMIN_USER = 'admin-teste';
 process.env.ADMIN_PASSWORD = 'senha-teste';
 process.env.META_APP_SECRET = 'segredo-do-app-de-teste';
 process.env.META_WEBHOOK_VERIFY_TOKEN = 'token-de-verificacao-de-teste';
+// O parametro do botao de descadastro e um token HMAC gerado de verdade nos testes de
+// /enviar-teste mais abaixo — sem o segredo, gerarTokenDescadastroWhatsapp lanca e o
+// parametro sairia ausente, que e exatamente o bug que esses testes guardam.
+process.env.OPTOUT_TOKEN_SECRET = 'segredo-hmac-de-teste';
 process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
@@ -2430,6 +2434,7 @@ test('POST /enviar-teste com template INATIVO -> erro claro, SEM chamar a rede',
 const publico = require('../src/lib/publicoCampanhaWhatsapp');
 const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('../src/lib/whatsapp');
 const { montarUrlVaga, UTM_SOURCE_CAMPANHA, UTM_SOURCE_WHATSAPP } = require('../src/lib/ctaCampanha');
+const { lerTokenDescadastroWhatsapp } = require('../src/lib/descadastroWhatsapp');
 
 let seqSeg = 0;
 function vagaCom(cidade, perfil = 'CLOSER') {
@@ -3544,6 +3549,201 @@ test('POST /enviar-teste: template fora da lista de botao dinamico NAO recebe pa
 
   assert.equal(chamadas.length, 1);
   assert.equal(chamadas[0].parametrosBotao, undefined);
+});
+
+// ══════════════════ botao de DESCADASTRO no envio avulso (correcao 2026-09-17) ══════════════════
+//
+// ── O BUG ──
+// O commit que passou a preencher o parametro do botao de descadastro tocou o ciclo de
+// campanha (lib/campanhaWhatsapp.js) e NAO tocou esta rota. A rota so sabia preencher o botao
+// do GRUPO, no indice 0. Contra a Central Whats de verdade, os dois templates testados aqui
+// devolveram HTTP 400:
+//
+//   {"error":"Template \"nova_vaga_v1\": o botão de índice 0 tem URL dinâmica e exige a
+//             variável \"button0\", que não foi informada."}
+//   {"error":"Template \"convite_grupo_vagas_vm\": ... exige a variável \"button1\" ..."}
+//
+// ── BUG-PRA-CONFIRMAR (ciclo verificado nesta sessao) ──
+// Trocando `montarParametrosBotao(...)` de volta pela montagem antiga da rota
+// (`const parametrosBotao = slugGrupo ? { 0: slugGrupo } : undefined`), os dois testes abaixo
+// FALHAM com HTTP 502 e a mensagem de button0 / button1. Com a correcao, passam.
+//
+// ── O QUE O FAKE COBRA ──
+// Ele exige os MESMOS indices que o template tem em `botoes_json` e lanca o erro REAL da
+// Central Whats quando um falta — a prova nao e "nao quebrou", e "o payload tem a chave que a
+// Meta exige, no indice certo, com o valor certo".
+function criarTransporteExigeBotoes(indicesExigidosPorTemplate) {
+  const recebido = [];
+  return {
+    recebido,
+    enviarTemplate: async (args) => {
+      recebido.push(args);
+      const payload = transporte.montarPayload(args);
+      const exigidos = indicesExigidosPorTemplate[args.template.nome_meta] || [];
+      for (const indice of exigidos) {
+        if (!payload.vars[`button${indice}`]) {
+          throw new Error(
+            `Central Whats retornou HTTP 400 — {"error":"Template \\"${args.template.nome_meta}\\": o ` +
+              `botão de índice ${indice} tem URL dinâmica e exige a variável \\"button${indice}\\", ` +
+              'que não foi informada."}',
+          );
+        }
+      }
+      return { wamid: 'wamid-com-descadastro', mock: false };
+    },
+    classificarErroCentralWhats: transporte.classificarErroCentralWhats,
+  };
+}
+
+const URL_BOTAO_SAIDA = 'https://entrevista.vendedormestre.com.br/descadastro-whatsapp/{{1}}';
+const URL_BOTAO_GRUPO_META = 'https://entrevista.vendedormestre.com.br/grupo/{{1}}';
+
+function templateComBotoes(nomeMeta, mapa, botoes) {
+  return Number(
+    exec(
+      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo, botoes_json)
+       VALUES (?, 'pt_BR', 'marketing', ?, NULL, ?)`,
+      nomeMeta,
+      JSON.stringify(mapa),
+      JSON.stringify(botoes),
+    ).lastInsertRowid,
+  );
+}
+
+test('POST /enviar-teste: nova_vaga_v1 com botao de descadastro manda o token em button0', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Com Descadastro', '+55 47 99958-2500');
+  const tid = templateComBotoes(
+    'nova_vaga_v1',
+    [
+      { posicao: 1, campo: 'nome_primeiro' },
+      { posicao: 2, campo: 'cargo_vaga' },
+      { posicao: 3, campo: 'link_vaga' },
+    ],
+    [{ indice: 0, tipo: 'URL', texto: 'Não quero mais receber', url: URL_BOTAO_SAIDA }],
+  );
+
+  // O interruptor `optout_link_campanha_ativo` fica DESLIGADO de proposito: ele governa a
+  // variavel de CORPO, nao o parametro do botao, que a Meta exige de qualquer forma.
+  const fake = criarTransporteExigeBotoes({ nova_vaga_v1: [0] });
+  await comRotaEnviarTeste(fake, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId,
+      templateId: tid,
+      telefoneDestino: '+55 47 98888-7777',
+    });
+    const corpo = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(corpo));
+    assert.equal(corpo.wamid, 'wamid-com-descadastro');
+  });
+
+  const p = fake.recebido[0].parametrosBotao;
+  assert.ok(p, 'o parametro do botao tem que existir');
+  // O token e do TELEFONE DE DESTINO digitado, nao do telefone do candidato escolhido: quem
+  // recebe a mensagem (e quem se descadastraria no clique) e o primeiro.
+  assert.equal(lerTokenDescadastroWhatsapp(p[0]), '554788887777');
+});
+
+test('POST /enviar-teste: convite_grupo_vagas_vm manda o slug em button0 E o token em button1', async () => {
+  // O template com DOIS botoes dinamicos e o que o indice cravado no codigo quebrava: o token
+  // no indice 0 faria o candidato clicar em "Entrar no Grupo" e cair no descadastro.
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  exec(
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, slug) VALUES (?, ?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/DOISBOTOES', 'joinville',
+  );
+  const appId = candidatura(j, 'Dois Botoes', '+55 47 99958-2500');
+  const tid = templateComBotoes(
+    'convite_grupo_vagas_vm',
+    [
+      { posicao: 1, campo: 'nome_primeiro' },
+      { posicao: 2, campo: 'cargo_vaga' },
+      { posicao: 3, campo: 'cidade' },
+    ],
+    [
+      { indice: 0, tipo: 'URL', texto: 'ENTRAR NO GRUPO', url: URL_BOTAO_GRUPO_META },
+      { indice: 1, tipo: 'URL', texto: 'Não quero mais receber', url: URL_BOTAO_SAIDA },
+    ],
+  );
+
+  const fake = criarTransporteExigeBotoes({ convite_grupo_vagas_vm: [0, 1] });
+  await comRotaEnviarTeste(fake, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId,
+      templateId: tid,
+      telefoneDestino: '+55 47 98888-7777',
+    });
+    const corpo = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(corpo));
+    // Variavel de CORPO (posicao 3) continua sendo o NOME da cidade — tres valores diferentes
+    // na mesma mensagem: "Joinville" no corpo, "joinville" no botao 0, token no botao 1.
+    assert.equal(corpo.variaveis[2], 'Joinville');
+  });
+
+  const p = fake.recebido[0].parametrosBotao;
+  assert.equal(p[0], 'joinville', 'o botao do GRUPO nao pode receber o token');
+  assert.equal(lerTokenDescadastroWhatsapp(p[1]), '554788887777', 'o token vai no indice 1');
+});
+
+test('POST /enviar-teste: o payload que sai tem as duas chaves button, com os valores trocados em lugar nenhum', async () => {
+  // Fecha o circulo no PAYLOAD (vars.button0/button1), e nao so no argumento `parametrosBotao`
+  // — e o payload que a Central Whats recebe.
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  exec(
+    'INSERT INTO regioes_grupos_whatsapp (cidade, link_convite_grupo, slug) VALUES (?, ?, ?)',
+    'Joinville', 'https://chat.whatsapp.com/PAYLOAD', 'joinville',
+  );
+  const appId = candidatura(j, 'Payload', '+55 47 99958-2500');
+  const tid = templateComBotoes(
+    'convite_grupo_vagas_vm',
+    [{ posicao: 1, campo: 'nome_primeiro' }],
+    [
+      { indice: 0, tipo: 'URL', texto: 'ENTRAR NO GRUPO', url: URL_BOTAO_GRUPO_META },
+      { indice: 1, tipo: 'URL', texto: 'Não quero mais receber', url: URL_BOTAO_SAIDA },
+    ],
+  );
+
+  const fake = criarTransporteExigeBotoes({ convite_grupo_vagas_vm: [0, 1] });
+  await comRotaEnviarTeste(fake, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId, templateId: tid, telefoneDestino: '+55 47 98888-7777',
+    });
+    assert.equal(res.status, 200);
+  });
+
+  const payload = transporte.montarPayload(fake.recebido[0]);
+  assert.equal(payload.vars.button0, 'joinville');
+  assert.equal(lerTokenDescadastroWhatsapp(payload.vars.button1), '554788887777');
+});
+
+test('POST /enviar-teste: template utility sem botao nenhum continua sem parametro (nao inventa botao)', async () => {
+  // A contraprova do bug oposto: mandar `button0` para um template que nao tem botao e
+  // recusado com a mesma dureza com que a Meta cobra o que falta.
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  const appId = candidatura(j, 'Sem Botao', '+55 47 99958-2500');
+  const tid = Number(
+    exec(
+      `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, botao_parametro_fixo, botoes_json)
+       VALUES (?, 'pt_BR', 'utility', ?, NULL, '[]')`,
+      'confirmacao_cadastro_vaga_vm',
+      JSON.stringify([{ posicao: 1, campo: 'nome_primeiro' }]),
+    ).lastInsertRowid,
+  );
+
+  const fake = criarTransporteExigeBotoes({});
+  await comRotaEnviarTeste(fake, async (base) => {
+    const res = await enviarTestePost(base, {
+      applicationId: appId, templateId: tid, telefoneDestino: '+55 47 98888-7777',
+    });
+    assert.equal(res.status, 200);
+  });
+
+  assert.equal(fake.recebido[0].parametrosBotao, undefined);
+  assert.equal('button0' in transporte.montarPayload(fake.recebido[0]).vars, false);
 });
 
 // ══════════════════ button0 dinamico no CICLO REAL (Incremento 3) ══════════════════

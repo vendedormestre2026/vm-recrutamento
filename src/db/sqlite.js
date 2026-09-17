@@ -3844,7 +3844,7 @@ function listarPendentesCampanhaWhatsapp({ limite = 50 } = {}) {
       `SELECT e.id, e.campanha_id, e.telefone, e.nome, e.cidade, e.tentativas,
               c.template_id, c.tipo_mensagem,
               t.nome_meta AS template_nome, t.idioma AS template_idioma,
-              t.variaveis AS template_variaveis,
+              t.variaveis AS template_variaveis, t.categoria AS template_categoria,
               t.botao_parametro_fixo AS template_botao_parametro_fixo,
               t.botoes_json AS template_botoes_json,
               j.slug AS job_slug, j.titulo AS job_titulo
