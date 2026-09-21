@@ -47,6 +47,8 @@ const { montarUrlDescadastro } = require('./descadastro');
 const { listarPublicoCampanha } = require('./promocaoVagas');
 const { montarCorpoFinal, montarCorpoFinalGrupo } = require('./ctaCampanha');
 const { classificarErroEnvio } = require('./classificarErroEnvio');
+const { normalizarEmail } = require('./normalizarEmail');
+const elegibilidade = require('./elegibilidadeStatusPromocao');
 
 // Interruptor GERAL do envio de campanha (painel: /admin/config). Default FALSE.
 const CHAVE_ATIVO = 'promocao_ativa';
@@ -307,11 +309,74 @@ function enfileirarCampanha(campanhaId, deps = {}) {
 // B. VARREDURA — roda a cada ciclo do setInterval
 // ──────────────────────────────────────────────────────────────
 
-// Envia UM destinatario e marca a linha conforme o resultado.
-// Devolve 'enviado' | 'falha' | 'retentar' | 'abortar'. Erro NUNCA propaga: quem chama
-// precisa seguir para o proximo da leva, mesmo que este tenha explodido.
+// ── REVERIFICACAO DE STATUS NO ENVIO (ETAPA B, B4) ──
 //
-// Os quatro retornos, e o que cada um faz com a linha:
+// A fila e congelada no clique de disparar e drena em ciclos de 15 min, as vezes por horas.
+// Nesse meio-tempo o recrutador pode aprovar alguem, ou colocar em analise — e a pessoa
+// receberia a divulgacao de uma vaga nova mesmo assim. A montagem do publico ja filtrou
+// (lib/promocaoVagas); isto e a defesa em profundidade no momento do envio.
+//
+// UMA montagem por ciclo, e SO quando a leva tem alguma linha de tipo filtrado: o indice de
+// status e o mapa e-mail -> telefones sao duas leituras em lote, nunca uma por destinatario.
+// As chaves sao as MESMAS da montagem: e-mail normalizado + todos os telefones gravados com
+// aquele e-mail em candidaturas e talentos (a linha da fila so carrega o e-mail).
+//
+// Lanca se o banco falhar — quem chama decide o que fazer (ver varrerDisparoPromocao).
+function montarChecagemStatus(deps = {}) {
+  const db = deps.db || dbPadrao;
+  const indice = elegibilidade.construirIndiceElegibilidade({ db });
+  const telefonesPorEmail = new Map();
+  for (const { email, telefone } of db.listarTelefonesPorEmailParaElegibilidade()) {
+    const chave = normalizarEmail(email);
+    if (!chave) continue;
+    if (!telefonesPorEmail.has(chave)) telefonesPorEmail.set(chave, new Set());
+    telefonesPorEmail.get(chave).add(telefone);
+  }
+  return {
+    avaliar(email) {
+      const telefones = [...(telefonesPorEmail.get(normalizarEmail(email)) || [])];
+      return indice.avaliar({ emails: [email], telefones });
+    },
+    resumo: indice.resumo,
+  };
+}
+
+// Sentinela: a checagem deveria rodar neste ciclo e nao pode ser montada (banco reclamou).
+const CHECAGEM_INDISPONIVEL = Symbol('checagem-status-indisponivel');
+
+// ── ADIAMENTO SEGUIDO ──
+// Um 'adiado_status' isolado e ruido de banco; varios ciclos seguidos na MESMA campanha
+// significam que ela parou de andar sem que nada mais avise. Contador EM MEMORIA por
+// campanha (sem schema): zera quando a campanha tem uma linha filtrada processada sem
+// adiamento no ciclo, e a partir do limite o ciclo loga — so ids e contagens. Nao pausa nem
+// cancela nada: a decisao continua humana. Reinicia do zero quando o processo reinicia, o
+// que so atrasa o aviso, nunca o inventa.
+const LIMITE_CICLOS_ADIADOS = 3;
+const ciclosAdiadosSeguidos = new Map();
+
+function registrarAdiamentos(adiadosPorCampanha, processadasPorCampanha) {
+  for (const campanhaId of processadasPorCampanha) {
+    if (!adiadosPorCampanha.has(campanhaId)) ciclosAdiadosSeguidos.delete(campanhaId);
+  }
+  for (const [campanhaId, n] of adiadosPorCampanha) {
+    const seguidos = (ciclosAdiadosSeguidos.get(campanhaId) || 0) + 1;
+    ciclosAdiadosSeguidos.set(campanhaId, seguidos);
+    if (seguidos >= LIMITE_CICLOS_ADIADOS) {
+      console.error(
+        `[promocao] ATENCAO: campanha ${campanhaId}: ${seguidos} ciclos seguidos adiados por falha ` +
+          `na checagem de status (${n} envio(s) adiado(s) neste ciclo). A campanha nao anda ate ` +
+          'a checagem voltar; nada foi cancelado.',
+      );
+    }
+  }
+}
+
+// Envia UM destinatario e marca a linha conforme o resultado.
+// Devolve 'enviado' | 'falha' | 'retentar' | 'abortar' | 'cancelado_status' | 'adiado_status'.
+// Erro NUNCA propaga: quem chama precisa seguir para o proximo da leva, mesmo que este tenha
+// explodido.
+//
+// Os seis retornos, e o que cada um faz com a linha:
 //   'enviado'   status 'enviado'. Fim.
 //   'falha'     status 'falha'. Fim — ou porque o endereco foi recusado, ou porque o teto
 //               de tentativas da categoria se esgotou.
@@ -319,6 +384,12 @@ function enfileirarCampanha(campanhaId, deps = {}) {
 //               ciclo; o intervalo de 15 min e o backoff.
 //   'abortar'   nada foi escrito nesta linha. O ambiente esta quebrado e o ciclo inteiro
 //               precisa parar — ver o tratamento em varrerDisparoPromocao.
+//   'cancelado_status'  so em tipo com filtro de status (divulgacao_vaga): a pessoa deixou
+//               de ser elegivel desde a materializacao. status 'cancelado', erro
+//               'status_nao_elegivel', SEM tentativa contada e SEM chamar o provedor. Fim.
+//   'adiado_status'     idem tipo, mas a checagem nao pode ser montada neste ciclo. Nada e
+//               escrito; a linha continua 'pendente' e volta no proximo ciclo. Fail-closed:
+//               sem saber o status, nao envia — e tambem nao cancela quem pode ser elegivel.
 //
 // ORDEM QUE IMPORTA: envia PRIMEIRO, marca DEPOIS. Marcar antes tornaria uma queda entre
 // as duas operacoes indistinguivel de um envio bem-sucedido, e a pessoa nunca receberia.
@@ -326,12 +397,33 @@ function enfileirarCampanha(campanhaId, deps = {}) {
 // pessoa receber duas vezes — e a janela para isso e de milissegundos contra a de uma
 // chamada SMTP inteira. Trocamos o risco raro pelo risco menos danoso, mesma escolha de
 // enviarParaCandidato em lembreteInicio.js.
-async function enviarUm(linha, deps) {
+async function enviarUm(linha, deps, checagemStatus = null) {
   const db = deps.db || dbPadrao;
   const emailCampanha = deps.emailCampanha || emailCampanhaPadrao;
   const classificar = deps.classificarErro || classificarErroEnvio;
 
   const tipo = linha.tipo === 'convite_grupo' ? 'convite_grupo' : 'divulgacao_vaga';
+
+  // ── STATUS DO RECRUTADOR, ANTES DE QUALQUER OUTRA COISA (B4) ──
+  // Antes de montar corpo ou tocar o provedor: quem nao e mais elegivel nao gera nem a
+  // tentativa. convite_grupo (e qualquer tipo fora de TIPOS_CAMPANHA_COM_FILTRO_STATUS) passa
+  // direto, exatamente como antes.
+  if (elegibilidade.tipoComFiltroStatus(tipo)) {
+    if (!checagemStatus || checagemStatus === CHECAGEM_INDISPONIVEL) return 'adiado_status';
+    try {
+      if (!checagemStatus.avaliar(linha.email).elegivel) {
+        db.marcarEnvioCampanhaCanceladoPorStatus(linha.id);
+        return 'cancelado_status';
+      }
+    } catch (err) {
+      // Falha ao avaliar/marcar UMA linha: ela fica 'pendente' e volta no proximo ciclo.
+      // Sem dado pessoal no log — so o id da linha e da campanha.
+      console.error(
+        `[promocao] falha na reverificacao de status (envio_id=${linha.id} campanha=${linha.campanha_id}): ${err.message}`,
+      );
+      return 'adiado_status';
+    }
+  }
 
   // Warning condicional ao tipo: 'convite_grupo' NUNCA tem vaga_slug (nao ha vaga
   // nenhuma — job_id e NULL por design, ver schema.sql) — logar "a vaga foi removida?"
@@ -516,7 +608,8 @@ function concluirCampanhasEsgotadas(deps) {
       concluidas += 1;
       console.log(
         `[promocao] campanha ${campanha.id} concluida — ` +
-          `enviados: ${contagem.enviado}, falhas: ${contagem.falha}.`,
+          `enviados: ${contagem.enviado}, falhas: ${contagem.falha}, ` +
+          `cancelados por status do recrutador: ${contagem.canceladoPorStatus}.`,
       );
     }
   }
@@ -533,7 +626,9 @@ async function varrerDisparoPromocao(deps = {}) {
   // `retentativas` e um numero novo no resumo, e nao um subtipo de falha: sao linhas que
   // continuam vivas na fila. Somar com `falhas` esconderia exatamente a distincao que este
   // incremento existe para criar.
-  const resumo = { enviados: 0, falhas: 0, retentativas: 0 };
+  // `canceladosPorStatus`/`adiadosPorStatus` (B4) tambem sao numeros proprios, pela mesma
+  // razao: nem um nem outro e falha de canal.
+  const resumo = { enviados: 0, falhas: 0, retentativas: 0, canceladosPorStatus: 0, adiadosPorStatus: 0 };
 
   // Interruptor checado ANTES de qualquer acesso ao banco: com ele desligado, o ciclo nao
   // le fila, nao conclui campanha e nao escreve nada. Mesmo contrato de lembreteInicio.
@@ -566,10 +661,44 @@ async function varrerDisparoPromocao(deps = {}) {
   const intervaloMs = deps.intervaloMs === undefined ? ENVIO_INTERVALO_MS : deps.intervaloMs;
   const dormir = deps.dormir || dormirPadrao;
 
+  // Checagem de status montada UMA vez para a leva inteira, e so se alguma linha precisar.
+  // Se o banco falhar aqui, as linhas de tipo filtrado ficam pendentes (adiadas) e o resto da
+  // leva segue normal — convite_grupo nao depende desta leitura.
+  let checagemStatus = null;
+  if (pendentes.some((l) => elegibilidade.tipoComFiltroStatus(l.tipo))) {
+    try {
+      checagemStatus = (deps.montarChecagemStatus || montarChecagemStatus)(deps);
+    } catch (err) {
+      checagemStatus = CHECAGEM_INDISPONIVEL;
+      console.error(
+        `[promocao] reverificacao de status indisponivel neste ciclo (${err.message}); ` +
+          'envios de divulgacao_vaga ficam pendentes para o proximo ciclo.',
+      );
+    }
+  }
+
   let abortado = false;
+  // Por campanha, neste ciclo: quantas linhas filtradas foram adiadas, e quais campanhas
+  // tiveram alguma linha filtrada resolvida sem adiamento (alimenta registrarAdiamentos).
+  const adiadosPorCampanha = new Map();
+  const processadasPorCampanha = new Set();
 
   for (const [i, linha] of pendentes.entries()) {
-    const r = await enviarUm(linha, deps);
+    const r = await enviarUm(linha, deps, checagemStatus);
+    if (r === 'adiado_status') {
+      adiadosPorCampanha.set(linha.campanha_id, (adiadosPorCampanha.get(linha.campanha_id) || 0) + 1);
+    } else if (elegibilidade.tipoComFiltroStatus(linha.tipo)) {
+      processadasPorCampanha.add(linha.campanha_id);
+    }
+    // Nenhum dos dois chamou o provedor: sem pausa de pacing depois deles.
+    if (r === 'cancelado_status') {
+      resumo.canceladosPorStatus += 1;
+      continue;
+    }
+    if (r === 'adiado_status') {
+      resumo.adiadosPorStatus += 1;
+      continue;
+    }
     if (r === 'enviado') resumo.enviados += 1;
     else if (r === 'retentar') resumo.retentativas += 1;
     else if (r === 'abortar') {
@@ -586,6 +715,8 @@ async function varrerDisparoPromocao(deps = {}) {
     if (i < pendentes.length - 1) await dormir(intervaloMs);
   }
 
+  registrarAdiamentos(adiadosPorCampanha, processadasPorCampanha);
+
   // Concluir campanha e afirmar "o trabalho desta campanha acabou". Depois de um aborto por
   // configuracao nao ha base para afirmar isso: o ciclo parou no meio, por um motivo que
   // nao tem nada a ver com a campanha. Uma campanha de publico vazio espera mais 15 min
@@ -600,10 +731,11 @@ async function varrerDisparoPromocao(deps = {}) {
     }
   }
 
-  if (resumo.enviados || resumo.falhas || resumo.retentativas) {
+  if (resumo.enviados || resumo.falhas || resumo.retentativas || resumo.canceladosPorStatus || resumo.adiadosPorStatus) {
     console.log(
       `[promocao] varredura concluida — enviados: ${resumo.enviados}, ` +
-        `falhas: ${resumo.falhas}, a retentar: ${resumo.retentativas}` +
+        `falhas: ${resumo.falhas}, a retentar: ${resumo.retentativas}, ` +
+        `cancelados por status: ${resumo.canceladosPorStatus}, adiados por status: ${resumo.adiadosPorStatus}` +
         `${abortado ? ' (CICLO ABORTADO por erro de configuracao)' : ''}`,
     );
   }
@@ -649,4 +781,6 @@ module.exports = {
   CHAVE_ATIVO,
   ENVIOS_POR_CICLO,
   ENVIO_INTERVALO_MS,
+  montarChecagemStatus,
+  LIMITE_CICLOS_ADIADOS,
 };

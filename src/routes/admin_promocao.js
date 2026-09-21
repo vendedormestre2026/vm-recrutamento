@@ -871,6 +871,22 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
     const falhas = c.falha
       ? `<li><b>${fmtInt(c.falha)}</b> ${c.falha === 1 ? 'falha' : 'falhas'} de envio</li>`
       : '';
+    // Fora da fila pela reverificacao de status no envio (B4): a pessoa virou Aprovado ou Em
+    // analise depois do disparo. Linha PROPRIA, nunca somada a falhas — nao e problema de
+    // canal. Qualquer outro 'cancelado' (hoje nenhum caminho grava) aparece a parte.
+    // "Elegiveis no envio" = congelados menos os que sairam por status: e a base contra a
+    // qual "enviados" deve ser lido. O total congelado continua visivel logo acima. Nenhuma
+    // taxa da tela usa o congelado como denominador (a de clique e sobre `enviado`).
+    const canceladosStatus = c.canceladoPorStatus
+      ? `<li><b>${fmtInt(c.canceladoPorStatus)}</b> fora da fila por status do recrutador
+           (aprovado ou em análise depois do disparo — não é falha)</li>
+         <li><b>${fmtInt(c.enviado)}</b> enviados de <b>${fmtInt(c.total - c.canceladoPorStatus)}</b>
+           elegíveis no envio</li>`
+      : '';
+    const outrosCancelados = c.cancelado - c.canceladoPorStatus;
+    const canceladosOutros = outrosCancelados > 0
+      ? `<li><b>${fmtInt(outrosCancelados)}</b> ${outrosCancelados === 1 ? 'cancelado' : 'cancelados'}</li>`
+      : '';
     const rotulo = ROTULO_STATUS_CAMPANHA[campanha.status] || campanha.status;
 
     // ── Desempenho: recebidos e cliques ──
@@ -922,6 +938,8 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
           <li><b>${fmtInt(c.enviado)}</b> enviados</li>
           <li><b>${fmtInt(c.pendente)}</b> na fila</li>
           ${falhas}
+          ${canceladosStatus}
+          ${canceladosOutros}
         </ul>
         <p style="margin:1rem 0 0;color:var(--cinza);font-size:.8rem;">
           A rotina envia até ${fmtInt(ENVIOS_POR_CICLO)} e-mails a cada 15 minutos, e só

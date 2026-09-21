@@ -2545,14 +2545,24 @@ function materializarEnviosCampanha(campanhaId, destinatarios = []) {
 
 // Quantas linhas de envio esta campanha ja tem. Serve de guarda contra materializacao
 // duplicada (ver lib/dispararPromocao) e de base para o progresso na tela.
+//
+// `canceladoPorStatus` e um SUBCONJUNTO de `cancelado`: as linhas que a reverificacao no
+// envio tirou da fila porque a pessoa deixou de ser elegivel por status do recrutador
+// (erro = ERRO_STATUS_NAO_ELEGIVEL). Separado para a tela nunca confundir "a regra de
+// status barrou" com um cancelamento de outra natureza — nem com falha de canal, que e
+// `falha`.
 function contarEnviosCampanha(campanhaId) {
   const linhas = getDb()
-    .prepare('SELECT status, COUNT(*) AS n FROM campanha_envios WHERE campanha_id = ? GROUP BY status')
-    .all(campanhaId);
+    .prepare(
+      `SELECT status, (status = 'cancelado' AND erro = ?) AS por_status, COUNT(*) AS n
+         FROM campanha_envios WHERE campanha_id = ? GROUP BY status, por_status`,
+    )
+    .all(ERRO_STATUS_NAO_ELEGIVEL, campanhaId);
 
-  const contagem = { pendente: 0, enviado: 0, falha: 0, cancelado: 0, total: 0 };
+  const contagem = { pendente: 0, enviado: 0, falha: 0, cancelado: 0, canceladoPorStatus: 0, total: 0 };
   for (const l of linhas) {
-    if (l.status in contagem) contagem[l.status] = l.n;
+    if (l.status in contagem) contagem[l.status] += l.n;
+    if (l.por_status) contagem.canceladoPorStatus += l.n;
     contagem.total += l.n;
   }
   return contagem;
@@ -2775,6 +2785,46 @@ function marcarEnvioCampanhaFalha(id, erro) {
     )
     .run(String(erro || '').slice(0, 300), id);
   return info.changes;
+}
+
+// Motivo gravado em `erro` quando a reverificacao no envio (lib/dispararPromocao, e depois o
+// WhatsApp) tira da fila alguem que deixou de ser elegivel por status do recrutador. Mora
+// aqui, e nao em lib/elegibilidadeStatusPromocao, porque sqlite.js e camada-folha e nao
+// pode importar lib que importa ../db; a lib o le via db.ERRO_STATUS_NAO_ELEGIVEL.
+const ERRO_STATUS_NAO_ELEGIVEL = 'status_nao_elegivel';
+
+// Tira UMA linha da fila por status do recrutador: 'cancelado' + motivo, SEM mexer em
+// `tentativas` — nao houve tentativa de envio, e contar uma aqui cobraria do destinatario um
+// esforco de canal que nunca aconteceu. Condicional ao 'pendente', mesmo contrato das irmas:
+// se outro caminho ja resolveu a linha, esta escrita nao a sobrescreve. Terminal: nada na
+// aplicacao devolve 'cancelado' para 'pendente', entao a retentativa nunca a revisita.
+function marcarEnvioCampanhaCanceladoPorStatus(id) {
+  const info = getDb()
+    .prepare(
+      `UPDATE campanha_envios SET status = 'cancelado', erro = ?
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(ERRO_STATUS_NAO_ELEGIVEL, id);
+  return info.changes;
+}
+
+// Pares (email, telefone) CRUS de candidaturas e talentos, para a reverificacao no envio
+// cruzar pelas MESMAS chaves da montagem do publico: a linha da fila so carrega o e-mail, e
+// os telefones da pessoa vem daqui. UMA consulta por ciclo; a normalizacao do e-mail
+// (Unicode-aware) e a chave canonica do telefone sao feitas em JS, pela mesma razao das
+// leituras do motor de publico (ver o comentario antes de listarCandidatosParaCampanha).
+// Inclui candidaturas arquivadas e talentos descartados: aqui a pergunta e "quais numeros
+// sao desta pessoa", e um numero a mais so pode excluir, nunca incluir.
+function listarTelefonesPorEmailParaElegibilidade() {
+  return getDb()
+    .prepare(
+      `SELECT email, telefone FROM applications
+        WHERE email IS NOT NULL AND TRIM(email) <> '' AND telefone IS NOT NULL AND TRIM(telefone) <> ''
+       UNION ALL
+       SELECT email, telefone FROM talentos
+        WHERE email IS NOT NULL AND TRIM(email) <> '' AND telefone IS NOT NULL AND TRIM(telefone) <> ''`,
+    )
+    .all();
 }
 
 // Registra uma tentativa que FALHOU MAS PODE DAR CERTO DEPOIS: conta o esforco, guarda o
@@ -4470,6 +4520,9 @@ module.exports = {
   mapaStatusRecrutadorPorTelefone,
   telefoneSuprimidoPorAprovacao,
   listarStatusRecrutadorParaElegibilidade,
+  listarTelefonesPorEmailParaElegibilidade,
+  marcarEnvioCampanhaCanceladoPorStatus,
+  ERRO_STATUS_NAO_ELEGIVEL,
   STATUS_RECRUTADOR_VALIDOS,
   atualizarAplicacao,
   arquivarAplicacao,
