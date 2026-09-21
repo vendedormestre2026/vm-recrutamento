@@ -39,15 +39,16 @@ function vaga(cidade = 'Joinville') {
     ).lastInsertRowid,
   );
 }
-function candidatura(jobId, telefone, { status = null, arquivada = false, criadoEm = '2026-08-01 10:00:00', etapa = 'concluido' } = {}) {
+function candidatura(jobId, telefone, { status = null, arquivada = false, criadoEm = '2026-08-01 10:00:00', etapa = 'concluido', email = null } = {}) {
   seq += 1;
   return Number(
     exec(
-      `INSERT INTO applications (job_id, nome, telefone, status_recrutador, status, token, criado_em, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO applications (job_id, nome, telefone, email, status_recrutador, status, token, criado_em, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       jobId,
       `Pessoa ${seq}`,
       comoFormulario(telefone),
+      email,
       status,
       etapa,
       `tok-div-status-${seq}`,
@@ -56,12 +57,12 @@ function candidatura(jobId, telefone, { status = null, arquivada = false, criado
     ).lastInsertRowid,
   );
 }
-function legado(telefone, cidade = 'Joinville') {
+function legado(telefone, cidade = 'Joinville', email = null) {
   seq += 1;
   exec(
     "INSERT INTO talentos (nome, email, telefone, cidade, categoria) VALUES (?, ?, ?, ?, 'legado')",
     `Legado ${seq}`,
-    `legado${seq}@x.co`,
+    email || `legado${seq}@x.co`,
     comoFormulario(telefone),
     cidade,
   );
@@ -220,4 +221,58 @@ test('ja inscrito na vaga alvo continua excluido', () => {
   candidatura(alvo, '5547900003601', { status: 'reprovado' });
   const r = calado(() => publico.listarPublicoDivulgacaoVaga(alvo, {}));
   assert.deepEqual(tels(r), []);
+});
+
+// ── B4b: cruzamento tambem por E-MAIL ──
+
+test('B4b: aprovado com o MESMO e-mail e telefone DIFERENTE sai da divulgacao', () => {
+  zerar();
+  const v1 = vaga();
+  const v2 = vaga();
+  const alvo = vaga();
+  candidatura(v1, '5547900003701', { status: 'aprovado', email: 'mesma@x.com' });
+  // Mesma pessoa pelo e-mail, outro numero; sozinha seria elegivel (reprovado).
+  candidatura(v2, '5547900003702', { status: 'reprovado', email: 'mesma@x.com' });
+  candidatura(v2, '5547900003703', { status: 'reprovado', email: 'outra@x.com' }); // controle
+
+  const linhas = [];
+  const { log, warn } = console;
+  console.log = console.warn = (...a) => linhas.push(a.join(' '));
+  let r;
+  try {
+    r = publico.listarPublicoDivulgacaoVaga(alvo, {});
+  } finally {
+    Object.assign(console, { log, warn });
+  }
+  assert.deepEqual(tels(r), ['5547900003703']);
+  // 3701 saiu pela supressao antiga (aprovado na mais recente); 3702 so pelo e-mail.
+  assert.equal(r.excluidosPorStatus.total, 1);
+  assert.equal(r.excluidosPorStatus.porMotivo.aprovado, 1);
+  // E-mail nunca no retorno nem no log.
+  assert.equal(JSON.stringify(r).includes('@'), false);
+  assert.equal(linhas.some((l) => l.includes('@')), false);
+});
+
+test('B4b: o mesmo candidato SEGUE no convite de grupo e no status de candidatura', () => {
+  zerar();
+  const v1 = vaga();
+  const v2 = vaga();
+  candidatura(v1, '5547900003801', { status: 'aprovado', email: 'mesma@x.com' });
+  candidatura(v2, '5547900003802', { status: 'reprovado', email: 'mesma@x.com' });
+  const convite = calado(() => publico.listarPublicoConviteGrupo({}));
+  assert.ok(convite.itens.some((i) => i.telefone === '5547900003802'));
+  const situacao = calado(() => publico.listarPublicoStatusCandidatura(v2, ['reprovado']));
+  assert.deepEqual(tels(situacao), ['5547900003802']);
+});
+
+test('B4b: e-mail em CAIXA diferente casa (legado x candidatura aprovada)', () => {
+  zerar();
+  const v1 = vaga();
+  const alvo = vaga();
+  candidatura(v1, '5547900003901', { status: 'aprovado', email: 'maria.silva@exemplo.com' });
+  legado('5547900003902', 'Joinville', '  Maria.Silva@EXEMPLO.com ');
+  legado('5547900003903', 'Joinville', 'joana@exemplo.com'); // controle
+  const r = calado(() => publico.listarPublicoDivulgacaoVaga(alvo, {}));
+  assert.deepEqual(tels(r), ['5547900003903']);
+  assert.equal(r.excluidosPorStatus.total, 1);
 });

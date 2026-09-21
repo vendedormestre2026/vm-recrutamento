@@ -101,6 +101,10 @@ function pessoaVazia(telefone) {
     // de talento. Usado por aplicarFiltroPeriodo (mais abaixo) DEPOIS do agrupamento, nunca
     // como filtro nas consultas de origem — ver o comentario em coletarPessoas.
     datas: new Set(),
+    // E-mails CRUS de todas as linhas da pessoa (ETAPA B, B4b). So alimentam o cruzamento da
+    // elegibilidade por status na divulgacao de vaga — paraSaida nunca os expoe, e nenhum
+    // log os imprime.
+    emails: new Set(),
   };
 }
 
@@ -152,6 +156,7 @@ function coletarPessoas(deps = {}) {
     // Guarda TODAS as vagas em que a pessoa ja entrou — inclusive por outro telefone/e-mail,
     // porque o agrupamento aqui e por numero. Usado pela exclusao de divulgacao_vaga.
     if (linha.job_id) p.jobsInscritos.add(linha.job_id);
+    if (linha.email) p.emails.add(linha.email);
     const data = apenasData(linha.criado_em);
     if (data) p.datas.add(data);
   }
@@ -170,6 +175,8 @@ function coletarPessoas(deps = {}) {
     if (c) p.cidades.add(c);
     const data = apenasData(linha.criado_em);
     if (data) p.datas.add(data);
+    // Antes do `continue` de precedencia, como os demais atributos da pessoa.
+    if (linha.email) p.emails.add(linha.email);
 
     if (p.origemTipo === 'application') continue;
     p.origemTipo = 'talento';
@@ -359,7 +366,11 @@ function listarPublicoDivulgacaoVaga(jobId, criterios = {}, deps = {}) {
   let excluidosPorStatus = null;
   if (elegibilidade.tipoComFiltroStatus('divulgacao_vaga')) {
     const indice = elegibilidade.construirIndiceElegibilidade({ db: deps.db || dbPadrao });
-    pessoas = pessoas.filter((p) => indice.porTelefone(p.telefone).elegivel);
+    // Telefone (chave canonica) E todos os e-mails da pessoa (B4b): basta UMA chave casar
+    // com candidatura inelegivel — mesma regra do motor de e-mail.
+    pessoas = pessoas.filter(
+      (p) => indice.avaliar({ telefones: [p.telefone], emails: [...p.emails] }).elegivel,
+    );
     const { excluidas, porMotivo, apenasArquivada } = indice.resumo;
     excluidosPorStatus = { total: excluidas, porMotivo: { ...porMotivo }, apenasArquivada };
     if (excluidas) {

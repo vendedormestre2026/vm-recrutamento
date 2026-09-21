@@ -3345,7 +3345,9 @@ function listarCandidatosParaCampanhaWhatsapp({ dataDe, dataAte } = {}) {
   }
   return getDb()
     .prepare(
-      `SELECT a.id, a.nome, a.telefone, a.job_id, a.criado_em,
+      // `a.email` (ETAPA B, B4b): so para o cruzamento da elegibilidade por status na
+      // divulgacao de vaga (lib/elegibilidadeStatusPromocao). Nunca sai no publico.
+      `SELECT a.id, a.nome, a.telefone, a.email, a.job_id, a.criado_em,
               j.perfil AS perfil, j.cidade AS cidade_vaga
          FROM applications a
          LEFT JOIN jobs j ON j.id = a.job_id
@@ -3381,7 +3383,8 @@ function listarTalentosParaCampanhaWhatsapp({ dataDe, dataAte } = {}) {
   }
   return getDb()
     .prepare(
-      `SELECT id, nome, telefone, cidade, perfil_interesse, criado_em
+      // `email`: mesmo motivo do a.email da query irma acima.
+      `SELECT id, nome, telefone, email, cidade, perfil_interesse, criado_em
          FROM talentos
         ${montarClausula(where)}
         ORDER BY id`,
