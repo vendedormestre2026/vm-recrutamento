@@ -41,6 +41,9 @@ const { telefoneUtilizavel } = require('./publicoDisparoWhatsapp');
 // vaga do UNIQUE(campanha_id, telefone), que e irreversivel), e o guard do envio pega quem
 // pediu para sair DEPOIS da materializacao, que e o caso mais comum de todos.
 const optout = require('./optoutWhatsapp');
+// Regra de STATUS DO RECRUTADOR para promocao de novas vagas (ETAPA B, B2). Aplicada SO em
+// listarPublicoDivulgacaoVaga — ver o comentario la.
+const elegibilidade = require('./elegibilidadeStatusPromocao');
 
 // ── AS EXCLUSOES AUTOMATICAS, QUE NAO SAO OPCAO DE TELA ──
 // Mesmo principio de promocaoVagas: sao invariantes, e transformar qualquer uma em checkbox
@@ -340,8 +343,38 @@ function listarPublicoDivulgacaoVaga(jobId, criterios = {}, deps = {}) {
   });
   pessoas = passoPerfil.pessoas;
 
+  // ── STATUS DO RECRUTADOR (ETAPA B, B2) ──
+  // So "Sem decisao" e "Reprovado" recebem divulgacao de vaga nova — regra inteira em
+  // lib/elegibilidadeStatusPromocao.js. SOMA (AND) com tudo o que ja rodou acima, inclusive a
+  // supressao por "aprovado na candidatura mais recente" de aplicarInvariantes, que continua
+  // la intacta porque tambem serve o convite de grupo e o WA1/WA2.
+  //
+  // AQUI e nao em aplicarInvariantes, de proposito: aplicarInvariantes e compartilhada com
+  // convite_grupo, que esta FORA do escopo desta regra (decisao D4). A guarda pelo TIPO (e
+  // nunca pelo nome do template) deixa explicito que ampliar o escopo e mexer na constante.
+  //
+  // POR ULTIMO, depois do dedup e de todos os recortes: a contagem de excluidos e por PESSOA
+  // UNICA que de outro modo receberia — o numero que responde "quantos a regra tirou desta
+  // campanha", comparavel com o diagnostico feito em producao.
+  let excluidosPorStatus = null;
+  if (elegibilidade.tipoComFiltroStatus('divulgacao_vaga')) {
+    const indice = elegibilidade.construirIndiceElegibilidade({ db: deps.db || dbPadrao });
+    pessoas = pessoas.filter((p) => indice.porTelefone(p.telefone).elegivel);
+    const { excluidas, porMotivo, apenasArquivada } = indice.resumo;
+    excluidosPorStatus = { total: excluidas, porMotivo: { ...porMotivo }, apenasArquivada };
+    if (excluidas) {
+      // Agregado, sem dado pessoal — mesmo espirito do log de opt-out de aplicarInvariantes.
+      console.log(
+        `[campanha-wa] publico divulgacao_vaga: ${excluidas} pessoa(s) excluida(s) por status do ` +
+          `recrutador (aprovado: ${porMotivo.aprovado}, em_analise: ${porMotivo.em_analise}, ` +
+          `desconhecido: ${porMotivo.desconhecido}; so por candidatura arquivada: ${apenasArquivada}); ` +
+          `${pessoas.length} restante(s).`,
+      );
+    }
+  }
+
   const itens = pessoas.map(paraSaida);
-  return { itens, total: itens.length, semPerfil: passoPerfil.semAtributo };
+  return { itens, total: itens.length, semPerfil: passoPerfil.semAtributo, excluidosPorStatus };
 }
 
 // ══════════════════════════════════════════════════════════════
