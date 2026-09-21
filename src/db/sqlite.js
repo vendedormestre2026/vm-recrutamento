@@ -906,6 +906,29 @@ function telefoneSuprimidoPorAprovacao(telefone) {
   return statusRecrutadorMaisRecente(telefone) === 'aprovado';
 }
 
+// ── ELEGIBILIDADE POR STATUS PARA PROMOCAO DE NOVAS VAGAS ──
+//
+// Leitura CRUA de TODAS as candidaturas — inclusive as arquivadas (deleted_at), de proposito:
+// a regra "TODAS as candidaturas" (decisao D3) conta tambem a candidatura que o recrutador
+// arquivou. Quem decide quem e elegivel e lib/elegibilidadeStatusPromocao.js; aqui nao ha
+// filtro nenhum, pela mesma divisao de trabalho do motor de publico do e-mail: a identidade
+// da pessoa (telefone canonico, e-mail normalizado) e calculada em JS, nunca em SQL.
+//
+// NAO substitui mapaStatusRecrutadorPorTelefone: aquele responde "a candidatura MAIS RECENTE
+// foi aprovada?" para WA1/WA2 e para a supressao atual da campanha; este responde a regra
+// nova, que e mais estrita e so vale para divulgacao de vaga.
+//
+// UMA varredura por montagem de publico ou por ciclo de envio, nunca uma por pessoa.
+function listarStatusRecrutadorParaElegibilidade() {
+  return getDb()
+    .prepare(
+      `SELECT id, telefone, email, status_recrutador, status, deleted_at
+         FROM applications
+        ORDER BY id`,
+    )
+    .all();
+}
+
 // Edita SOMENTE os campos de contato do candidato. NUNCA toca em id/job_id/token/status/
 // curriculo_path/timestamps. Vazio ('' apos trim) vira NULL. Tudo parametrizado (?).
 function atualizarAplicacao(id, campos = {}) {
@@ -4440,6 +4463,7 @@ module.exports = {
   statusRecrutadorMaisRecente,
   mapaStatusRecrutadorPorTelefone,
   telefoneSuprimidoPorAprovacao,
+  listarStatusRecrutadorParaElegibilidade,
   STATUS_RECRUTADOR_VALIDOS,
   atualizarAplicacao,
   arquivarAplicacao,

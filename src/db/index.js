@@ -66,6 +66,7 @@ module.exports = {
   statusRecrutadorMaisRecente: driver.statusRecrutadorMaisRecente,
   mapaStatusRecrutadorPorTelefone: driver.mapaStatusRecrutadorPorTelefone,
   telefoneSuprimidoPorAprovacao: driver.telefoneSuprimidoPorAprovacao,
+  listarStatusRecrutadorParaElegibilidade: driver.listarStatusRecrutadorParaElegibilidade,
   STATUS_RECRUTADOR_VALIDOS: driver.STATUS_RECRUTADOR_VALIDOS,
   atualizarAplicacao: driver.atualizarAplicacao,
   arquivarAplicacao: driver.arquivarAplicacao,
