@@ -28,6 +28,9 @@
 
 const dbPadrao = require('../db');
 const { normalizarEmail } = require('./normalizarEmail');
+// Regra de STATUS DO RECRUTADOR para promocao de novas vagas (ETAPA B, B3). So para
+// 'divulgacao_vaga' — ver o bloco no fim de listarPublicoCampanha.
+const elegibilidade = require('./elegibilidadeStatusPromocao');
 
 const PERFIS_VALIDOS = ['SDR', 'CLOSER'];
 const RECOMENDACOES_VALIDAS = ['avancar', 'talvez', 'descartar'];
@@ -104,6 +107,9 @@ function agruparPessoas(linhasApp, linhasTal, { excluidos }) {
         // qualquer uma delas tem que alcanca-la.
         bases: new Set(),
         cidades: new Set(),
+        // Telefones CRUS de todas as linhas da pessoa (candidaturas e talentos). So alimentam
+        // o cruzamento da elegibilidade por status; nunca saem no resultado.
+        telefones: new Set(),
       });
     }
     return pessoas.get(email);
@@ -124,6 +130,7 @@ function agruparPessoas(linhasApp, linhasTal, { excluidos }) {
     // existe candidatura "sem origem"; so talentos ficam sem este atributo.
     p.origensUtm.add(linha._origemCanonica);
     p.bases.add(BASE_CANDIDATURA);
+    if (linha.telefone) p.telefones.add(linha.telefone);
     // `applications.cidade` e coluna orfa e quase sempre NULL — quando ha valor, foi o
     // recrutador que digitou. Entra no mesmo Set das cidades de talento.
     const cidadeApp = String(linha.cidade == null ? '' : linha.cidade).trim();
@@ -147,6 +154,8 @@ function agruparPessoas(linhasApp, linhasTal, { excluidos }) {
     // bases, e a linha de applications vencer a EXIBICAO nao apaga o fato de ela estar
     // tambem no legado.
     p.bases.add(baseDoTalento(linha.categoria));
+    // Telefone tambem ANTES do `continue`: e atributo da pessoa, como base e cidade.
+    if (linha.telefone) p.telefones.add(linha.telefone);
     const cidadeTal = String(linha.cidade == null ? '' : linha.cidade).trim();
     if (cidadeTal) p.cidades.add(cidadeTal);
     // Talento nao contribui origem de lead (nao ha utm_source na tabela) nem recomendacao
@@ -382,6 +391,40 @@ function listarPublicoCampanha(criterios = {}, deps = {}) {
   });
   pessoas = passoCidade.pessoas;
 
+  // ── STATUS DO RECRUTADOR (ETAPA B, B3) ──
+  // So "Sem decisao" e "Reprovado" recebem divulgacao de vaga nova — regra inteira em
+  // lib/elegibilidadeStatusPromocao.js. SOMA (AND) com as exclusoes automaticas acima
+  // (descadastro, ja inscrito, talento descartado, dedupe).
+  //
+  // A guarda pelo TIPO e REAL aqui: esta funcao tambem atende 'convite_grupo', que esta FORA
+  // do escopo da regra (decisao D4) e segue exatamente como antes.
+  //
+  // Cruza por e-mail normalizado E por TODOS os telefones da pessoa (chave canonica): basta
+  // UMA chave casar com candidatura inelegivel. Sem isso, um talento com outro e-mail e o
+  // mesmo telefone de uma candidatura aprovada receberia a divulgacao.
+  //
+  // POR ULTIMO, depois de todos os recortes: a contagem e por PESSOA UNICA que de outro modo
+  // receberia o e-mail. `null` em convite_grupo — "a pergunta nao foi feita", mesmo contrato
+  // de excluidosPorFiltro.
+  let excluidosPorStatus = null;
+  if (elegibilidade.tipoComFiltroStatus(tipo)) {
+    const indice = elegibilidade.construirIndiceElegibilidade({ db });
+    pessoas = pessoas.filter(
+      (p) => indice.avaliar({ emails: [p.email], telefones: [...p.telefones] }).elegivel,
+    );
+    const { excluidas, porMotivo, apenasArquivada } = indice.resumo;
+    excluidosPorStatus = { total: excluidas, porMotivo: { ...porMotivo }, apenasArquivada };
+    if (excluidas) {
+      // Agregado, sem e-mail nem telefone.
+      console.log(
+        `[promocao] publico divulgacao_vaga: ${excluidas} pessoa(s) excluida(s) por status do ` +
+          `recrutador (aprovado: ${porMotivo.aprovado}, em_analise: ${porMotivo.em_analise}, ` +
+          `desconhecido: ${porMotivo.desconhecido}; so por candidatura arquivada: ${apenasArquivada}); ` +
+          `${pessoas.length} restante(s).`,
+      );
+    }
+  }
+
   const itens = pessoas.map((p) => ({
     email: p.email,
     nome: p.nome,
@@ -406,6 +449,9 @@ function listarPublicoCampanha(criterios = {}, deps = {}) {
       base: passoBase.semAtributo,
       cidade: passoCidade.semAtributo,
     },
+    // FORA de excluidosPorFiltro de proposito: a tela percorre aquele objeto inteiro como
+    // "sem atributo, marque incluir" — e status nao e atributo que o operador possa incluir.
+    excluidosPorStatus,
     itens,
   };
 }

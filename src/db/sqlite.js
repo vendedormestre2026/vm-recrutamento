@@ -2874,6 +2874,9 @@ function listarCandidatosParaCampanha({ dataDe, dataAte } = {}) {
       `SELECT
          a.id          AS origem_id,
          a.email       AS email,
+         -- Telefone CRU: so para o cruzamento da elegibilidade por status (divulgacao de
+         -- vaga), feito em JS pela chave canonica — lib/elegibilidadeStatusPromocao.
+         a.telefone    AS telefone,
          a.nome        AS nome,
          a.sobrenome   AS sobrenome,
          a.utm_source  AS utm_source,
@@ -2945,6 +2948,9 @@ function listarTalentosParaCampanha({ dataDe, dataAte } = {}) {
       `SELECT
          t.id               AS origem_id,
          t.email            AS email,
+         -- Telefone CRU, mesmo motivo do a.telefone da query irma acima: um talento com
+         -- e-mail diferente mas o MESMO telefone de uma candidatura aprovada e a mesma pessoa.
+         t.telefone         AS telefone,
          t.nome             AS nome,
          t.perfil_interesse AS perfil,
          -- categoria alimenta o filtro de BASE da campanha ('legado' vs cadastro
