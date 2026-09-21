@@ -301,7 +301,11 @@ function enfileirarCampanha(campanhaId, deps = {}) {
   // secado legitimamente (todo mundo se candidatou a vaga, todo mundo se descadastrou). A
   // campanha entra sem nenhum pendente e a varredura a conclui no ciclo seguinte — o
   // caminho de finalizacao nao depende de ter havido envio.
-  console.log(`[promocao] campanha ${id} enfileirada com ${enfileirados} destinatario(s).`);
+  // Uma linha agregada (B5): total congelado + exclusao por status, por motivo. So numeros.
+  console.log(
+    `[promocao] campanha ${id} enfileirada com ${enfileirados} destinatario(s); ` +
+      `${elegibilidade.logExcluidosPorStatus(publico.excluidosPorStatus)}.`,
+  );
   return { ok: true, enfileirados };
 }
 

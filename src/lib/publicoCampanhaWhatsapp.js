@@ -376,9 +376,7 @@ function listarPublicoDivulgacaoVaga(jobId, criterios = {}, deps = {}) {
     if (excluidas) {
       // Agregado, sem dado pessoal — mesmo espirito do log de opt-out de aplicarInvariantes.
       console.log(
-        `[campanha-wa] publico divulgacao_vaga: ${excluidas} pessoa(s) excluida(s) por status do ` +
-          `recrutador (aprovado: ${porMotivo.aprovado}, em_analise: ${porMotivo.em_analise}, ` +
-          `desconhecido: ${porMotivo.desconhecido}; so por candidatura arquivada: ${apenasArquivada}); ` +
+        `[campanha-wa] publico divulgacao_vaga: ${elegibilidade.logExcluidosPorStatus(excluidosPorStatus)}; ` +
           `${pessoas.length} restante(s).`,
       );
     }

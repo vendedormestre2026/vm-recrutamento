@@ -38,6 +38,9 @@ const {
 // para tras quando o botao de descadastro entrou — ver o cabecalho de
 // lib/parametrosBotaoWhatsapp.js, que existe por causa disso.
 const { montarParametrosBotao } = require('../lib/parametrosBotaoWhatsapp');
+// Texto e log do resumo "excluidos por status do recrutador" (ETAPA B, B5) — mesma fonte da
+// tela do e-mail (routes/admin_promocao.js).
+const { textoExcluidosPorStatus, logExcluidosPorStatus } = require('../lib/elegibilidadeStatusPromocao');
 
 // Os TRES objetivos de campanha (ETAPA B, Incremento 12 — redesenho da segmentacao). O valor
 // gravado em campanhas_whatsapp.tipo_mensagem continua o mesmo de sempre (a coluna perdeu o
@@ -514,6 +517,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
         </p>
         <button type="button" class="btn btn--ghost" id="btn-calcular-previa">Calcular estimativa</button>
         <p id="resultado-previa" class="aviso-ok" hidden style="margin:.6rem 0 0;"></p>
+        <p id="exclusao-previa" hidden style="margin:.3rem 0 0;color:var(--cinza);font-size:.85rem;"></p>
         <p id="erro-previa" class="aviso-alerta" hidden style="margin:.6rem 0 0;"></p>
         <p style="margin:.8rem 0 0;">
           <button type="submit" class="btn" id="btn-criar-campanha" disabled>Criar campanha</button>
@@ -595,9 +599,14 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
       var btnCriar = document.getElementById('btn-criar-campanha');
       var resultadoPrevia = document.getElementById('resultado-previa');
       var erroPrevia = document.getElementById('erro-previa');
+      // Linha "excluidos por status do recrutador": o TEXTO vem pronto do servidor
+      // (excluidosPorStatusTexto), e aqui so e exibido — null quando a regra nao se aplica ao
+      // objetivo, e entao a linha fica escondida.
+      var exclusaoPrevia = document.getElementById('exclusao-previa');
 
       function invalidarPrevia() {
         if (resultadoPrevia) resultadoPrevia.hidden = true;
+        if (exclusaoPrevia) exclusaoPrevia.hidden = true;
         if (erroPrevia) erroPrevia.hidden = true;
         if (btnCriar) btnCriar.disabled = true;
       }
@@ -621,6 +630,10 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
                   resultadoPrevia.textContent = 'Estimativa: ' + res.dados.total + ' destinatário(s) no recorte atual.';
                   resultadoPrevia.hidden = false;
                 }
+                if (exclusaoPrevia) {
+                  exclusaoPrevia.textContent = res.dados.excluidosPorStatusTexto || '';
+                  exclusaoPrevia.hidden = !res.dados.excluidosPorStatusTexto;
+                }
                 if (erroPrevia) erroPrevia.hidden = true;
                 btnCriar.disabled = false;
               } else {
@@ -629,6 +642,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
                   erroPrevia.hidden = false;
                 }
                 if (resultadoPrevia) resultadoPrevia.hidden = true;
+                if (exclusaoPrevia) exclusaoPrevia.hidden = true;
                 btnCriar.disabled = true;
               }
             })
@@ -638,6 +652,7 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
                 erroPrevia.hidden = false;
               }
               if (resultadoPrevia) resultadoPrevia.hidden = true;
+              if (exclusaoPrevia) exclusaoPrevia.hidden = true;
               btnCriar.disabled = true;
             })
             .finally(function () {
@@ -975,8 +990,11 @@ function criarRouterCampanhaWhatsapp({
     const baseAlvo = BASES_ALVO.some(([v]) => v === b.base_alvo) ? b.base_alvo : 'ambos';
 
     let total = null;
+    let excluidosPorStatus = null;
     try {
-      total = calcularPublico({ tipo, jobId, criterios }).total;
+      const estimativa = calcularPublico({ tipo, jobId, criterios });
+      total = estimativa.total;
+      excluidosPorStatus = estimativa.excluidosPorStatus || null;
     } catch {
       total = null; // estimativa e informativa; nao pode impedir a criacao do rascunho
     }
@@ -992,6 +1010,13 @@ function criarRouterCampanhaWhatsapp({
       totalEstimado: total,
       criterios,
     });
+    // Agregado (B5): o recrutador ja viu a mesma contagem na previa, que e obrigatoria antes
+    // de "Criar campanha" (o botao so habilita depois dela). O log fica para quem investiga.
+    if (excluidosPorStatus) {
+      console.log(
+        `[campanha-wa] rascunho criado (${tipo}): estimativa ${total}; ${logExcluidosPorStatus(excluidosPorStatus)}.`,
+      );
+    }
     res.redirect('/admin/campanhas-whatsapp?salvo=1');
   });
 
@@ -1005,7 +1030,16 @@ function criarRouterCampanhaWhatsapp({
     const jobId = Number(b.job_id);
     try {
       const r = calcularPublico({ tipo, jobId, criterios: lerCriterios(b) });
-      res.json({ ok: true, total: r.total, tipo });
+      // `excluidosPorStatus`: so contagens (null fora de divulgacao_vaga). O texto vai pronto
+      // para a tela nao reimplementar a frase em JS de navegador.
+      const excluidosPorStatus = r.excluidosPorStatus || null;
+      res.json({
+        ok: true,
+        total: r.total,
+        tipo,
+        excluidosPorStatus,
+        excluidosPorStatusTexto: textoExcluidosPorStatus(excluidosPorStatus),
+      });
     } catch (err) {
       res.status(400).json({ ok: false, erro: err.message });
     }
@@ -1223,7 +1257,11 @@ function criarRouterCampanhaWhatsapp({
 
     const gravados = db.materializarCampanhaWhatsapp(id, r.itens);
     db.definirStatusCampanhaWhatsapp(id, 'ativa');
-    console.log(`[campanha-wa] campanha ${id} materializada com ${gravados} destinatario(s).`);
+    // Uma linha agregada (B5): total congelado + exclusao por status, por motivo. So numeros.
+    console.log(
+      `[campanha-wa] campanha ${id} materializada com ${gravados} destinatario(s); ` +
+        `${logExcluidosPorStatus(r.excluidosPorStatus)}.`,
+    );
     res.redirect('/admin/campanhas-whatsapp?salvo=1');
   });
 

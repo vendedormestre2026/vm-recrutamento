@@ -33,6 +33,7 @@
 const express = require('express');
 const db = require('../db');
 const { listarPublicoCampanha, PERFIS_VALIDOS, RECOMENDACOES_VALIDAS } = require('../lib/promocaoVagas');
+const { textoExcluidosPorStatus } = require('../lib/elegibilidadeStatusPromocao');
 const { gerarSugestaoConteudo } = require('../lib/gerarSugestaoPromocao');
 const {
   enfileirarCampanha,
@@ -760,6 +761,15 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
   // As linhas de "sem atributo" so aparecem para filtro ATIVO — excluidosPorFiltro.X vem
   // `null` quando o filtro nem foi ligado, e null e diferente de zero: "essa pergunta nao
   // foi feita" nao e a mesma informacao que "ninguem ficou de fora".
+  // Linha "excluidos por status do recrutador" (ETAPA B, B5). UM componente para a previa, a
+  // revisao e a confirmacao: texto neutro (cinza, sem cor nova), so contagens. Vazio quando a
+  // regra nao se aplica ao tipo (convite_grupo: excluidosPorStatus e null) — nem "0" aparece.
+  function linhaExcluidosPorStatus(resultado, estilo = 'margin:.6rem 0 0;') {
+    const texto = textoExcluidosPorStatus(resultado && resultado.excluidosPorStatus);
+    if (!texto) return '';
+    return `<p class="excluidos-status" style="${estilo}color:var(--cinza);font-size:.85rem;">${escapeHtml(texto)}</p>`;
+  }
+
   function blocoPrevia(resultado) {
     const semAtributo = Object.entries(resultado.excluidosPorFiltro)
       .filter(([, n]) => n !== null && n > 0)
@@ -792,6 +802,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
           <li><b>${fmtInt(resultado.porOrigem.applications)}</b> de candidaturas</li>
           <li><b>${fmtInt(resultado.porOrigem.talentos)}</b> do banco de talentos</li>
         </ul>
+        ${linhaExcluidosPorStatus(resultado)}
         ${semAtributo ? `<p style="margin:1rem 0 .3rem;color:var(--cinza);font-size:.85rem;text-transform:uppercase;">Ficaram de fora</p><ul class="lista">${semAtributo}</ul>` : ''}
         <p style="margin:1rem 0 0;color:var(--cinza);font-size:.8rem;">
           Já descontados: quem se descadastrou, quem já se candidatou a esta vaga e
@@ -1413,7 +1424,16 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
              O público mudou desde a criação: eram <b>${fmtInt(campanha.total_destinatarios)}</b>
              em ${escapeHtml(formatarDataHora(campanha.criado_em))} e são
              <b>${fmtInt(atual.total)}</b> agora. Descadastros e novas candidaturas à vaga
-             divulgada mexem nesse número.
+             divulgada mexem nesse número.${
+               // Frase extra SO quando a regra de status tirou alguem. O CRITERIO do aviso
+               // (total atual != congelado) nao muda.
+               atual.excluidosPorStatus && atual.excluidosPorStatus.total > 0
+                 ? ` Parte da diferença pode vir da regra de status do recrutador, que hoje
+             exclui <b>${fmtInt(atual.excluidosPorStatus.total)}</b> ${
+               atual.excluidosPorStatus.total === 1 ? 'pessoa' : 'pessoas'
+             } (Aprovado, Em análise ou status desconhecido).`
+                 : ''
+             }
            </p>`
         : '';
 
@@ -1559,6 +1579,7 @@ function criarRouterPromocao({ paginaAdmin, formatarDataHora, fmtInt }) {
             <li><b>${fmtInt(atual.porOrigem.applications)}</b> de candidaturas</li>
             <li><b>${fmtInt(atual.porOrigem.talentos)}</b> do banco de talentos</li>
           </ul>
+          ${linhaExcluidosPorStatus(atual)}
           <p style="margin:1rem 0 0;color:var(--cinza);font-size:.85rem;">
             Ao confirmar, a lista é <b>congelada</b> e a campanha entra na fila. O envio sai
             em levas de até ${fmtInt(ENVIOS_POR_CICLO)} a cada 15 minutos, e só começa se

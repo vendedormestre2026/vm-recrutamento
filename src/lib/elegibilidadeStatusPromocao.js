@@ -156,7 +156,51 @@ function construirIndiceElegibilidade(deps = {}) {
   };
 }
 
+// ── APRESENTACAO DO RESUMO (ETAPA B, B5) ──
+//
+// Fonte UNICA do texto que o recrutador le (previa/revisao/confirmacao do e-mail, previa do
+// WhatsApp) e da linha agregada de log (materializacao nos dois canais, montagem do
+// publico). So numeros: nenhum dado de pessoa entra aqui, porque nenhum chega aqui — o
+// `excluidosPorStatus` dos motores e so contagem.
+
+const fmtNumero = (n) => Number(n || 0).toLocaleString('pt-BR');
+
+// Frase para a tela. `null` quando a regra nao se aplica ao tipo (convite_grupo,
+// status_candidatura: o motor devolve `null`/ausente) — a tela nao mostra nada, nem "0".
+// Zero excluidos numa divulgacao devolve a linha discreta: a regra rodou e nao tirou ninguem.
+function textoExcluidosPorStatus(excluidos) {
+  if (!excluidos) return null;
+  const total = Number(excluidos.total) || 0;
+  if (total === 0) return 'Nenhum excluído por status do recrutador.';
+  const m = excluidos.porMotivo || {};
+  const partes = [
+    [m.aprovado, 'Aprovado'],
+    [m.em_analise, 'Em análise'],
+    [m.desconhecido, 'status desconhecido'],
+  ]
+    .filter(([n]) => Number(n) > 0)
+    .map(([n, rotulo]) => `${fmtNumero(n)} ${rotulo}`);
+  const arquivada = Number(excluidos.apenasArquivada) > 0
+    ? ` (${fmtNumero(excluidos.apenasArquivada)} só por candidatura arquivada)`
+    : '';
+  return `${fmtNumero(total)} ${total === 1 ? 'excluído' : 'excluídos'} por status do recrutador: ` +
+    `${partes.join(', ')}${arquivada}.`;
+}
+
+// Miolo da linha de log: "excluidos por status: N (aprovado: a, em_analise: b, ...)".
+function logExcluidosPorStatus(excluidos) {
+  if (!excluidos) return 'filtro de status nao se aplica';
+  const m = excluidos.porMotivo || {};
+  return (
+    `excluidos por status do recrutador: ${excluidos.total} (aprovado: ${m.aprovado || 0}, ` +
+    `em_analise: ${m.em_analise || 0}, desconhecido: ${m.desconhecido || 0}; ` +
+    `so por candidatura arquivada: ${excluidos.apenasArquivada || 0})`
+  );
+}
+
 module.exports = {
+  textoExcluidosPorStatus,
+  logExcluidosPorStatus,
   STATUS_ELEGIVEIS_PROMOCAO_VAGA,
   TIPOS_CAMPANHA_COM_FILTRO_STATUS,
   tipoComFiltroStatus,
