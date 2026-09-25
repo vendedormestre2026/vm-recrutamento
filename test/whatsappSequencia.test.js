@@ -231,60 +231,150 @@ test('WA1 degrada sem quebrar em toda combinacao de campo ausente', () => {
   }
 });
 
-// ══════════════════ WA2 ══════════════════
+// ══════════════════ WA2 — convite para a entrevista em grupo ══════════════════
+//
+// O WA2 deixou de pedir video e passou a convidar para uma entrevista em grupo no Meet. Por ter
+// DUAS variantes, montarTextoWA2 devolve { texto, variante } — ver o cabecalho da lib.
+//
+// `agora` e sempre explicito nos testes: e o que permite provar "a reuniao 1 venceu, usa a 2"
+// sem esperar uma semana.
 
-test('WA2: caminho completo — abertura e as duas primeiras perguntas sao fixas', () => {
-  const t = montarTextoWA2(APP, JOB);
-  assert.ok(t.includes('👇 *COMO PARTICIPAR DO PROCESSO SELETIVO* 👇'));
-  assert.ok(t.includes('1️⃣ Quem é você?'));
-  assert.ok(t.includes('2️⃣ Qual é a sua maior ambição e meta de vida?'));
-  semArtefatos(t, 'WA2');
+// Vaga com as tres reunioes cadastradas (quintas-feiras de outubro de 2026) + link do Meet.
+const LINK_MEET = 'https://meet.google.com/abc-defg-hij';
+const JOB_COM_REUNIOES = {
+  ...JOB,
+  link_meet: LINK_MEET,
+  entrevista_grupo_1_data: '2026-10-01',
+  entrevista_grupo_1_hora: '19:30',
+  entrevista_grupo_2_data: '2026-10-08',
+  entrevista_grupo_2_hora: '20:00',
+  entrevista_grupo_3_data: '2026-10-15',
+  entrevista_grupo_3_hora: '09:15',
+};
+// 25/09/2026 10:00 em Brasilia (UTC-3), antes das tres reunioes.
+const ANTES_DE_TUDO = new Date('2026-09-25T13:00:00Z');
+
+test('WA2 convite: cabecalho, bloco de data/hora/link e fechamento aprovados', () => {
+  const { texto, variante } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
+
+  assert.equal(variante, 'convite_grupo');
+  assert.ok(texto.includes('👇 *CONVITE PARA A ENTREVISTA EM GRUPO* 👇'));
+  assert.ok(texto.includes('📅 *Data:* quinta-feira, 01/10/2026'));
+  assert.ok(texto.includes('⏰ *Horário:* 19:30 (horário de Brasília)'));
+  assert.ok(texto.includes(`🔗 *Link da reunião (Google Meet):* ${LINK_MEET}`));
+  assert.ok(texto.includes('Entre alguns minutos antes, em um lugar tranquilo e com boa internet.'));
+  assert.ok(texto.includes('Até lá e boa sorte! 🚀'));
+  semArtefatos(texto, 'WA2 convite');
 });
 
-test('WA2 SEM saudacao (Incremento 11): comeca direto em "COMO PARTICIPAR", sem "Olá"', () => {
-  // A saudacao ja aconteceu no WA1, minutos antes, no MESMO fio de conversa — repeti-la no
-  // WA2 alongava a mensagem sem acrescentar nada.
-  const t = montarTextoWA2(APP, JOB);
-  assert.match(t, /^👇 \*COMO PARTICIPAR DO PROCESSO SELETIVO\* 👇/);
-  assert.doesNotMatch(t, /^Olá/);
-  assert.doesNotMatch(t, /\bOlá\b/);
-  // Nome do candidato tambem nao aparece mais em lugar nenhum do WA2 (so vinha via saudacao).
-  assert.doesNotMatch(t, new RegExp(APP.nome.split(' ')[0]));
+test('WA2 convite: NUNCA sai sem link, sem data e sem horario', () => {
+  // Esta e a assercao que protege o defeito mais caro possivel deste incremento: um campo
+  // esquecido no SELECT da fila (ou no objeto `job` de textoDaEtapa) faria o convite sair sem a
+  // informacao que e o proprio ponto dele — e sem erro nenhum, porque o campo chega undefined.
+  const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
+
+  assert.match(texto, /https:\/\/meet\.google\.com\/\S+/, 'convite sem link do Meet');
+  assert.match(texto, /\*Data:\*\s+\S+.*\d{2}\/\d{2}\/\d{4}/, 'convite sem data');
+  assert.match(texto, /\*Horário:\*\s+\d{2}:\d{2}/, 'convite sem horario');
+  assert.doesNotMatch(texto, /undefined|null|NaN|Invalid Date/, 'campo nao resolvido vazou');
 });
 
-test('WA2: a 3a pergunta reaproveita trechoVaga', () => {
-  assert.ok(montarTextoWA2(APP, JOB).includes(`3️⃣ Por que você é a pessoa certa${trechoVaga(JOB)}?`));
-  assert.ok(montarTextoWA2(APP, null).includes(`3️⃣ Por que você é a pessoa certa${trechoVaga(null)}?`));
+test('WA2 convite: a vaga entra pelo MESMO trechoVaga do resto da sequencia', () => {
+  const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
+  assert.ok(texto.includes(`do processo seletivo${trechoVaga(JOB_COM_REUNIOES)} é uma entrevista em grupo`));
 });
 
-test('WA2: o prazo e a frase fixa "amanhã, ao meio-dia"', () => {
-  const t = montarTextoWA2(APP, JOB);
-  assert.ok(t.includes('⏰ *PRAZO*: envie o vídeo aqui mesmo no WhatsApp até amanhã, ao meio-dia.'));
+test('WA2 convite: passada a reuniao 1, o texto anuncia a 2 — e depois a 3', () => {
+  // A regra de negocio inteira em tres assercoes: ninguem edita a vaga entre uma reuniao e a
+  // seguinte, e nenhum link vencido sai.
+  const depoisDa1 = new Date('2026-10-02T11:00:00Z');
+  const depoisDa2 = new Date('2026-10-09T11:00:00Z');
+
+  assert.ok(montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO).texto.includes('01/10/2026'));
+  assert.ok(montarTextoWA2(APP, JOB_COM_REUNIOES, depoisDa1).texto.includes('08/10/2026'));
+  assert.ok(montarTextoWA2(APP, JOB_COM_REUNIOES, depoisDa2).texto.includes('15/10/2026'));
+});
+
+test('WA2 SEM saudacao: comeca direto no cabecalho do convite, sem "Olá"', () => {
+  // Decisao mantida do texto anterior (Incremento 11): a saudacao ja aconteceu no WA1, minutos
+  // antes, no MESMO fio.
+  const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
+  assert.match(texto, /^👇 \*CONVITE PARA A ENTREVISTA EM GRUPO\* 👇/);
+  assert.doesNotMatch(texto, /\bOlá\b/);
+  assert.doesNotMatch(texto, new RegExp(APP.nome.split(' ')[0]));
 });
 
 test('WA2 NAO promete automacao que nao existe', () => {
-  // A confirmacao do video e 100% humana (o recrutador marca no painel). Prometer
-  // "responda que o sistema registra" e como se perde confianca na primeira vez que nao
-  // acontece.
-  const t = montarTextoWA2(APP, JOB);
-  assert.doesNotMatch(t, /automaticamente|o sistema (vai|ir[áa])|registrad[oa] automatic/i);
+  // A confirmacao de presenca e 100% HUMANA: ninguem le a resposta automaticamente e o sistema
+  // nao registra presenca em lugar nenhum. Prometer o contrario e como se perde confianca na
+  // primeira vez que nao acontece.
+  const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
+  assert.doesNotMatch(texto, /automaticamente|o sistema (vai|ir[áa])|registrad[oa] automatic/i);
+  assert.doesNotMatch(texto, /vaga (esta|está) (reservada|garantida)/i);
+});
+
+test('WA2 nao fala mais de video nem de prazo', () => {
+  // O fluxo do video continua existindo no sistema (historico), mas a MENSAGEM nao o pede mais.
+  const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
+  assert.doesNotMatch(texto, /v[íi]deo/i);
+  assert.doesNotMatch(texto, /\bPRAZO\b|meio-dia/i);
+});
+
+// ── FALLBACK: sem reuniao futura ──
+
+test('WA2 fallback: sem reuniao nenhuma cadastrada', () => {
+  const { texto, variante } = montarTextoWA2(APP, JOB, ANTES_DE_TUDO);
+  assert.equal(variante, 'sem_reuniao');
+  assert.ok(texto.includes('Estamos definindo as próximas datas das entrevistas em grupo'));
+  assert.ok(texto.includes('te aviso por aqui com o link da reunião'));
+  semArtefatos(texto, 'WA2 fallback');
+});
+
+test('WA2 fallback: todas as reunioes vencidas — NENHUM link vencido sai', () => {
+  const depoisDeTudo = new Date('2026-10-16T11:00:00Z');
+  const { texto, variante } = montarTextoWA2(APP, JOB_COM_REUNIOES, depoisDeTudo);
+
+  assert.equal(variante, 'sem_reuniao');
+  assert.doesNotMatch(texto, /meet\.google\.com/, 'link vencido nao pode sair');
+  assert.doesNotMatch(texto, /\d{2}\/\d{2}\/\d{4}/, 'data vencida nao pode sair');
+});
+
+test('WA2 fallback: datas futuras mas SEM link do Meet (convite sem sala nao e convite)', () => {
+  const semLink = { ...JOB_COM_REUNIOES, link_meet: '' };
+  const { texto, variante } = montarTextoWA2(APP, semLink, ANTES_DE_TUDO);
+  assert.equal(variante, 'sem_reuniao');
+  assert.doesNotMatch(texto, /01\/10\/2026/);
+});
+
+test('WA2 fallback NAO usa o cabecalho do convite', () => {
+  // Vestir de convite uma mensagem que nao tem data frustra quem a abre esperando uma.
+  const { texto } = montarTextoWA2(APP, JOB, ANTES_DE_TUDO);
+  assert.doesNotMatch(texto, /CONVITE PARA A ENTREVISTA EM GRUPO/);
+  assert.doesNotMatch(texto, /👇/);
+});
+
+test('WA2 fallback tambem traz a vaga pelo trechoVaga', () => {
+  const { texto } = montarTextoWA2(APP, JOB, ANTES_DE_TUDO);
+  assert.ok(texto.includes(`entrevistas em grupo${trechoVaga(JOB)}.`));
 });
 
 test('WA2 degrada sem quebrar em toda combinacao de campo ausente', () => {
   const casos = [
-    ['sem nome', {}, JOB],
-    ['sem empresa', APP, { titulo: 'Vendedor Externo' }],
-    ['sem vaga', APP, { empresa: 'Labor Seg' }],
+    ['sem nome', {}, JOB_COM_REUNIOES],
+    ['sem empresa', APP, { ...JOB_COM_REUNIOES, empresa: undefined }],
+    ['sem vaga', APP, { ...JOB_COM_REUNIOES, titulo: undefined }],
     ['sem job', APP, null],
     ['sem nada', null, null],
+    ['data sem hora', APP, { ...JOB, link_meet: LINK_MEET, entrevista_grupo_1_data: '2026-10-01' }],
+    ['data impossivel', APP, { ...JOB, link_meet: LINK_MEET, entrevista_grupo_1_data: '2026-02-31', entrevista_grupo_1_hora: '10:00' }],
   ];
   for (const [rotulo, app, job] of casos) {
-    const t = montarTextoWA2(app, job);
-    assert.ok(t.length > 60, `${rotulo}: texto curto demais`);
-    // O pedido e o prazo sao o ponto do WA2: nenhuma degradacao pode fazer sumir os dois.
-    assert.match(t, /vídeo/i, `${rotulo}: perdeu o pedido do video`);
-    assert.ok(t.includes('amanhã, ao meio-dia'), `${rotulo}: perdeu o prazo`);
-    semArtefatos(t, `WA2 ${rotulo}`);
+    const { texto, variante } = montarTextoWA2(app, job, ANTES_DE_TUDO);
+    assert.ok(texto.length > 60, `${rotulo}: texto curto demais`);
+    assert.ok(['convite_grupo', 'sem_reuniao'].includes(variante), `${rotulo}: variante invalida`);
+    // Nenhuma degradacao pode vazar campo nao resolvido para o aparelho de alguem.
+    assert.doesNotMatch(texto, /undefined|null|NaN|Invalid Date/, `${rotulo}: vazou campo`);
+    semArtefatos(texto, `WA2 ${rotulo}`);
   }
 });
 
@@ -292,7 +382,7 @@ test('WA2 degrada sem quebrar em toda combinacao de campo ausente', () => {
 
 test('as duas mensagens sao diferentes; so o WA1 se identifica (WA2 e o MESMO fio)', () => {
   const a = montarTextoWA1(APP, JOB);
-  const b = montarTextoWA2(APP, JOB);
+  const b = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO).texto;
   assert.notEqual(a, b);
   assert.match(a, /Vendedor Mestre/, 'WA1 precisa dizer de quem e — e a 1a mensagem do fio');
   // WA2 (Incremento 11) NAO repete a identificacao: chega minutos depois, no MESMO fio de
@@ -300,14 +390,26 @@ test('as duas mensagens sao diferentes; so o WA1 se identifica (WA2 e o MESMO fi
   assert.doesNotMatch(b, /Vendedor Mestre/);
 });
 
+test('WA1 nao fala da reuniao — isso e assunto do WA2', () => {
+  // Substitui a assercao antiga ("WA1 nao pede video"): o WA1 nao mudou, mas o que o WA2 carrega
+  // mudou, e a fronteira entre as duas mensagens continua sendo o que este teste guarda.
+  const t = montarTextoWA1(APP, JOB_COM_REUNIOES);
+  assert.doesNotMatch(t, /entrevista em grupo/i);
+  assert.doesNotMatch(t, /meet\.google\.com/);
+  assert.doesNotMatch(t, /\bData:\b|\bHorário:\b/);
+});
+
 test('o texto NAO varia por perfil (SDR vs CLOSER) — decisao pendente, ver relatorio', () => {
   // Nao ha decisao de negocio sobre isso, entao o texto e generico de proposito. Este teste
   // TRAVA o comportamento atual: no dia em que alguem quiser diferenciar, vai ter que passar
   // por aqui e tomar a decisao de forma explicita, em vez de o texto divergir por acidente.
-  const sdr = { ...JOB, perfil: 'SDR' };
-  const closer = { ...JOB, perfil: 'CLOSER' };
+  const sdr = { ...JOB_COM_REUNIOES, perfil: 'SDR' };
+  const closer = { ...JOB_COM_REUNIOES, perfil: 'CLOSER' };
   assert.equal(montarTextoWA1(APP, sdr), montarTextoWA1(APP, closer));
-  assert.equal(montarTextoWA2(APP, sdr), montarTextoWA2(APP, closer));
+  assert.deepEqual(
+    montarTextoWA2(APP, sdr, ANTES_DE_TUDO),
+    montarTextoWA2(APP, closer, ANTES_DE_TUDO),
+  );
 });
 
 test('nome com espacos extras nao vaza para a saudacao', () => {

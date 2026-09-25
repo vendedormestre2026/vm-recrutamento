@@ -12,19 +12,36 @@
 //        engajamento — a resposta e a prova de que a pessoa leu. Ainda NAO pede o video: uma
 //        mensagem automatica que chega junto com o cadastro e ja cobra algo soa como robo de
 //        cobranca, e o custo disso e a pessoa sair do processo antes de comecar.
-//   WA2  T+15min, pede o video. Aqui a acao E o ponto, e o prazo tem que estar no texto: pedir
-//        "o quanto antes" produz resposta em prazo indefinido e ninguem tem base para cobrar
-//        depois.
+//   WA2  T+15min, CONVITE PARA A ENTREVISTA EM GRUPO no Google Meet. Aqui a acao E o ponto, e
+//        a informacao que a pessoa volta para buscar (data, hora, link) precisa estar
+//        destacada.
 //
-// ── O PRAZO E FRASE FIXA, e nao mais parametro ──
-// Decisao de negocio: o prazo do video no texto e sempre "amanhã, ao meio-dia" (horario de
-// Brasilia). Isso so e seguro porque o WA2 sai 15 MINUTOS depois da candidatura (ver
-// WA2_ATRASO_MINUTOS em whatsapp/sequenciaOutbox.js) — "amanha" bate com a realidade em
-// qualquer candidatura, sempre. A data exata para o painel comparar "chegou dentro do prazo?"
-// e calculada em lib/whatsappFicha.js (calcularPrazoAmanhaMeioDia), separado deste texto.
+// ── O WA2 DEIXOU DE PEDIR VIDEO ──
+// Ate aqui o WA2 pedia um video de apresentacao com prazo fixo ("amanha, ao meio-dia"). A
+// mensagem passou a convidar para uma entrevista em grupo, e com isso o prazo SAIU do texto:
+// nao ha mais nada a cobrar do candidato num prazo.
+//
+// O fluxo do video NAO foi removido do sistema — as colunas wa2_video_* e a tela de
+// confirmacao manual continuam existindo para o historico de quem ja enviou video. O que mudou
+// e so o que a mensagem PEDE. Ver o painel em routes/admin.js.
+//
+// ── DUAS VARIANTES, E POR ISSO montarTextoWA2 NAO DEVOLVE MAIS UMA STRING ──
+// O convite so existe quando a vaga tem uma reuniao FUTURA e um link do Meet. Quando nao tem,
+// sai um texto alternativo ("estamos definindo as proximas datas") — nunca um link vencido.
+// A funcao devolve { texto, variante } porque quem envia precisa GRAVAR qual das duas saiu
+// (whatsapp_sequencia_envios.variante): inferir depois, a partir do estado atual da vaga,
+// passaria a responder errado no minuto em que a data nova fosse cadastrada — e quem recebeu o
+// fallback e justamente quem precisa ser reconvidado a mao.
+//
+// Uma funcao que devolvesse a string e uma segunda que devolvesse a variante chamariam
+// proximaEntrevistaGrupo duas vezes, com dois "agora" diferentes; no limite, o texto e a
+// variante gravada discordariam. Uma fonte de verdade so.
 
 const { config } = require('../config');
 const { primeiroNomeDe, textoEmpresa, limparEspacos } = require('./whatsapp');
+// Qual reuniao anunciar (e se ha alguma). Modulo PURO: recebe a vaga e o "agora", nunca le o
+// relogio por conta propria — e o que mantem este arquivo testavel sem esperar uma data passar.
+const { proximaEntrevistaGrupo } = require('./entrevistaGrupo');
 
 // Saudacao com ou sem nome. Duas variantes de FRASE INTEIRA, e nao um placeholder que fica
 // vazio: "Olá , tudo bem?" e o tipo de detalhe que denuncia automacao mal-feita, e a
@@ -155,37 +172,74 @@ function montarTextoWA1(application, job) {
   return linhas.map((l) => limparEspacos(l)).join('\n');
 }
 
-// ── WA2 — T+15min, pede o video de apresentacao ──
+// ── WA2 — T+15min, convite para a entrevista em grupo ──
 //
-// SEM saudacao: decisao de negocio (Incremento 11). A saudacao ja aconteceu no WA1, minutos
-// antes — repeti-la aqui alongava a mensagem sem acrescentar nada. Vai direto ao "COMO
-// PARTICIPAR". `application` fica sem uso nesta funcao (mantido no parametro so pra nao
-// obrigar o call site a mudar a assinatura).
+// SEM saudacao: decisao de negocio mantida do texto anterior (Incremento 11). A saudacao ja
+// aconteceu no WA1, minutos antes. `application` fica sem uso (mantido no parametro para o call
+// site nao mudar de assinatura quando a copy voltar a usar o nome).
 //
-// Abertura e as duas primeiras perguntas sao FIXAS: genericas o bastante pra servir qualquer
-// perfil de vendas. So a 3a pergunta muda, e reaproveita trechoVaga — a mesma regra de
-// omissao de sempre, e nao uma segunda copia dela.
+// ── O QUE O TEXTO NAO PROMETE ──
+// "Confirme sua presenca respondendo esta mensagem" e um pedido HUMANO: ninguem le essa resposta
+// automaticamente, e o sistema nao registra confirmacao de presenca em lugar nenhum. O texto por
+// isso nao diz "o sistema registra" nem "sua vaga esta reservada" — prometer o que o sistema nao
+// faz e como se perde confianca na primeira vez que nao acontece. Era a mesma regra do texto do
+// video, onde a confirmacao tambem era 100% manual.
+const VARIANTE_CONVITE_GRUPO = 'convite_grupo';
+const VARIANTE_SEM_REUNIAO = 'sem_reuniao';
+
+// O convite. `proxima` vem de proximaEntrevistaGrupo e JA traz data e hora formatadas no fuso de
+// Brasilia — este arquivo nao formata data, e nao conhece Intl.
 //
-// A confirmacao e 100% humana (o recrutador marca no painel), entao o texto NAO promete
-// nenhuma automacao — nada de "responda com o video e o sistema registra". Prometer o que o
-// sistema nao faz e como se perde confianca na primeira vez que nao acontece.
-function montarTextoWA2(application, job) {
+// As tres linhas de dado (data, hora, link) ficam num bloco proprio, cada uma na sua linha e com
+// rotulo em negrito: e a parte que a pessoa reabre a mensagem para consultar, e um paragrafo
+// corrido obrigaria a garimpar o horario no meio da frase.
+function montarTextoConviteGrupo(job, proxima) {
   const linhas = [
-    '👇 *COMO PARTICIPAR DO PROCESSO SELETIVO* 👇',
-    'Se você tem o perfil que buscamos, seu primeiro desafio começa agora. Quero avaliar sua ' +
-      'comunicação, energia e capacidade de gerar conexão.',
+    '👇 *CONVITE PARA A ENTREVISTA EM GRUPO* 👇',
+    `Se você tem o perfil que buscamos, o próximo passo do processo seletivo${trechoVaga(job)} ` +
+      'é uma entrevista em grupo online.',
     '',
-    'Grave um vídeo simples pelo celular, de 1 a 2 minutos, respondendo a 3 perguntas:',
-    '1️⃣ Quem é você?',
-    '2️⃣ Qual é a sua maior ambição e meta de vida?',
-    `3️⃣ Por que você é a pessoa certa${trechoVaga(job)}?`,
+    `📅 *Data:* ${proxima.dataTexto}`,
+    `⏰ *Horário:* ${proxima.horaTexto} (horário de Brasília)`,
+    `🔗 *Link da reunião (Google Meet):* ${proxima.linkMeet}`,
     '',
-    '⏰ *PRAZO*: envie o vídeo aqui mesmo no WhatsApp até amanhã, ao meio-dia.',
+    'Entre alguns minutos antes, em um lugar tranquilo e com boa internet.',
     '',
-    'Se tiver alguma dúvida pontual sobre a vaga, pode me perguntar. Aguardo seu vídeo e boa ' +
-      'sorte! 🚀',
+    'Confirme sua presença respondendo esta mensagem. Se tiver alguma dúvida pontual sobre a ' +
+      'vaga, pode me perguntar. Até lá e boa sorte! 🚀',
   ];
   return linhas.map((l) => limparEspacos(l)).join('\n');
+}
+
+// O fallback: vaga sem reuniao futura, ou sem link do Meet.
+//
+// ── POR QUE MANDAR ALGO, EM VEZ DE NAO MANDAR ──
+// O WA1 termina com "te mando o proximo passo", minutos antes. Silencio depois disso le como
+// processo abandonado. O fallback diz a verdade (as datas estao sendo definidas) sem inventar
+// prazo — e SEM o cabecalho 👇 do convite, de proposito: vestir de convite uma mensagem que nao
+// tem data frustra quem a abre esperando uma.
+//
+// ⚠️ O aviso prometido aqui e MANUAL. Nada reenvia o convite quando a data nova e cadastrada;
+// quem recebeu esta variante precisa ser reconvidado a mao, e e por isso que a variante fica
+// gravada na fila e aparece na ficha do candidato (routes/admin.js).
+function montarTextoSemReuniao(job) {
+  const linhas = [
+    `Estamos definindo as próximas datas das entrevistas em grupo${trechoVaga(job)}. ` +
+      'Assim que a data for confirmada, te aviso por aqui com o link da reunião. 🚀',
+  ];
+  return linhas.map((l) => limparEspacos(l)).join('\n');
+}
+
+// Devolve { texto, variante } — ver a nota do cabecalho sobre por que nao e mais uma string.
+//
+// `agora` e PARAMETRO (default no relogio so para o call site de producao): e o que permite um
+// teste provar que a reuniao 1, vencida, cede a vez para a 2 sem esperar uma semana.
+function montarTextoWA2(application, job, agora = new Date()) {
+  const proxima = proximaEntrevistaGrupo(job, agora);
+  if (!proxima) {
+    return { texto: montarTextoSemReuniao(job), variante: VARIANTE_SEM_REUNIAO };
+  }
+  return { texto: montarTextoConviteGrupo(job, proxima), variante: VARIANTE_CONVITE_GRUPO };
 }
 
 // ── REPROVACAO — corpo base sempre presente + convite condicional (ETAPA B) ──
@@ -229,6 +283,10 @@ function montarTextoReprovacao(job, linkGrupo) {
 module.exports = {
   montarTextoWA1,
   montarTextoWA2,
+  montarTextoConviteGrupo,
+  montarTextoSemReuniao,
+  VARIANTE_CONVITE_GRUPO,
+  VARIANTE_SEM_REUNIAO,
   montarTextoReprovacao,
   TEXTO_REPROVACAO_BASE_PLACEHOLDER,
   TEXTO_REPROVACAO_CONVITE_PLACEHOLDER,
