@@ -33,6 +33,18 @@ const { DisconnectReason } = require('@whiskeysockets/baileys');
 
 const { criarAuthState, limparAuthState, INSTANCIA_PADRAO } = require('./authState');
 const { resolverVersaoWa } = require('./waVersion');
+// Entrada de mensagens: a classificacao (o que fazer com cada mensagem recebida) e PURA e mora em
+// lib/entradaWhatsapp; aqui so ligamos o listener e agimos sobre a decisao.
+const entrada = require('../lib/entradaWhatsapp');
+const optout = require('../lib/optoutWhatsapp');
+
+// ── INSTANTE DO BOOT: a trava contra o despejo de historico ──
+//
+// Fixado no CARREGAMENTO DO MODULO, e nao na abertura do socket. A diferenca importa: se fosse na
+// abertura, cada reconexao moveria o corte para frente e descartaria as mensagens que chegaram
+// durante a queda — perdendo pedidos de saida legitimos. Com o boot do processo, uma reconexao nao
+// mexe no corte, e o historico antigo (que e o risco de verdade) continua barrado pelo timestamp.
+const BOOT_EM = Date.now();
 
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_TETO_MS = 60000;
@@ -190,6 +202,74 @@ function tratarUpdate(update, deps = {}) {
   return { acao: 'reconectar', atraso };
 }
 
+// ── MENSAGENS RECEBIDAS: registra opt-out de quem responde "SAIR" ──
+//
+// Extraido do listener para ser testavel sem socket, mesmo padrao de tratarUpdate. `deps` permite
+// injetar o registrador e o instante do boot.
+//
+// NUNCA LANCA. Este codigo roda dentro de um listener do socket: uma excecao aqui sobe pelo
+// event emitter do Baileys e pode derrubar a conexao — ou seja, um texto inesperado de UMA pessoa
+// tiraria o WhatsApp do ar para todos.
+//
+// O escopo e SEMPRE 'campanha'. Ver o cabecalho de lib/entradaWhatsapp.
+function tratarMensagensRecebidas(evento, deps = {}) {
+  const bootEm = deps.bootEm === undefined ? BOOT_EM : deps.bootEm;
+  const registrar = deps.registrarOptout || optout.registrarOptout;
+  const resumo = { optouts: 0, descartadas: 0, porMotivo: {} };
+
+  let decisoes = [];
+  try {
+    decisoes = entrada.classificarUpsert(evento, { bootEm });
+  } catch (err) {
+    console.error(`[wa-entrada] falha ao classificar mensagens recebidas (ignorado): ${err.message}`);
+    return resumo;
+  }
+
+  for (const d of decisoes) {
+    if (d.decisao !== entrada.ACAO_OPTOUT) {
+      resumo.descartadas += 1;
+      resumo.porMotivo[d.decisao] = (resumo.porMotivo[d.decisao] || 0) + 1;
+      // Log SO dos descartes que merecem olho humano. Silenciar o resto e deliberado: cada
+      // mensagem recebida passaria por aqui, e um log por mensagem esconderia o que importa.
+      if (d.decisao === entrada.DESCARTE_LID) {
+        console.warn(
+          '[wa-entrada] mensagem com JID @lid descartada: o @lid nao e o telefone, e um opt-out '
+            + 'gravado a partir dele nao suprimiria ninguem. Se isso virar comum, e preciso '
+            + 'resolver o @lid para o numero antes de registrar.',
+        );
+      }
+      continue;
+    }
+
+    try {
+      registrar({
+        telefone: d.telefone,
+        escopo: optout.ESCOPO_CAMPANHA,
+        origem: optout.ORIGEM_RESPOSTA,
+        motivo: `respondeu "${String(d.texto).slice(0, 60)}" no WhatsApp`,
+      });
+      resumo.optouts += 1;
+      console.log(
+        `[wa-entrada] opt-out de campanha registrado por resposta de ${mascararNumero(d.telefone)}.`,
+      );
+    } catch (err) {
+      // Falha ao gravar NAO pode derrubar o listener. O pedido se perde, e o log e a unica pista —
+      // mas a conexao continua de pe para todos os outros.
+      console.error(`[wa-entrada] falha ao registrar opt-out (ignorado): ${err.message}`);
+    }
+  }
+
+  return resumo;
+}
+
+// Telefone mascarado para log. Mesma regra de whatsapp/sequenciaOutbox.mascarar — recopiada (uma
+// linha) em vez de importada porque aquele modulo importa ESTE, e o require inverso abriria ciclo.
+function mascararNumero(telefone) {
+  const d = String(telefone || '');
+  if (d.length < 6) return '***';
+  return `${d.slice(0, 4)}${'*'.repeat(Math.max(0, d.length - 8))}${d.slice(-4)}`;
+}
+
 function agendarReconexao(atrasoMs) {
   if (estado.timerReconexao) clearTimeout(estado.timerReconexao);
   estado.timerReconexao = setTimeout(() => {
@@ -221,6 +301,12 @@ async function conectar(deps = {}) {
   estado.socket = socket;
 
   socket.ev.on('creds.update', saveCreds);
+  // Mensagens recebidas (Incremento B6 do disparo em massa). O `void` e a ausencia de await sao
+  // deliberados: o listener nao pode bloquear o event loop do socket, e tratarMensagensRecebidas
+  // nunca lanca.
+  socket.ev.on('messages.upsert', (evento) => {
+    tratarMensagensRecebidas(evento);
+  });
   socket.ev.on('connection.update', (u) => {
     const r = tratarUpdate(u);
     // Socket morto depois de close: a proxima conexao cria outro.
@@ -345,6 +431,8 @@ module.exports = {
   qrAtual,
   limparQr,
   tratarUpdate,
+  tratarMensagensRecebidas,
+  BOOT_EM,
   shouldReconnect,
   isRestartRequired,
   atrasoBackoff,
