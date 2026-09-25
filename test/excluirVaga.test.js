@@ -142,6 +142,43 @@ test('excluirVaga RECUSA quando ha 1+ campanha de WhatsApp', () => {
   assert.ok(existeVaga(id));
 });
 
+test('excluirVaga RECUSA quando ha campanha de DISPARO EM MASSA apontando para a vaga', () => {
+  // Regressao real: as tabelas do disparo em massa nasceram com FK para jobs.id e NAO estavam
+  // em TABELAS_DEPENDENTES_VAGA. O DELETE deixava de ser recusado com a mensagem amigavel e
+  // estourava um "FOREIGN KEY constraint failed" cru — a FK do banco (terceira linha de
+  // defesa) barrando o que esta checagem deveria barrar antes. Toda FK nova para jobs.id
+  // precisa entrar naquela lista, e este teste e o que cobra isso.
+  const id = criarVagaTeste();
+  run("INSERT INTO campanhas_massa_wa (nome, job_id) VALUES ('Campanha massa', ?)", id);
+
+  const r = db.excluirVaga(id);
+  assert.equal(r.ok, false);
+  assert.equal(r.erroCodigo, 'TEM_DEPENDENTES');
+  assert.equal(r.tabela, 'campanhas_massa_wa');
+  assert.equal(r.total, 1);
+  assert.ok(existeVaga(id));
+});
+
+test('excluirVaga RECUSA quando ha ENVIO de disparo em massa apontando para a vaga', () => {
+  // A fila referencia a vaga DO CANDIDATO, e nao a da campanha — entao ela pode apontar para
+  // uma vaga que a campanha nem menciona. Por isso as duas tabelas estao na lista, nao so a
+  // da campanha.
+  const id = criarVagaTeste();
+  const campanhaId = run("INSERT INTO campanhas_massa_wa (nome) VALUES ('Sem vaga')");
+  run(
+    `INSERT INTO campanhas_massa_wa_envios (campanha_id, telefone, telefone_canonico, job_id)
+     VALUES (?, '5547999582500', '554799582500', ?)`,
+    campanhaId,
+    id,
+  );
+
+  const r = db.excluirVaga(id);
+  assert.equal(r.ok, false);
+  assert.equal(r.erroCodigo, 'TEM_DEPENDENTES');
+  assert.equal(r.tabela, 'campanhas_massa_wa_envios');
+  assert.ok(existeVaga(id));
+});
+
 // ══════════════════════════════════════════════════════════════
 // 3. Entradas invalidas
 // ══════════════════════════════════════════════════════════════

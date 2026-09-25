@@ -225,6 +225,7 @@ module.exports = {
   // ── Disparo em massa por WhatsApp (Baileys) ──
   // TERCEIRO subsistema de WhatsApp, separado dos dois acima por contrato (ver o bloco das
   // tabelas em db/schema.sql): texto livre pelo socket, sem template da Meta e sem webhook.
+  listarCandidaturasVagasAbertas: driver.listarCandidaturasVagasAbertas,
   criarCampanhaMassaWa: driver.criarCampanhaMassaWa,
   listarCampanhasMassaWa: driver.listarCampanhasMassaWa,
   obterCampanhaMassaWa: driver.obterCampanhaMassaWa,

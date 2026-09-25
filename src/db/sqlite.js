@@ -298,9 +298,23 @@ function definirVagaAtiva(id, ativo) {
 //   { ok: true }
 //   { ok: false, erroCodigo: 'VAGA_NAO_ENCONTRADA' | 'TEM_DEPENDENTES', mensagem, tabela?, total? }
 //
-// Transacao: a checagem das 4 tabelas e o DELETE precisam ver o MESMO estado — sem ela, uma
+// Transacao: a checagem das tabelas e o DELETE precisam ver o MESMO estado — sem ela, uma
 // candidatura poderia chegar entre a checagem e o DELETE e ser apagada junto.
-const TABELAS_DEPENDENTES_VAGA = ['applications', 'vaga_acessos', 'campanhas', 'campanhas_whatsapp'];
+//
+// ── ESTA LISTA CRESCE COM TODA FK NOVA PARA jobs.id, E ESQUECER DISSO TEM SINTOMA FEIO ──
+// As duas ultimas entraram com o disparo em massa (campanhas_massa_wa.job_id e
+// campanhas_massa_wa_envios.job_id). Sem elas, o DELETE nao era recusado com a mensagem
+// amigavel de TEM_DEPENDENTES: ele estourava um "FOREIGN KEY constraint failed" cru na cara do
+// operador, porque a FK do banco (a terceira linha de defesa) barrava o que esta checagem
+// deveria ter barrado antes. Achado por um teste do publico de massa, nao em producao.
+const TABELAS_DEPENDENTES_VAGA = [
+  'applications',
+  'vaga_acessos',
+  'campanhas',
+  'campanhas_whatsapp',
+  'campanhas_massa_wa',
+  'campanhas_massa_wa_envios',
+];
 
 function excluirVaga(id) {
   const jobId = Number(id);
@@ -4427,6 +4441,68 @@ function listarEmailsDescadastrados() {
 // fonte de verdade sobre "que dia e hoje" — divergente da primeira no dia em que o horario de
 // verao voltar.
 
+// Candidaturas elegiveis ao disparo em massa: quem se candidatou a vaga ABERTA.
+//
+// ── O QUE O SQL DECIDE, E O QUE ELE DELIBERADAMENTE NAO DECIDE ──
+// Aqui ficam so os recortes que sao FATO no banco: vaga aberta, candidatura nao arquivada,
+// tem telefone, e (opcional) uma vaga especifica. Tudo o mais — status do recrutador, opt-out,
+// dedupe por chave canonica — acontece em lib/publicoMassaWhatsapp, em JS.
+//
+// Isso NAO e preferencia de estilo. Os tres casos deixados fora do SQL falhariam aqui:
+//   status_recrutador   'IN (...)' nunca casa com NULL, e NULL e "sem decisao" — a maior
+//                       parte da base. Alem disso a coluna tem '' e grafias variadas
+//                       ("Em Análise"), que so normalizarStatusRecrutador resolve.
+//   opt-out             a chave e o telefone CANONICO, que nao existe como coluna; comparar
+//                       a coluna crua ("+55 (47) 99958-2500") contra a normalizada nao acha
+//                       nada e falha ABERTO — mandando mensagem para quem pediu para sair.
+//   dedupe              a identidade da pessoa e a chave canonica (DDI+DDD+ultimos 8), que
+//                       tambem so existe depois de normalizar em JS.
+//
+// ── `j.ativo = 1` E O RECORTE CENTRAL ──
+// "Vaga aberta" e a unica fonte legitima deste publico: a pessoa deu o telefone se
+// candidatando a uma vaga que AINDA existe. Nenhuma consulta do projeto filtrava por isso
+// (as tres de campanha trazem a base inteira), e por isso esta funcao e nova em vez de um
+// parametro em listarCandidatosParaCampanhaWhatsapp — misturar os dois recortes num lugar so
+// faria a base legada voltar por engano no primeiro ajuste.
+//
+// ── SEM NENHUM FILTRO DE CIDADE, DE PROPOSITO ──
+// Vaga remota tem jobs.cidade NULL e ENTRA. Os motores de campanha existentes descartam quem
+// nao tem praca resolvivel (lib/publicoCampanhaWhatsapp, na checagem de `cidades`), porque la
+// a mensagem carrega o link do grupo DAQUELA praca. Aqui nao ha praca na mensagem, e excluir
+// vaga remota tiraria silenciosamente centenas de candidatos que sao exatamente o publico
+// pedido. Nao "corrija" isto por simetria com aquele motor.
+//
+// ── deleted_at IS NULL: arquivada FICA FORA ──
+// Diferente de listarCandidatosParaCampanhaWhatsapp, onde candidatura arquivada continua
+// contando (la o que importa e "esta pessoa ja esta nesta vaga", um fato que arquivar nao
+// desfaz). Aqui a pergunta e outra — "devo mandar mensagem para esta pessoa?" — e arquivar e
+// justamente o recrutador dizendo que nao.
+//
+// ── ORDEM: A CANDIDATURA MAIS RECENTE REPRESENTA A PESSOA ──
+// Quem tem duas candidaturas a vagas abertas aparece duas vezes, e o dedupe em JS mantem a
+// PRIMEIRA linha que chegar. Por isso a ordem e criado_em DESC: a candidatura viva e a que
+// da contexto a mensagem (inclusive a entrevista em grupo da vaga DELA, resolvida no envio).
+// Divergente de listarCandidatosPorCidadeVaga, que mantem a mais antiga — la o dado usado e o
+// cargo, que nao envelhece; aqui e uma reuniao com data.
+// O desempate por id DESC existe para a ordem ser ESTAVEL: duas previas da mesma campanha nao
+// podem escolher candidaturas diferentes.
+function listarCandidaturasVagasAbertas({ jobId = null } = {}) {
+  return getDb()
+    .prepare(
+      `SELECT a.id, a.nome, a.telefone, a.status_recrutador, a.job_id, a.criado_em,
+              j.titulo AS job_titulo, j.empresa AS job_empresa, j.cidade AS job_cidade
+         FROM applications a
+         JOIN jobs j ON j.id = a.job_id
+        WHERE j.ativo = 1
+          AND a.deleted_at IS NULL
+          AND a.telefone IS NOT NULL
+          AND TRIM(a.telefone) <> ''
+          AND (@jobId IS NULL OR a.job_id = @jobId)
+        ORDER BY a.criado_em DESC, a.id DESC`,
+    )
+    .all({ jobId: jobId == null ? null : Number(jobId) });
+}
+
 function criarCampanhaMassaWa({ nome, jobId, textoBase, criterios, totalEstimado, cadencia } = {}) {
   const c = cadencia || {};
   return Number(
@@ -4864,6 +4940,7 @@ module.exports = {
 
   // ── Disparo em massa por WhatsApp (Baileys) — campanhas_massa_wa* ──
   // Subsistema SEPARADO da Central Whats acima: nada aqui toca templates_whatsapp.
+  listarCandidaturasVagasAbertas,
   criarCampanhaMassaWa,
   listarCampanhasMassaWa,
   obterCampanhaMassaWa,
