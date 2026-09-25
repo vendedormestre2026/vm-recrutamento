@@ -4413,6 +4413,399 @@ function listarEmailsDescadastrados() {
     .map((linha) => linha.email);
 }
 
+// ──────────────────────────────────────────────────────────────
+// Disparo em massa por WhatsApp (Baileys) — campanhas_massa_wa*
+// ──────────────────────────────────────────────────────────────
+//
+// Camada de dados do TERCEIRO subsistema de WhatsApp. Ver o bloco de comentario das tabelas em
+// schema.sql para o porque de nao reusar campanha_whatsapp_envios.
+//
+// ── NADA AQUI DECIDE CADENCIA, JANELA OU FUSO ──
+// As funcoes recebem instantes JA CALCULADOS (ex.: contarEnviosMassaWaDesde) em vez de
+// consultarem date()/datetime() com aritmetica de fuso no SQL. O dia civil de Brasilia so e
+// conhecido por lib/fusoBrasilia, e reimplementar esse calculo em SQLite seria uma segunda
+// fonte de verdade sobre "que dia e hoje" — divergente da primeira no dia em que o horario de
+// verao voltar.
+
+function criarCampanhaMassaWa({ nome, jobId, textoBase, criterios, totalEstimado, cadencia } = {}) {
+  const c = cadencia || {};
+  return Number(
+    getDb()
+      .prepare(
+        `INSERT INTO campanhas_massa_wa
+           (nome, job_id, texto_base, criterios_json, total_estimado,
+            lote_min, lote_max, gap_min_s, gap_max_s, pausa_lote_min_s, pausa_lote_max_s,
+            teto_diario, hora_inicio, hora_fim, dias_semana)
+         VALUES (@nome, @jobId, @textoBase, @criterios, @totalEstimado,
+                 @loteMin, @loteMax, @gapMinS, @gapMaxS, @pausaLoteMinS, @pausaLoteMaxS,
+                 @tetoDiario, @horaInicio, @horaFim, @diasSemana)`,
+      )
+      .run({
+        nome: String(nome || '').trim(),
+        jobId: jobId || null,
+        textoBase: textoBase || null,
+        criterios: JSON.stringify(criterios || {}),
+        totalEstimado: totalEstimado == null ? null : Number(totalEstimado),
+        // `?? null` e nao `|| null`: 0 e valor legitimo em gap/pausa (o teste injeta 0 para
+        // nao esperar), e `||` o transformaria em "usar o default", que e outra coisa.
+        loteMin: c.loteMin ?? null,
+        loteMax: c.loteMax ?? null,
+        gapMinS: c.gapMinS ?? null,
+        gapMaxS: c.gapMaxS ?? null,
+        pausaLoteMinS: c.pausaLoteMinS ?? null,
+        pausaLoteMaxS: c.pausaLoteMaxS ?? null,
+        tetoDiario: c.tetoDiario ?? null,
+        horaInicio: c.horaInicio || null,
+        horaFim: c.horaFim || null,
+        diasSemana: c.diasSemana || null,
+      }).lastInsertRowid,
+  );
+}
+
+// `vaga_titulo` vem por LEFT JOIN porque job_id e NULLABLE aqui (campanha de TODAS as vagas
+// abertas) — mesmo padrao de listarCampanhasWhatsapp.
+function listarCampanhasMassaWa() {
+  return getDb()
+    .prepare(
+      `SELECT c.*, j.titulo AS vaga_titulo
+         FROM campanhas_massa_wa c
+         LEFT JOIN jobs j ON j.id = c.job_id
+        ORDER BY c.id DESC`,
+    )
+    .all();
+}
+
+function obterCampanhaMassaWa(id) {
+  return getDb()
+    .prepare(
+      `SELECT c.*, j.titulo AS vaga_titulo
+         FROM campanhas_massa_wa c
+         LEFT JOIN jobs j ON j.id = c.job_id
+        WHERE c.id = ?`,
+    )
+    .get(id);
+}
+
+// Campanhas que o worker deve olhar. Filtro no SQL, e nao em JS depois: uma campanha pausada
+// nunca pode entrar no laco de envio, e o lugar mais seguro para essa condicao e o mais
+// proximo do dado.
+function listarCampanhasMassaWaAtivas() {
+  return getDb()
+    .prepare("SELECT * FROM campanhas_massa_wa WHERE status = 'ativa' ORDER BY id")
+    .all();
+}
+
+// Edicao do rascunho (nome, vaga, texto base, criterios, cadencia). NAO toca status nem o
+// estado do worker: transicao de status tem funcao propria, porque cada uma tem efeito
+// colateral diferente (carimbo de inicio, de conclusao, motivo de pausa).
+function atualizarCampanhaMassaWa(id, { nome, jobId, textoBase, criterios, totalEstimado, cadencia } = {}) {
+  const c = cadencia || {};
+  return getDb()
+    .prepare(
+      `UPDATE campanhas_massa_wa SET
+         nome = @nome, job_id = @jobId, texto_base = @textoBase,
+         criterios_json = @criterios, total_estimado = @totalEstimado,
+         lote_min = @loteMin, lote_max = @loteMax,
+         gap_min_s = @gapMinS, gap_max_s = @gapMaxS,
+         pausa_lote_min_s = @pausaLoteMinS, pausa_lote_max_s = @pausaLoteMaxS,
+         teto_diario = @tetoDiario, hora_inicio = @horaInicio, hora_fim = @horaFim,
+         dias_semana = @diasSemana
+       WHERE id = @id`,
+    )
+    .run({
+      id,
+      nome: String(nome || '').trim(),
+      jobId: jobId || null,
+      textoBase: textoBase || null,
+      criterios: JSON.stringify(criterios || {}),
+      totalEstimado: totalEstimado == null ? null : Number(totalEstimado),
+      loteMin: c.loteMin ?? null,
+      loteMax: c.loteMax ?? null,
+      gapMinS: c.gapMinS ?? null,
+      gapMaxS: c.gapMaxS ?? null,
+      pausaLoteMinS: c.pausaLoteMinS ?? null,
+      pausaLoteMaxS: c.pausaLoteMaxS ?? null,
+      tetoDiario: c.tetoDiario ?? null,
+      horaInicio: c.horaInicio || null,
+      horaFim: c.horaFim || null,
+      diasSemana: c.diasSemana || null,
+    }).changes;
+}
+
+// Transicao de status.
+//
+// ── 'cancelada' E TERMINAL, e a trava esta no SQL ──
+// Nenhuma transicao SAI de 'cancelada'. Cancelar e decisao humana sobre uma campanha que nao
+// deveria continuar; reabri-la por engano (um clique errado, um retry de formulario) mandaria
+// mensagem para um publico que alguem ja decidiu poupar. Mesma razao pela qual 'concluida' nao
+// volta para 'ativa': o que acabou, acabou — o caminho e criar campanha nova.
+//
+// `motivo` acompanha a pausa AUTOMATICA (disjuntor). Ao ATIVAR, o motivo e limpo: o estado de
+// "pausada por 3 falhas" nao pode sobreviver a uma retomada humana e confundir a leitura da
+// tela depois.
+function definirStatusCampanhaMassaWa(id, status, { motivo = null } = {}) {
+  const extra =
+    status === 'ativa'
+      ? ", iniciada_em = COALESCE(iniciada_em, datetime('now')), pausada_motivo = NULL, erros_consecutivos = 0"
+      : status === 'concluida'
+        ? ", concluida_em = datetime('now')"
+        : status === 'pausada'
+          ? ', pausada_motivo = @motivo'
+          : '';
+  return getDb()
+    .prepare(
+      `UPDATE campanhas_massa_wa SET status = @status${extra}
+        WHERE id = @id AND status NOT IN ('cancelada', 'concluida')`,
+    )
+    .run({ id, status, motivo: motivo == null ? null : String(motivo).slice(0, 300) }).changes;
+}
+
+// Quando o worker pode voltar a enviar nesta campanha. Gravado no BANCO (e nao num timer em
+// memoria) para a cadencia sobreviver a um restart — ver a nota da coluna em schema.sql.
+function definirProximoEnvioMassaWa(id, quandoUtc) {
+  return getDb()
+    .prepare('UPDATE campanhas_massa_wa SET proximo_envio_em = ? WHERE id = ?')
+    .run(quandoUtc || null, id).changes;
+}
+
+// Qual variacao saiu por ultimo, para o sorteio nao repetir em envios consecutivos.
+// Persistido pelo mesmo motivo de proximo_envio_em: um restart nao pode reabrir a chance de
+// duas mensagens iguais seguidas.
+function definirUltimaVariacaoMassaWa(id, indice) {
+  return getDb()
+    .prepare('UPDATE campanhas_massa_wa SET ultima_variacao = ? WHERE id = ?')
+    .run(indice == null ? null : Number(indice), id).changes;
+}
+
+// Contador do DISJUNTOR. Incremento no proprio SQL (e nao ler-somar-gravar em JS) para dois
+// caminhos concorrentes nao perderem uma contagem — que aqui significaria nao pausar quando
+// deveria.
+function incrementarErrosConsecutivosMassaWa(id) {
+  const db = getDb();
+  db.prepare('UPDATE campanhas_massa_wa SET erros_consecutivos = erros_consecutivos + 1 WHERE id = ?').run(id);
+  return db.prepare('SELECT erros_consecutivos FROM campanhas_massa_wa WHERE id = ?').get(id).erros_consecutivos;
+}
+
+function zerarErrosConsecutivosMassaWa(id) {
+  return getDb()
+    .prepare('UPDATE campanhas_massa_wa SET erros_consecutivos = 0 WHERE id = ?')
+    .run(id).changes;
+}
+
+// ── VARIACOES ──
+
+// Substitui as variacoes da campanha INTEIRAS, numa transacao.
+//
+// DELETE + INSERT, e nao UPSERT por indice: salvar 5 variacoes onde havia 7 tem que DEIXAR 5.
+// Um UPSERT deixaria as duas ultimas orfas, e o sorteio continuaria entregando um texto que o
+// operador acredita ter apagado — o pior tipo de divergencia, porque a tela mostraria 5.
+function salvarVariacoesMassaWa(campanhaId, textos = []) {
+  const db = getDb();
+  const apagar = db.prepare('DELETE FROM campanhas_massa_wa_variacoes WHERE campanha_id = ?');
+  const inserir = db.prepare(
+    'INSERT INTO campanhas_massa_wa_variacoes (campanha_id, indice, texto) VALUES (?, ?, ?)',
+  );
+  const gravar = db.transaction(() => {
+    apagar.run(campanhaId);
+    let n = 0;
+    textos.forEach((texto, i) => {
+      const t = String(texto == null ? '' : texto).trim();
+      if (!t) return; // variacao vazia nao entra: o sorteio nunca pode devolver ''
+      inserir.run(campanhaId, i + 1, t);
+      n += 1;
+    });
+    return n;
+  });
+  return gravar();
+}
+
+function listarVariacoesMassaWa(campanhaId) {
+  return getDb()
+    .prepare(
+      'SELECT indice, texto FROM campanhas_massa_wa_variacoes WHERE campanha_id = ? ORDER BY indice',
+    )
+    .all(campanhaId);
+}
+
+// ── FILA ──
+
+// Materializa o publico inteiro numa TRANSACAO: ou entra tudo, ou nada.
+//
+// Mesma razao de materializarCampanhaWhatsapp: uma campanha materializada pela metade
+// enviaria para um recorte que ninguem escolheu, e o UNIQUE impediria completar depois.
+//
+// ON CONFLICT(campanha_id, telefone_canonico) DO NOTHING e a ULTIMA linha de defesa da
+// idempotencia — o dedupe por chave canonica ja aconteceu no motor de publico, e este
+// conflito nunca deveria disparar. Se disparar, a duplicata e descartada em silencio em vez
+// de derrubar a materializacao inteira.
+function materializarCampanhaMassaWa(campanhaId, itens = []) {
+  const db = getDb();
+  const stmt = db.prepare(
+    `INSERT INTO campanhas_massa_wa_envios
+       (campanha_id, telefone, telefone_canonico, nome, application_id, job_id)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(campanha_id, telefone_canonico) DO NOTHING`,
+  );
+  const gravar = db.transaction(() => {
+    let n = 0;
+    for (const i of itens) {
+      n += stmt.run(
+        campanhaId,
+        i.telefone,
+        i.telefoneCanonico,
+        i.nome || null,
+        i.applicationId || null,
+        i.jobId || null,
+      ).changes;
+    }
+    return n;
+  });
+  return gravar();
+}
+
+// Pendentes de UMA campanha, com o que a mensagem precisa.
+//
+// ── POR QUE A VAGA VEM POR JOIN, E COM OS CAMPOS DA ENTREVISTA EM GRUPO ──
+// O publico pode ser de TODAS as vagas abertas, entao a vaga e do CANDIDATO (e.job_id), nao da
+// campanha. E o link/data da entrevista em grupo sao resolvidos NO MOMENTO DO ENVIO, por
+// candidato (lib/entrevistaGrupo.proximaEntrevistaGrupo) — congela-los na materializacao faria
+// uma campanha de tres dias anunciar uma reuniao que ja passou no segundo dia.
+//
+// Como em listarPendentesSequenciaWhatsapp: SO chega ao texto o que esta LISTADO aqui. Coluna
+// nova em jobs que nao entre nesta lista sai como undefined na mensagem, sem erro nenhum.
+//
+// O JOIN com a campanha e filtro de SEGURANCA, nao conveniencia: linha pendente de campanha
+// pausada/cancelada nao pode sair (mesma razao do JOIN em listarPendentesCampanhaWhatsapp).
+function listarPendentesCampanhaMassaWa(campanhaId, { limite = 50 } = {}) {
+  const teto = Number.isInteger(limite) && limite > 0 ? limite : 50;
+  return getDb()
+    .prepare(
+      `SELECT e.id, e.campanha_id, e.telefone, e.telefone_canonico, e.nome,
+              e.application_id, e.job_id, e.tentativas,
+              j.titulo AS job_titulo, j.empresa AS job_empresa, j.slug AS job_slug,
+              j.link_meet AS job_link_meet,
+              j.entrevista_grupo_1_data AS job_entrevista_grupo_1_data,
+              j.entrevista_grupo_1_hora AS job_entrevista_grupo_1_hora,
+              j.entrevista_grupo_2_data AS job_entrevista_grupo_2_data,
+              j.entrevista_grupo_2_hora AS job_entrevista_grupo_2_hora,
+              j.entrevista_grupo_3_data AS job_entrevista_grupo_3_data,
+              j.entrevista_grupo_3_hora AS job_entrevista_grupo_3_hora
+         FROM campanhas_massa_wa_envios e
+         JOIN campanhas_massa_wa c ON c.id = e.campanha_id
+         LEFT JOIN jobs j ON j.id = e.job_id
+        WHERE e.campanha_id = ?
+          AND e.status = 'pendente'
+          AND c.status = 'ativa'
+        ORDER BY e.id
+        LIMIT ?`,
+    )
+    .all(campanhaId, teto);
+}
+
+// Enviado. Condicional ao 'pendente' (dois caminhos cruzados nao enviam duas vezes) e grava a
+// variacao na MESMA instrucao: um UPDATE separado poderia falhar depois do sucesso e deixar a
+// linha afirmando que enviou sem dizer o que saiu.
+function marcarEnvioMassaWaEnviado(id, { variacaoIndice = null, quando = null } = {}) {
+  return getDb()
+    .prepare(
+      `UPDATE campanhas_massa_wa_envios
+          SET status = 'enviado', enviado_em = COALESCE(?, datetime('now')),
+              variacao_indice = COALESCE(?, variacao_indice), erro = NULL,
+              tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(quando, variacaoIndice == null ? null : Number(variacaoIndice), id).changes;
+}
+
+// Conta a tentativa e DEIXA em 'pendente': a linha volta no proximo ciclo.
+function registrarTentativaEnvioMassaWa(id, erro) {
+  return getDb()
+    .prepare(
+      `UPDATE campanhas_massa_wa_envios SET erro = ?, tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(String(erro || '').slice(0, 300), id).changes;
+}
+
+// Estados TERMINAIS: 'falha' (teto de tentativas estourado, ou erro que retry nao conserta),
+// 'opt_out', 'sem_whatsapp', 'sem_reuniao'.
+//
+// Uma funcao para os quatro, com o status como parametro, porque a operacao e identica e o que
+// muda e so o rotulo — quatro funcoes iguais divergiriam na primeira correcao. Terminal de
+// verdade: nenhum deles volta a 'pendente', senao a linha reapareceria em todo ciclo ocupando
+// uma vaga do teto (o bug que marcarSequenciaWhatsappOptout documenta).
+function marcarEnvioMassaWaTerminal(id, status, erro = null) {
+  return getDb()
+    .prepare(
+      `UPDATE campanhas_massa_wa_envios
+          SET status = ?, erro = ?, tentativas = tentativas + 1
+        WHERE id = ? AND status = 'pendente'`,
+    )
+    .run(status, erro == null ? null : String(erro).slice(0, 300), id).changes;
+}
+
+// Quantas mensagens desta campanha sairam DESDE um instante (UTC).
+//
+// O instante e do CHAMADOR de proposito: "hoje" e o dia civil de America/Sao_Paulo, que so
+// lib/fusoBrasilia sabe calcular. Fazer essa conta em SQL seria uma segunda fonte de verdade
+// sobre que dia e hoje — e as duas divergiriam entre 21h e meia-noite, todos os dias.
+function contarEnviosMassaWaDesde(campanhaId, desdeUtc) {
+  return getDb()
+    .prepare(
+      `SELECT COUNT(*) n FROM campanhas_massa_wa_envios
+        WHERE campanha_id = ? AND status = 'enviado' AND enviado_em >= ?`,
+    )
+    .get(campanhaId, desdeUtc).n;
+}
+
+// Resumo por status, para a tela de acompanhamento. Array agrupado (e nao um objeto com as
+// chaves fixas): status novo aparece sozinho, sem ninguem atualizar esta funcao.
+function resumoCampanhaMassaWa(campanhaId) {
+  return getDb()
+    .prepare(
+      `SELECT status, COUNT(*) n FROM campanhas_massa_wa_envios
+        WHERE campanha_id = ? GROUP BY status`,
+    )
+    .all(campanhaId);
+}
+
+// Distribuicao por variacao entre o que JA SAIU. Existe para a pergunta "o sorteio esta
+// distribuindo?" ter resposta na tela — um sorteio quebrado que entrega sempre a mesma
+// variacao anula a razao de existirem sete, e nada mais no sistema denunciaria isso.
+function distribuicaoVariacoesMassaWa(campanhaId) {
+  return getDb()
+    .prepare(
+      `SELECT variacao_indice, COUNT(*) n FROM campanhas_massa_wa_envios
+        WHERE campanha_id = ? AND status = 'enviado'
+        GROUP BY variacao_indice ORDER BY variacao_indice`,
+    )
+    .all(campanhaId);
+}
+
+// Ha pendencia TRANSACIONAL vencida na fila do Baileys?
+//
+// ── O QUE ESTA FUNCAO PROTEGE ──
+// O disparo em massa e a sequencia WA1/WA2 dividem UM socket (uma unica sessao Baileys). O
+// transacional tem prioridade ABSOLUTA: WA1 e a primeira mensagem que um candidato recebe, e
+// atrasa-la porque uma campanha de massa esta no meio de um lote de 8 e inverter a importancia
+// das duas coisas.
+//
+// Mora aqui, e nao no worker com um SELECT solto, porque e leitura de banco e o projeto nao
+// tem SQL fora de src/db. `datetime('now')` (e nao um instante do chamador) porque a coluna
+// agendado_para e gravada com o mesmo relogio do SQLite — comparar as duas com o mesmo relogio
+// e o que mantem a comparacao entre iguais (ver a nota de iso() em sequenciaOutbox.js).
+function existePendenciaSequenciaWhatsapp(agora = null) {
+  return Boolean(
+    getDb()
+      .prepare(
+        `SELECT 1 FROM whatsapp_sequencia_envios
+          WHERE status = 'pendente' AND agendado_para <= COALESCE(?, datetime('now'))
+          LIMIT 1`,
+      )
+      .get(agora),
+  );
+}
+
 module.exports = {
   getDb,
   aplicarSchema,
@@ -4468,6 +4861,32 @@ module.exports = {
   registrarTentativaEnvioWhatsapp,
   marcarEnvioWhatsappOptOut,
   atualizarStatusPorWamid,
+
+  // ── Disparo em massa por WhatsApp (Baileys) — campanhas_massa_wa* ──
+  // Subsistema SEPARADO da Central Whats acima: nada aqui toca templates_whatsapp.
+  criarCampanhaMassaWa,
+  listarCampanhasMassaWa,
+  obterCampanhaMassaWa,
+  listarCampanhasMassaWaAtivas,
+  atualizarCampanhaMassaWa,
+  definirStatusCampanhaMassaWa,
+  definirProximoEnvioMassaWa,
+  definirUltimaVariacaoMassaWa,
+  incrementarErrosConsecutivosMassaWa,
+  zerarErrosConsecutivosMassaWa,
+  salvarVariacoesMassaWa,
+  listarVariacoesMassaWa,
+  materializarCampanhaMassaWa,
+  listarPendentesCampanhaMassaWa,
+  marcarEnvioMassaWaEnviado,
+  registrarTentativaEnvioMassaWa,
+  marcarEnvioMassaWaTerminal,
+  contarEnviosMassaWaDesde,
+  resumoCampanhaMassaWa,
+  distribuicaoVariacoesMassaWa,
+  // Prioridade do transacional sobre a fila de massa: as duas dividem UM socket Baileys.
+  existePendenciaSequenciaWhatsapp,
+
   registrarOptOutWhatsapp,
   estaOptOutWhatsapp,
   // Opt-out COM ESCOPO (whatsapp_optout). Ver a secao homonima acima para a diferenca

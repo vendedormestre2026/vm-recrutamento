@@ -221,6 +221,32 @@ module.exports = {
   registrarTentativaEnvioWhatsapp: driver.registrarTentativaEnvioWhatsapp,
   marcarEnvioWhatsappOptOut: driver.marcarEnvioWhatsappOptOut,
   atualizarStatusPorWamid: driver.atualizarStatusPorWamid,
+
+  // ── Disparo em massa por WhatsApp (Baileys) ──
+  // TERCEIRO subsistema de WhatsApp, separado dos dois acima por contrato (ver o bloco das
+  // tabelas em db/schema.sql): texto livre pelo socket, sem template da Meta e sem webhook.
+  criarCampanhaMassaWa: driver.criarCampanhaMassaWa,
+  listarCampanhasMassaWa: driver.listarCampanhasMassaWa,
+  obterCampanhaMassaWa: driver.obterCampanhaMassaWa,
+  listarCampanhasMassaWaAtivas: driver.listarCampanhasMassaWaAtivas,
+  atualizarCampanhaMassaWa: driver.atualizarCampanhaMassaWa,
+  definirStatusCampanhaMassaWa: driver.definirStatusCampanhaMassaWa,
+  definirProximoEnvioMassaWa: driver.definirProximoEnvioMassaWa,
+  definirUltimaVariacaoMassaWa: driver.definirUltimaVariacaoMassaWa,
+  incrementarErrosConsecutivosMassaWa: driver.incrementarErrosConsecutivosMassaWa,
+  zerarErrosConsecutivosMassaWa: driver.zerarErrosConsecutivosMassaWa,
+  salvarVariacoesMassaWa: driver.salvarVariacoesMassaWa,
+  listarVariacoesMassaWa: driver.listarVariacoesMassaWa,
+  materializarCampanhaMassaWa: driver.materializarCampanhaMassaWa,
+  listarPendentesCampanhaMassaWa: driver.listarPendentesCampanhaMassaWa,
+  marcarEnvioMassaWaEnviado: driver.marcarEnvioMassaWaEnviado,
+  registrarTentativaEnvioMassaWa: driver.registrarTentativaEnvioMassaWa,
+  marcarEnvioMassaWaTerminal: driver.marcarEnvioMassaWaTerminal,
+  contarEnviosMassaWaDesde: driver.contarEnviosMassaWaDesde,
+  resumoCampanhaMassaWa: driver.resumoCampanhaMassaWa,
+  distribuicaoVariacoesMassaWa: driver.distribuicaoVariacoesMassaWa,
+  existePendenciaSequenciaWhatsapp: driver.existePendenciaSequenciaWhatsapp,
+
   registrarOptOutWhatsapp: driver.registrarOptOutWhatsapp,
   estaOptOutWhatsapp: driver.estaOptOutWhatsapp,
 

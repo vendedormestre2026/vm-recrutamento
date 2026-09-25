@@ -791,3 +791,164 @@ CREATE TABLE IF NOT EXISTS whatsapp_optout (
 -- duas filtram por "ativo" e ordenam por data.
 CREATE INDEX IF NOT EXISTS idx_whatsapp_optout_ativo
   ON whatsapp_optout(revogado_em, criado_em);
+
+-- ══════════════════════════════════════════════════════════════
+-- DISPARO EM MASSA POR WHATSAPP (Baileys) — campanhas_massa_wa*
+-- ══════════════════════════════════════════════════════════════
+--
+-- TERCEIRO subsistema de mensagem por WhatsApp, e o desenho separa os tres de proposito:
+--
+--   whatsapp_sequencia_envios   Baileys, TRANSACIONAL (WA1/WA2/reprovacao), 1 candidatura
+--   campanha_whatsapp_envios    Central Whats (HTTP), template APROVADO pela Meta
+--   campanhas_massa_wa_envios   Baileys, TEXTO LIVRE, em massa   <- este
+--
+-- ── POR QUE TABELA NOVA, E NAO campanha_whatsapp_envios COM UMA COLUNA `transporte` ──
+-- Os contratos divergem exatamente no que mais importa. La o conteudo NAO mora no banco (mora
+-- na Meta, no template aprovado) e o que se guarda e o mapa de variaveis posicionais; aqui o
+-- conteudo E o dado (7 variacoes de texto livre, e qual delas saiu para cada pessoa). La ha
+-- wamid e webhook de entrega/leitura; aqui nao existe nenhum dos dois. Uma tabela para os dois
+-- casos teria metade das colunas sempre NULL e um `if transporte ===` em cada consulta.
+--
+-- ⚠️ BAILEYS E CENTRAL WHATS CONTINUAM CANAIS SEPARADOS: nada aqui referencia
+-- templates_whatsapp, e nenhum codigo deste subsistema importa providers/centralWhats.
+--
+-- ── ENUM SEM CHECK, DE PROPOSITO ──
+-- `status` (campanha e envio) nao tem CHECK. Nao e desleixo: e a licao de
+-- campanhas_whatsapp.tipo_mensagem, onde acrescentar UM valor exigiu RECRIAR a tabela em
+-- producao (o SQLite nao tem ALTER TABLE ... MODIFY CONSTRAINT). Um subsistema novo, cujos
+-- estados terminais vao crescer (hoje ja sao cinco), nasce com a validacao no app — onde ela
+-- e testavel e mudavel sem migracao de dados.
+
+-- Uma campanha de disparo em massa: um publico (candidatos de vaga ABERTA) + 7 variacoes de
+-- texto + uma cadencia.
+CREATE TABLE IF NOT EXISTS campanhas_massa_wa (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  nome           TEXT NOT NULL,
+  -- Vaga alvo do recorte. NULL = TODAS as vagas abertas. Nao e "a vaga que a mensagem
+  -- divulga" (como em campanhas_whatsapp.job_id): aqui e filtro de PUBLICO — o candidato e
+  -- de vaga aberta, e este campo estreita para uma vaga so.
+  job_id         INTEGER REFERENCES jobs(id),
+  -- Texto que o operador escreveu antes das variacoes. Guardado como SEMENTE e referencia
+  -- (a tela de variacoes parte dele); NAO e o que sai no envio — o que sai esta sempre em
+  -- campanhas_massa_wa_variacoes, uma das 7.
+  texto_base     TEXT,
+  -- JSON dos filtros da criacao (ex.: { statusList: ['sem_decisao', 'em_analise'] }).
+  -- Mesmo contrato de campanhas_whatsapp.criterios_json: o publico e RECALCULADO a partir
+  -- daqui na materializacao, e o JSON e o registro do que foi escolhido.
+  criterios_json TEXT,
+  -- Total calculado na previa, para a tela mostrar divergencia depois da materializacao.
+  total_estimado INTEGER,
+  status         TEXT NOT NULL DEFAULT 'rascunho',
+                 -- 'rascunho' | 'ativa' | 'pausada' | 'concluida' | 'cancelada'.
+                 -- 'cancelada' e TERMINAL e nao volta: cancelar e decisao humana sobre uma
+                 -- campanha que nao deveria continuar, e reabri-la por engano mandaria
+                 -- mensagem para um publico que alguem ja decidiu poupar.
+
+  -- ── CADENCIA (anti-bloqueio). NULL = usar o default do codigo ──
+  -- Nullable, e nao NOT NULL DEFAULT <numero>: o default vive em UM lugar (o worker), entao
+  -- ajustar a cadencia de todas as campanhas e mudar uma constante, nao um UPDATE em massa.
+  -- Valor preenchido aqui e override explicito daquela campanha.
+  lote_min           INTEGER,
+  lote_max           INTEGER,
+  gap_min_s          INTEGER,   -- intervalo ALEATORIO entre mensagens, em segundos
+  gap_max_s          INTEGER,
+  pausa_lote_min_s   INTEGER,   -- pausa maior ENTRE lotes
+  pausa_lote_max_s   INTEGER,
+  teto_diario        INTEGER,   -- mensagens por dia (rampa: 30 -> 60 -> 100 -> 150)
+  hora_inicio        TEXT,      -- 'HH:MM', hora de parede de America/Sao_Paulo
+  hora_fim           TEXT,      -- 'HH:MM', idem
+  -- Dias permitidos, ISO (1=segunda ... 7=domingo), separados por virgula: '1,2,3,4,5,6'.
+  -- Domingo fora do default por decisao de negocio: e o dia que mais gera denuncia, e
+  -- denuncia e o que bloqueia o numero.
+  dias_semana        TEXT,
+
+  -- ── ESTADO DO WORKER. Mora no BANCO, e nao em memoria ──
+  -- Reinicio de processo (deploy, queda) nao pode zerar a cadencia: um agendamento em memoria
+  -- faria o worker voltar disparando um lote inteiro no minuto em que o container subisse —
+  -- exatamente a rajada que a cadencia existe para impedir.
+  proximo_envio_em   TEXT,      -- UTC; o worker nao envia nada antes disto
+  ultima_variacao    INTEGER,   -- indice da ultima variacao usada (nao repetir em seguida)
+  erros_consecutivos INTEGER NOT NULL DEFAULT 0,
+  -- Preenchida pelo DISJUNTOR quando ele pausa sozinho. Pausa automatica NAO se desfaz
+  -- sozinha: retomar depois de um sinal de bloqueio e como se perde o numero.
+  pausada_motivo     TEXT,
+
+  criado_em      TEXT NOT NULL DEFAULT (datetime('now')),
+  iniciada_em    TEXT,
+  concluida_em   TEXT
+);
+
+-- As 7 variacoes de UMA campanha. Tabela, e nao um array JSON na campanha, porque cada
+-- variacao e editada, revisada e sorteada individualmente — e porque o envio guarda QUAL
+-- indice saiu (campanhas_massa_wa_envios.variacao_indice), que e uma referencia a uma linha.
+--
+-- UNIQUE(campanha_id, indice): o indice e a identidade da variacao dentro da campanha, e e
+-- por ele que o envio aponta para o texto que saiu.
+CREATE TABLE IF NOT EXISTS campanhas_massa_wa_variacoes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  campanha_id INTEGER NOT NULL REFERENCES campanhas_massa_wa(id),
+  indice      INTEGER NOT NULL,   -- 1..7
+  texto       TEXT NOT NULL,
+  criado_em   TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (campanha_id, indice)
+);
+
+-- A fila de envios. Uma linha por (campanha, PESSOA).
+--
+-- ══════════════════════════════════════════════════════════════
+-- A IDEMPOTENCIA E POR telefone_canonico, E ISSO E MAIS FORTE QUE O RESTO DO PROJETO
+-- ══════════════════════════════════════════════════════════════
+--
+-- campanha_whatsapp_envios usa UNIQUE(campanha_id, telefone) — telefone NORMALIZADO. Isso
+-- deixa passar a MESMA PESSOA duas vezes, porque a base guarda o mesmo celular em duas
+-- grafias (com e sem o nono digito) e as duas normalizam para numeros DIFERENTES: em
+-- producao sao 7 pessoas aparecendo como 14 numeros (levantamento em lib/chaveTelefone.js).
+--
+-- Aqui a chave e a CANONICA (DDI + DDD + ultimos 8 digitos), a mesma identidade que o
+-- opt-out usa. Com ela, as duas grafias colapsam numa linha so e e IMPOSSIVEL a mesma pessoa
+-- receber a mesma campanha duas vezes — que e a garantia mais importante de um disparo em
+-- massa, porque mensagem repetida e o que faz alguem denunciar o numero.
+--
+-- `telefone` continua na linha: e o que se DISCA (normalizado, com DDI, sem '+'). A canonica
+-- identifica, o normalizado disca — nunca o contrario.
+CREATE TABLE IF NOT EXISTS campanhas_massa_wa_envios (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  campanha_id       INTEGER NOT NULL REFERENCES campanhas_massa_wa(id),
+  telefone          TEXT NOT NULL,   -- normalizado (so digitos, com DDI): o numero discado
+  telefone_canonico TEXT NOT NULL,   -- a IDENTIDADE (ver acima)
+  nome              TEXT,
+  -- Candidatura de origem, congelada na materializacao. A vaga vem daqui (e nao da campanha)
+  -- porque o publico pode ser de TODAS as vagas abertas, e a mensagem precisa dos dados da
+  -- vaga DAQUELE candidato — inclusive a proxima entrevista em grupo, resolvida no momento
+  -- do envio (ver lib/entrevistaGrupo).
+  application_id    INTEGER,
+  job_id            INTEGER REFERENCES jobs(id),
+  -- Qual das 7 variacoes saiu. NULL enquanto pendente. E a unica forma de auditar depois se
+  -- o sorteio esta distribuindo de verdade, ou se uma variacao dominou o disparo.
+  variacao_indice   INTEGER,
+  status            TEXT NOT NULL DEFAULT 'pendente',
+                    -- 'pendente' | 'enviado' | 'falha' | 'opt_out' | 'sem_whatsapp'
+                    --            | 'sem_reuniao'
+                    -- Os quatro ultimos sao TERMINAIS e NAO retornam a fila. Distinguir e o
+                    -- ponto: 'falha' e problema tecnico (pode merecer retentativa manual),
+                    -- 'opt_out' e vontade da pessoa, 'sem_whatsapp' e numero que nao existe,
+                    -- e 'sem_reuniao' e falta de dado NOSSO (a vaga do candidato nao tem
+                    -- entrevista futura cadastrada). Misturar os quatro em 'falha' apagaria
+                    -- a unica metrica que diz se a campanha esta incomodando, e esconderia
+                    -- que o operador tem uma vaga para preencher.
+  enviado_em        TEXT,
+  erro              TEXT,
+  tentativas        INTEGER NOT NULL DEFAULT 0,
+  criado_em         TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (campanha_id, telefone_canonico)
+);
+
+-- A consulta do worker: "o que esta pendente nesta campanha" (igualdade em campanha_id e
+-- status, ordem por id).
+CREATE INDEX IF NOT EXISTS idx_massa_wa_envios_pendentes
+  ON campanhas_massa_wa_envios(campanha_id, status, id);
+
+-- Teto DIARIO: conta o que saiu desde um instante (o inicio do dia civil em Brasilia,
+-- calculado no app). Igualdade em campanha_id + faixa em enviado_em.
+CREATE INDEX IF NOT EXISTS idx_massa_wa_envios_enviado
+  ON campanhas_massa_wa_envios(campanha_id, enviado_em);
