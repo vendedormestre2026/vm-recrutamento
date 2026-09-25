@@ -26,6 +26,7 @@ const { modoEntrevistaAtivo } = require('../lib/modo');
 const {
   SLOTS: SLOTS_ENTREVISTA_GRUPO,
   diagnosticarEntrevistaGrupo,
+  temEntrevistaGrupoFutura,
   PROBLEMA_NADA_CADASTRADO,
   PROBLEMA_PAR_INCOMPLETO,
   PROBLEMA_DATA_INVALIDA,
@@ -1600,12 +1601,32 @@ router.get('/candidato/:id', (req, res) => {
     `${e.enviadoEm ? ` <small style="color:var(--cinza)">em ${escapeHtml(formatarDataHora(e.enviadoEm))}</small>` : ''}` +
     `${e.erro ? `<br><small style="color:var(--cinza)">${escapeHtml(e.erro)}</small>` : ''}</dd></div>`;
 
-  // O botao so aparece depois de o WA2 ter SAIDO: confirmar recebimento de algo que o
-  // sistema nao registra ter enviado gravaria um dado que nao se sustenta.
+  // ── O BLOCO DE VIDEO SO APARECE PARA QUEM FOI CONVIDADO A MANDAR VIDEO ──
+  // O WA2 hoje convida para a entrevista em grupo; ate a troca da mensagem, ele pedia video.
+  // Quem decide e fichaWa.mostrarVideo, pela `variante` gravada no envio (ver a nota dela).
+  // Nada foi apagado: candidatura com confirmacao registrada continua mostrando o historico.
+  const mostrarVideoWa = fichaWa.mostrarVideo(cand, linhasWa);
   const botaoVideoWa = fichaWa.podeConfirmarVideo(linhasWa)
     ? `<a class="btn" href="/admin/candidato/${cand.id}/video-wa2">` +
       `${situacaoVideo.confirmado ? 'Revisar confirmação do vídeo' : 'Marcar vídeo recebido'}</a>`
-    : `<button type="button" class="btn btn--off" disabled title="O WA2 ainda não foi enviado para este candidato.">Marcar vídeo recebido</button>`;
+    : '';
+
+  // ── QUE MENSAGEM ESTE CANDIDATO RECEBEU NO WA2 ──
+  // Le a variante GRAVADA no envio, nunca o estado atual da vaga: cadastrar a data depois nao
+  // transforma retroativamente um aviso de "datas em breve" num convite.
+  const varianteWa2 = fichaWa.rotuloVariante(wa2.variante);
+  const linhaVarianteWa2 = varianteWa2
+    ? `<div><dt>Mensagem enviada no WA2</dt><dd>${escapeHtml(varianteWa2)}</dd></div>`
+    : '';
+
+  // Quem recebeu o fallback precisa ser reconvidado A MAO — nada reenvia o convite quando a
+  // data nova e cadastrada (o WA2 daquela candidatura ja saiu, e e um por candidatura).
+  const avisoReconvidar = fichaWa.recebeuFallbackEntrevistaGrupo(linhasWa)
+    ? `<p class="aviso-alerta" style="margin:.6rem 0 0;">Este candidato recebeu o aviso de que as
+        datas estão sendo definidas, e <b>não recebeu link de reunião</b>. O convite não é
+        reenviado automaticamente: quando a vaga tiver data, chame esta pessoa manualmente.
+        <a href="/admin/convites-sem-data">Ver todos os convites sem data</a>.</p>`
+    : '';
 
   // ── SELO DE OPT-OUT (Incremento 3) ──
   // Aparece na ficha SEMPRE que houver opt-out ativo, com escopo, origem e data — as tres
@@ -1635,13 +1656,15 @@ router.get('/candidato/:id', (req, res) => {
       ${seloOptoutHtml}
       <dl class="rel-id">
         ${linhaEtapa('WA1 (imediato)', wa1)}
-        ${linhaEtapa('WA2 (+' + sequenciaWhatsapp.WA2_ATRASO_MINUTOS + 'min, pede vídeo)', wa2)}
-        <div><dt>Vídeo de apresentação</dt><dd>${escapeHtml(situacaoVideo.rotulo)}
+        ${linhaEtapa('WA2 (+' + sequenciaWhatsapp.WA2_ATRASO_MINUTOS + 'min, convite da entrevista em grupo)', wa2)}
+        ${linhaVarianteWa2}
+        ${mostrarVideoWa ? `<div><dt>Vídeo de apresentação</dt><dd>${escapeHtml(situacaoVideo.rotulo)}
           ${situacaoVideo.confirmado && situacaoVideo.por ? `<br><small style="color:var(--cinza)">por ${escapeHtml(situacaoVideo.por)} em ${escapeHtml(formatarDataHora(situacaoVideo.em))}</small>` : ''}
-        </dd></div>
-        ${limiteVideo ? `<div><dt>Prazo do vídeo</dt><dd>${escapeHtml(formatarDataHora(limiteVideo.toISOString()))}</dd></div>` : ''}
+        </dd></div>` : ''}
+        ${mostrarVideoWa && limiteVideo ? `<div><dt>Prazo do vídeo</dt><dd>${escapeHtml(formatarDataHora(limiteVideo.toISOString()))}</dd></div>` : ''}
       </dl>
-      <div class="acoes-linha" style="margin-top:.8rem">${botaoVideoWa}</div>
+      ${avisoReconvidar}
+      ${botaoVideoWa ? `<div class="acoes-linha" style="margin-top:.8rem">${botaoVideoWa}</div>` : ''}
     </section>`;
 
   const conteudo = `
@@ -1737,10 +1760,11 @@ router.get('/candidato/:id/video-wa2', (req, res) => {
   const linhas = db.listarSequenciaWhatsappDaApplication(id);
   if (!fichaWa.podeConfirmarVideo(linhas)) {
     return avisoAdmin(res, 400, {
-      titulo: 'WA2 ainda não foi enviado',
+      titulo: 'Não houve pedido de vídeo para este candidato',
       descricao:
-        'Não há registro de que a mensagem pedindo o vídeo tenha saído para este candidato. ' +
-        'Confirmar o recebimento agora gravaria um prazo que nunca começou a correr.',
+        'O WA2 desta candidatura não pediu vídeo — ou ainda não saiu, ou saiu já como convite ' +
+        'para a entrevista em grupo. Confirmar o recebimento agora gravaria um prazo que nunca ' +
+        'começou a correr. O histórico de quem enviou vídeo continua visível na ficha.',
     });
   }
 
@@ -1809,8 +1833,10 @@ router.post('/candidato/:id/video-wa2', (req, res) => {
   const linhas = db.listarSequenciaWhatsappDaApplication(id);
   if (!fichaWa.podeConfirmarVideo(linhas)) {
     return avisoAdmin(res, 400, {
-      titulo: 'WA2 ainda não foi enviado',
-      descricao: 'Não há registro de envio do pedido de vídeo para este candidato.',
+      titulo: 'Não houve pedido de vídeo para este candidato',
+      descricao:
+        'O WA2 desta candidatura não pediu vídeo — ou ainda não saiu, ou saiu já como convite ' +
+        'para a entrevista em grupo.',
     });
   }
 
@@ -3795,6 +3821,104 @@ function blocoLinksEtapa(vaga) {
     </script>`;
 }
 
+// Aviso agregado no topo da listagem: quantas vagas ATIVAS nao tem reuniao futura.
+//
+// Existe alem do selo por linha porque o operador entra nesta tela para outra coisa (criar,
+// encerrar) e o selo numa linha do meio da tabela nao e visto. O numero no topo e.
+function avisoVagasSemReuniao(vagas) {
+  const semReuniao = (vagas || []).filter((v) => v.ativo && !temEntrevistaGrupoFutura(v));
+  if (!semReuniao.length) return '';
+  const quais = semReuniao.map((v) => escapeHtml(v.titulo)).join(', ');
+  return `<p class="aviso-alerta">${semReuniao.length} vaga(s) ativa(s) sem entrevista em grupo
+    futura: <b>${quais}</b>. Os candidatos dessas vagas recebem o aviso de que as datas estão
+    sendo definidas, e <b>não um convite</b>. Cadastre o link do Meet e as datas na vaga.
+    <a href="/admin/convites-sem-data">Ver quem já recebeu esse aviso</a>.</p>`;
+}
+
+// ── GET /admin/convites-sem-data ──
+//
+// Quem recebeu o FALLBACK do WA2 e continua esperando uma data. E uma lista de TRABALHO, nao um
+// relatorio: nada reenvia o convite quando a data e cadastrada (o WA2 daquela candidatura ja
+// saiu, e e um por candidatura), entao estas pessoas so saem daqui quando alguem as chamar a mao.
+//
+// Agrupada por VAGA porque a acao e por vaga: primeiro cadastrar a data, depois chamar as pessoas.
+// Para cada vaga a tela diz se ela JA tem reuniao futura — e a diferenca entre "posso chamar
+// agora" e "ainda preciso cadastrar a data".
+//
+// Registrada ANTES de /vagas/:id nao ser necessario (caminho diferente), mas fica junto das
+// telas de vaga por afinidade de assunto.
+router.get('/convites-sem-data', (req, res) => {
+  const linhas = db.listarFallbackEntrevistaGrupo();
+
+  // Agrupa por vaga preservando a ordem que o SQL deu (titulo, depois envio mais recente).
+  const porVaga = new Map();
+  for (const l of linhas) {
+    const chave = l.job_id == null ? 'sem-vaga' : String(l.job_id);
+    if (!porVaga.has(chave)) {
+      porVaga.set(chave, {
+        jobId: l.job_id,
+        titulo: l.job_titulo || '(vaga removida)',
+        ativo: l.job_ativo === 1,
+        // A vaga tem reuniao futura AGORA? Decidido pela lib, com as colunas cruas da linha —
+        // nunca em SQL (ver a nota de listarFallbackEntrevistaGrupo em db/sqlite.js).
+        temReuniao: temEntrevistaGrupoFutura(l),
+        pessoas: [],
+      });
+    }
+    porVaga.get(chave).pessoas.push(l);
+  }
+
+  const blocos = [...porVaga.values()]
+    .map((g) => {
+      const selo = !g.ativo
+        ? '<span class="badge badge--encerrada">Encerrada</span>'
+        : g.temReuniao
+          ? '<span class="badge badge--ativa">já tem data</span>'
+          : '<span class="tag-aviso">⚠ ainda sem data</span>';
+      const acao = g.temReuniao
+        ? 'A vaga já tem reunião futura — pode chamar estas pessoas.'
+        : 'Cadastre o link do Meet e as datas na vaga antes de chamar.';
+      const pessoas = g.pessoas
+        .map(
+          (p) => `
+          <tr>
+            <td><a href="/admin/candidato/${p.application_id}">${escapeHtml(nomeCompleto(p))}</a></td>
+            <td>${escapeHtml(String(p.telefone || '—'))}</td>
+            <td>${escapeHtml(formatarDataHora(p.enviado_em))}</td>
+          </tr>`,
+        )
+        .join('');
+      const linkVaga = g.jobId ? `<a class="btn btn--ghost" href="/admin/vagas/${g.jobId}">Editar vaga</a>` : '';
+      return `
+        <section class="rel-sec">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+            <h2 style="margin:0;">${escapeHtml(g.titulo)} ${selo}</h2>
+            ${linkVaga}
+          </div>
+          <p style="color:var(--cinza);font-size:.85rem;margin:.4rem 0 .8rem;">${escapeHtml(acao)}
+            ${g.pessoas.length} pessoa(s) aguardando.</p>
+          <div class="admin-tab-scroll">
+            <table class="admin-tab">
+              <thead><tr><th>Candidato</th><th>Telefone</th><th>Aviso enviado em</th></tr></thead>
+              <tbody>${pessoas}</tbody>
+            </table>
+          </div>
+        </section>`;
+    })
+    .join('');
+
+  const conteudo = `
+    <p><a class="btn btn--ghost" href="/admin/vagas">← Voltar às vagas</a></p>
+    <h1>Convites sem data</h1>
+    <p style="color:var(--cinza);font-size:.9rem;max-width:56rem;">
+      Estas pessoas receberam a mensagem automática avisando que as datas da entrevista em grupo
+      estavam sendo definidas — <b>sem link de reunião</b>. O convite <b>não é reenviado
+      automaticamente</b>: quando a vaga tiver data, é preciso chamá-las manualmente.</p>
+    ${blocos || '<p class="aviso-ok">Ninguém recebeu o aviso de “datas em breve”. Todos os candidatos receberam convite com data e link.</p>'}`;
+
+  res.send(paginaAdmin({ titulo: 'Convites sem data', conteudo }));
+});
+
 // ── GET /admin/vagas ── listagem de todas as vagas ──
 router.get('/vagas', (req, res) => {
   const vagas = db.listarVagas();
@@ -3806,12 +3930,19 @@ router.get('/vagas', (req, res) => {
         ? '<span class="badge badge--ativa">Ativa</span>'
         : '<span class="badge badge--encerrada">Encerrada</span>';
       const semRoteiro = v.roteiro_id ? '' : '<span class="tag-aviso">⚠ sem roteiro</span>';
+      // Vaga ATIVA sem reuniao futura: todo candidato novo dela recebe o aviso de "datas em
+      // breve" em vez do convite. So marca a ATIVA — em vaga encerrada ninguem mais se
+      // candidata, e um painel que alerta sobre o que nao importa ensina a ignorar os alertas.
+      const semReuniao =
+        v.ativo && !temEntrevistaGrupoFutura(v)
+          ? '<span class="tag-aviso">⚠ sem entrevista em grupo</span>'
+          : '';
       const toggle = v.ativo
         ? `<form method="POST" action="/admin/vagas/${v.id}/encerrar"><button type="submit" class="btn btn--ghost">Encerrar</button></form>`
         : `<form method="POST" action="/admin/vagas/${v.id}/reativar"><button type="submit" class="btn">Reativar</button></form>`;
       return `
         <tr>
-          <td>${escapeHtml(v.titulo)}${semRoteiro}</td>
+          <td>${escapeHtml(v.titulo)}${semRoteiro}${semReuniao}</td>
           <td>${escapeHtml(v.perfil)}</td>
           <td>${badge}</td>
           <td>${formatarDataHora(v.criado_em)}</td>
@@ -3832,6 +3963,7 @@ router.get('/vagas', (req, res) => {
       <a class="btn" href="/admin/vagas/nova">+ Nova vaga</a>
     </div>
     ${salvo}
+    ${avisoVagasSemReuniao(vagas)}
     <div class="admin-tab-scroll">
       <table class="admin-tab">
         <thead>
