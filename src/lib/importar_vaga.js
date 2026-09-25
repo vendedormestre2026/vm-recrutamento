@@ -11,6 +11,13 @@ const { listarCidadesValidas, normalizarCidade } = require('./cidades');
 // Campos extraidos (ordem estavel p/ o aviso de "ausentes"). secoes_extras fica DE FORA
 // de proposito: o formato "## Titulo + itens" e peculiar e a IA geraria lixo — melhoria
 // futura. O admin preenche secoes_extras manualmente na revisao, se quiser.
+//
+// ── A ENTREVISTA EM GRUPO TAMBEM FICA DE FORA, E ISSO E DECISAO DE NEGOCIO ──
+// link_meet e os 3 pares entrevista_grupo_N_data/hora NAO sao extraidos e NAO entram no prompt.
+// Briefing de vaga raramente traz link de sala e datas de reuniao, e o custo do erro aqui e
+// assimetrico: um link ou uma data INVENTADOS pela IA mandam o candidato para uma reuniao que
+// nao existe — bem pior que campo vazio, que o admin ve e preenche na revisao (os campos estao
+// no mesmo formulario). Nao "complete" o shape abaixo com eles sem reabrir esta decisao.
 const CAMPOS_STRING = [
   'titulo',
   'faixa_pagamento',

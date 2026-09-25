@@ -339,3 +339,118 @@ test('calcularPrazoAmanhaMeioDia continua correto depois da extracao', () => {
   const prazo = calcularPrazoAmanhaMeioDia(new Date('2026-10-01T13:00:00Z'));
   assert.equal(prazo.toISOString(), '2026-10-02T15:00:00.000Z');
 });
+
+// ══════════════════ diagnosticarEntrevistaGrupo (contrato com o admin) ══════════════════
+//
+// Os CODIGOS sao o contrato entre a lib e a tela (as frases moram em routes/admin.js). O
+// teste HTTP em test/vagaEntrevistaGrupo.test.js prova que cada codigo vira uma frase; aqui
+// travamos quais codigos saem para cada estado, que e a parte que o B5 tambem vai consumir.
+
+const {
+  diagnosticarEntrevistaGrupo,
+  PROBLEMA_NADA_CADASTRADO,
+  PROBLEMA_PAR_INCOMPLETO,
+  PROBLEMA_DATA_INVALIDA,
+  PROBLEMA_FORA_DE_ORDEM,
+  PROBLEMA_REUNIAO_SEM_LINK,
+  PROBLEMA_LINK_SEM_REUNIAO,
+  PROBLEMA_SEM_REUNIAO_FUTURA,
+  PROBLEMA_LINK_SEM_ESQUEMA,
+} = require('../src/lib/entrevistaGrupo');
+
+const AGORA = utcDeBrasilia(2026, 9, 25, 10, 0);
+
+test('diagnostico: vaga completa e futura nao tem problema nenhum', () => {
+  const d = diagnosticarEntrevistaGrupo(VAGA_3_REUNIOES, AGORA);
+  assert.deepEqual(d.problemas, []);
+  assert.equal(d.usaFallback, false);
+  assert.equal(d.proxima.indice, 1);
+  assert.equal(d.slots.length, 3);
+});
+
+test('diagnostico: vaga sem link e sem reuniao -> nada_cadastrado (e so ele)', () => {
+  // E o estado de TODA vaga anterior a esta feature. Um so aviso, e nao tres reclamacoes
+  // sobre partes de algo que nunca foi preenchido.
+  const d = diagnosticarEntrevistaGrupo({}, AGORA);
+  assert.deepEqual(d.problemas, [PROBLEMA_NADA_CADASTRADO]);
+  assert.equal(d.usaFallback, true);
+});
+
+test('diagnostico: datas futuras sem link -> reuniao_sem_link', () => {
+  const d = diagnosticarEntrevistaGrupo({ ...VAGA_3_REUNIOES, link_meet: '' }, AGORA);
+  assert.ok(d.problemas.includes(PROBLEMA_REUNIAO_SEM_LINK));
+  assert.equal(d.usaFallback, true);
+});
+
+test('diagnostico: link sem reuniao -> link_sem_reuniao', () => {
+  const d = diagnosticarEntrevistaGrupo({ link_meet: LINK }, AGORA);
+  assert.deepEqual(d.problemas, [PROBLEMA_LINK_SEM_REUNIAO]);
+});
+
+test('diagnostico: todas vencidas -> sem_reuniao_futura', () => {
+  const depois = utcDeBrasilia(2026, 10, 16, 8, 0);
+  const d = diagnosticarEntrevistaGrupo(VAGA_3_REUNIOES, depois);
+  assert.ok(d.problemas.includes(PROBLEMA_SEM_REUNIAO_FUTURA));
+  assert.equal(d.usaFallback, true);
+  // NAO deve acusar link_sem_reuniao: ha reuniao cadastrada, ela so venceu. Dois avisos
+  // contraditorios na mesma tela e pior que um aviso so.
+  assert.ok(!d.problemas.includes(PROBLEMA_LINK_SEM_REUNIAO));
+});
+
+test('diagnostico: par incompleto e data invalida saem juntos quando ocorrem juntos', () => {
+  const d = diagnosticarEntrevistaGrupo(
+    {
+      link_meet: LINK,
+      entrevista_grupo_1_data: '2026-10-01',
+      entrevista_grupo_1_hora: '19:30',
+      entrevista_grupo_2_data: '2026-10-08', // sem hora
+      entrevista_grupo_3_data: '2026-02-31', // impossivel
+      entrevista_grupo_3_hora: '10:00',
+    },
+    AGORA,
+  );
+  assert.ok(d.problemas.includes(PROBLEMA_PAR_INCOMPLETO));
+  assert.ok(d.problemas.includes(PROBLEMA_DATA_INVALIDA));
+  // O par valido continua valendo: um campo pela metade nao derruba o resto.
+  assert.equal(d.proxima.indice, 1);
+});
+
+test('diagnostico: fora de ordem acusa, mas a proxima continua certa', () => {
+  const d = diagnosticarEntrevistaGrupo(
+    {
+      link_meet: LINK,
+      entrevista_grupo_1_data: '2026-10-15',
+      entrevista_grupo_1_hora: '09:15',
+      entrevista_grupo_2_data: '2026-10-01',
+      entrevista_grupo_2_hora: '19:30',
+    },
+    AGORA,
+  );
+  assert.ok(d.problemas.includes(PROBLEMA_FORA_DE_ORDEM));
+  assert.equal(d.proxima.indice, 2);
+  assert.equal(d.usaFallback, false);
+});
+
+test('diagnostico: uma reuniao so nunca e "fora de ordem"', () => {
+  const d = diagnosticarEntrevistaGrupo(
+    { link_meet: LINK, entrevista_grupo_2_data: '2026-10-08', entrevista_grupo_2_hora: '20:00' },
+    AGORA,
+  );
+  assert.ok(!d.problemas.includes(PROBLEMA_FORA_DE_ORDEM));
+  assert.deepEqual(d.problemas, []);
+});
+
+test('diagnostico: link sem esquema acusa sem invalidar a reuniao', () => {
+  const d = diagnosticarEntrevistaGrupo(
+    { ...VAGA_3_REUNIOES, link_meet: 'meet.google.com/abc-defg-hij' },
+    AGORA,
+  );
+  assert.deepEqual(d.problemas, [PROBLEMA_LINK_SEM_ESQUEMA]);
+  assert.equal(d.usaFallback, false, 'o link ainda pode ser o certo — nao bloqueia o convite');
+});
+
+test('diagnostico: nao lanca com vaga nula', () => {
+  const d = diagnosticarEntrevistaGrupo(null, AGORA);
+  assert.deepEqual(d.problemas, [PROBLEMA_NADA_CADASTRADO]);
+  assert.equal(d.proxima, null);
+});

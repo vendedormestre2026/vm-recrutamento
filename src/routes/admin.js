@@ -21,6 +21,20 @@ const llm = require('../providers/llm');
 const { importarVagaDeBriefing } = require('../lib/importar_vaga');
 const { extrairYoutubeId } = require('../lib/youtube');
 const { modoEntrevistaAtivo } = require('../lib/modo');
+// Entrevista em grupo: SLOTS e a lista das 3 reunioes (os nomes das colunas), e o diagnostico
+// e a funcao pura que decide quais avisos a tela mostra. Nenhuma regra de data mora aqui.
+const {
+  SLOTS: SLOTS_ENTREVISTA_GRUPO,
+  diagnosticarEntrevistaGrupo,
+  PROBLEMA_NADA_CADASTRADO,
+  PROBLEMA_PAR_INCOMPLETO,
+  PROBLEMA_DATA_INVALIDA,
+  PROBLEMA_FORA_DE_ORDEM,
+  PROBLEMA_REUNIAO_SEM_LINK,
+  PROBLEMA_LINK_SEM_REUNIAO,
+  PROBLEMA_SEM_REUNIAO_FUTURA,
+  PROBLEMA_LINK_SEM_ESQUEMA,
+} = require('../lib/entrevistaGrupo');
 const followup = require('../lib/followupEntrevista');
 const emailRecusa = require('../lib/emailRecusa');
 const decisaoRecrutador = require('../lib/decisaoRecrutador');
@@ -3298,6 +3312,26 @@ function lerVideoIntro(b, vagaAnterior) {
   };
 }
 
+// ── Entrevista em grupo: leitura do corpo do POST ──
+//
+// Guarda o que veio, TRIMADO, sem recusar valor estranho. Diferente de lerVideoIntro (que
+// preserva o valor anterior quando a entrada e invalida), aqui o valor invalido e GRAVADO de
+// proposito: o diagnostico da tela (diagnosticarEntrevistaGrupo) le o que esta no banco e diz
+// "a data da Reuniao 2 nao e valida", citando o valor. Descartar em silencio deixaria o admin
+// olhando um campo vazio sem saber por que o que ele digitou nao ficou.
+//
+// Nada aqui bloqueia o save: o formulario da vaga nao tem padrao de erro por-campo (so o titulo
+// vazio trava), e travar o save inteiro por causa de um horario faria perder as outras 20
+// alteracoes da mesma submissao.
+function lerEntrevistaGrupo(b) {
+  const campos = { link_meet: String((b && b.link_meet) || '').trim() };
+  for (const { indice, campoData, campoHora } of SLOTS_ENTREVISTA_GRUPO) {
+    campos[campoData] = String((b && b[`entrevista_grupo_${indice}_data`]) || '').trim();
+    campos[campoHora] = String((b && b[`entrevista_grupo_${indice}_hora`]) || '').trim();
+  }
+  return campos;
+}
+
 // True quando o usuario digitou algo no campo de video mas nao foi possivel extrair um ID
 // (usado pelo handler para o aviso nao-bloqueante, sem duplicar a regra de extracao).
 function videoIntroInvalido(b) {
@@ -3341,7 +3375,61 @@ function lerCamposRicos(b, vagaAnterior = null) {
     secoes_extras: parseSecoesExtras(b.secoes_extras),
     // Item 8 — video introdutorio (tipo + ref canonico); ver lerVideoIntro.
     ...lerVideoIntro(b, vagaAnterior),
+    // Entrevista em grupo — link do Meet + 3 pares data/hora; ver lerEntrevistaGrupo.
+    ...lerEntrevistaGrupo(b),
   };
+}
+
+// ── Entrevista em GRUPO: link do Meet + ate 3 reunioes (data + horario) ──
+//
+// Estes campos alimentam a mensagem automatica WA2 (o convite). A mensagem usa sempre a
+// PROXIMA reuniao futura, entao cadastrar as tres de uma vez e o caminho normal: o texto
+// avanca sozinho conforme cada data passa, sem ninguem voltar aqui.
+//
+// <input type="date"> + <input type="time"> em vez de texto livre: e o mesmo par que o resto
+// do painel ja usa para data (ver os filtros de periodo), e o navegador entrega 'YYYY-MM-DD' e
+// 'HH:MM' — exatamente o formato que as colunas guardam (hora de parede de Brasilia; ver o
+// bloco em db/migrate.js). Texto livre aqui reabriria a porta que o campo de cidade levou anos
+// para fechar.
+//
+// Os pares 2 e 3 sao opcionais por regra de negocio; o rotulo diz isso, e nenhum campo aqui e
+// `required` — vaga sem reuniao cadastrada e um estado valido (cai no fallback da mensagem, e o
+// aviso no topo da tela explica).
+function camposEntrevistaGrupoHtml(vaga) {
+  const linhaReuniao = (indice, rotulo) => {
+    const data = escapeHtml(vaga[`entrevista_grupo_${indice}_data`] || '');
+    const hora = escapeHtml(vaga[`entrevista_grupo_${indice}_hora`] || '');
+    return `
+      <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.6rem;">
+        <label class="campo" style="margin:0;min-width:12rem;">
+          <span>${escapeHtml(rotulo)} — data</span>
+          <input type="date" name="entrevista_grupo_${indice}_data" value="${data}">
+        </label>
+        <label class="campo" style="margin:0;min-width:9rem;">
+          <span>Horário</span>
+          <input type="time" name="entrevista_grupo_${indice}_hora" value="${hora}">
+        </label>
+      </div>`;
+  };
+
+  return `
+    <label class="campo">
+      <span>Link da entrevista em grupo (Google Meet)</span>
+      <input type="text" name="link_meet" value="${escapeHtml(vaga.link_meet || '')}"
+        placeholder="https://meet.google.com/abc-defg-hij">
+    </label>
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+      Sala fixa da vaga, enviada ao candidato na mensagem automática de WhatsApp. Comece com
+      <b>https://</b> — sem isso o WhatsApp não transforma em link clicável. Sem link, a
+      mensagem não convida para reunião nenhuma (avisa que as datas estão sendo definidas).</p>
+
+    ${linhaReuniao(1, 'Reunião 1')}
+    ${linhaReuniao(2, 'Reunião 2 (opcional)')}
+    ${linhaReuniao(3, 'Reunião 3 (opcional)')}
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.1rem 0 1.2rem;">
+      Horário de <b>Brasília</b>. A mensagem automática usa sempre a <b>próxima reunião
+      futura</b>: quando a data da Reunião 1 passa, o texto passa a anunciar a 2, depois a 3,
+      sem você mexer em nada. Cadastre em ordem cronológica.</p>`;
 }
 
 // Monta as <option> de um select com placeholder "— selecione —" (value vazio) e
@@ -3499,6 +3587,8 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
       <b>“não listado”</b> (não use <b>“privado”</b>, que não pode ser incorporado). Aceita o
       link completo ou só o ID — guardamos o ID. Deixe vazio para pular esta etapa.</p>
 
+    ${camposEntrevistaGrupoHtml(vaga)}
+
     <label class="campo-check">
       <input type="checkbox" name="ativo" value="1"${vaga.ativo ? ' checked' : ''}>
       <span style="color:var(--preto);text-transform:none;">Vaga ativa</span>
@@ -3512,6 +3602,69 @@ function camposVagaHtml(vaga, { perfilEditavel }) {
       Marcada: o candidato passa pela entrevista com a Vera (fluxo completo). Desmarcada:
       modo Simples — só confirmação + botão de WhatsApp, sem entrevista. Só tem efeito
       quando a <b>Entrevista automática (geral)</b> está ligada em Configurações.</p>`;
+}
+
+// ── Aviso de estado da entrevista em grupo (topo da tela de edicao) ──
+//
+// Calculado no GET a partir do que esta GRAVADO — nao passado pelo redirect do save. Ver a
+// nota de diagnosticarEntrevistaGrupo (lib/entrevistaGrupo): sao varios avisos ao mesmo tempo,
+// e o problema PERSISTE ate alguem consertar. Aviso que some no F5 e aviso que ninguem trata.
+//
+// As frases moram aqui (apresentacao) e os codigos na lib (regra), mesmo desenho dos rotulos de
+// enum em admin_promocao.js.
+function blocoAvisosEntrevistaGrupo(vaga) {
+  const { proxima, slots, problemas } = diagnosticarEntrevistaGrupo(vaga);
+
+  const dataDoSlot = (indice) => {
+    const s = slots.find((x) => x.indice === indice);
+    return s ? `${s.data || '—'} ${s.hora || ''}`.trim() : '';
+  };
+  const slotsCom = (estado) =>
+    slots.filter((s) => s.estado === estado).map((s) => `Reunião ${s.indice} (${escapeHtml(dataDoSlot(s.indice))})`).join(', ');
+
+  const FRASES = {
+    [PROBLEMA_NADA_CADASTRADO]:
+      'Esta vaga não tem link do Meet nem datas de entrevista em grupo. A mensagem automática ' +
+      'de WhatsApp vai avisar o candidato de que as datas estão sendo definidas — nenhum ' +
+      'convite será enviado até você preencher os campos abaixo.',
+    [PROBLEMA_REUNIAO_SEM_LINK]:
+      'Há datas cadastradas, mas <b>falta o link do Meet</b> — e sem sala não há convite. ' +
+      'A mensagem cai no aviso de “datas em breve” até o link ser preenchido.',
+    [PROBLEMA_LINK_SEM_REUNIAO]:
+      'O link do Meet está preenchido, mas <b>nenhuma reunião foi cadastrada</b>. A mensagem ' +
+      'cai no aviso de “datas em breve”.',
+    [PROBLEMA_SEM_REUNIAO_FUTURA]:
+      'Todas as reuniões cadastradas <b>já passaram</b>. Nenhum link vencido é enviado: a ' +
+      'mensagem cai no aviso de “datas em breve”. Cadastre as próximas datas.',
+    [PROBLEMA_PAR_INCOMPLETO]: `Reunião com data sem horário (ou horário sem data): ${slotsCom('incompleto')}. Um par incompleto é ignorado pela mensagem.`,
+    [PROBLEMA_DATA_INVALIDA]: `Data ou horário inválidos: ${slotsCom('invalido')}. Esse par é ignorado pela mensagem — corrija ou apague.`,
+    [PROBLEMA_FORA_DE_ORDEM]:
+      'As reuniões não estão em ordem cronológica. A mensagem acerta de qualquer forma (usa ' +
+      'sempre a próxima data futura, não a ordem dos campos), mas ordem trocada normalmente é ' +
+      'erro de digitação — confira as datas.',
+    [PROBLEMA_LINK_SEM_ESQUEMA]:
+      'O link do Meet não começa com <b>https://</b>. Sem isso o WhatsApp não o transforma em ' +
+      'link clicável, e o candidato recebe um texto que não abre nada.',
+  };
+
+  // `nada_cadastrado` e o estado de TODA vaga anterior a esta feature. Em vaga encerrada isso e
+  // irrelevante (ninguem mais se candidata a ela), entao la vira texto informativo em vez de
+  // alerta — um painel que grita sobre o que nao importa ensina a ignorar os avisos que importam.
+  const classe = (codigo) =>
+    codigo === PROBLEMA_NADA_CADASTRADO && !vaga.ativo ? 'aviso-ok' : 'aviso-alerta';
+
+  const avisos = problemas
+    .filter((c) => FRASES[c])
+    .map((c) => `<p class="${classe(c)}">${FRASES[c]}</p>`)
+    .join('');
+
+  const ok = proxima
+    ? `<p class="aviso-ok">Próxima entrevista em grupo: <b>${escapeHtml(proxima.dataTexto)}</b> às
+       <b>${escapeHtml(proxima.horaTexto)}</b> (horário de Brasília) — Reunião
+       ${proxima.indice}. É esta que a mensagem automática está anunciando.</p>`
+    : '';
+
+  return `${ok}${avisos}`;
 }
 
 // Mini-form "Cadastrar cidade nova": precisa ser um <form> de verdade (POST tradicional,
@@ -4059,6 +4212,7 @@ router.get('/vagas/:id', (req, res) => {
     ${salvo}
     ${avisoVideo}
     ${avisoRoteiroFaltando(vaga)}
+    ${blocoAvisosEntrevistaGrupo(vaga)}
     ${blocoLinksEtapa(vaga)}
     ${salvoSlug}
     ${blocoEditarSlug(vaga, { erroSlug: req.query.erroSlug })}

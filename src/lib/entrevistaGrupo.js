@@ -120,14 +120,93 @@ function temEntrevistaGrupoFutura(vaga, agora = new Date()) {
   return proximaEntrevistaGrupo(vaga, agora) !== null;
 }
 
+// ══════════════════════════════════════════════════════════════
+// DIAGNOSTICO PARA O ADMIN
+// ══════════════════════════════════════════════════════════════
+//
+// Devolve CODIGOS, nunca frases. O texto de cada aviso mora na camada de apresentacao
+// (routes/admin.js), mesmo desenho dos rotulos de enum em admin_promocao.js: regra aqui,
+// redacao la. Misturar os dois faria esta funcao — que e pura e testada — carregar HTML.
+//
+// ── POR QUE DERIVADO DO ESTADO SALVO, E NAO DEVOLVIDO PELO POST ──
+// Os avisos sao calculados no GET, a partir do que esta GRAVADO, e nao passados pelo redirect
+// do save (como o ?aviso=video faz). Duas razoes concretas: sao varios avisos ao mesmo tempo
+// (uma query string com lista viraria um mini-protocolo), e o problema PERSISTE ate alguem
+// consertar — um aviso que aparece uma vez e some no F5 e um aviso que ninguem trata. Mesmo
+// padrao do aviso permanente de "praca sem link de grupo".
+const PROBLEMA_NADA_CADASTRADO = 'nada_cadastrado';
+const PROBLEMA_PAR_INCOMPLETO = 'par_incompleto';
+const PROBLEMA_DATA_INVALIDA = 'data_invalida';
+const PROBLEMA_FORA_DE_ORDEM = 'fora_de_ordem';
+const PROBLEMA_REUNIAO_SEM_LINK = 'reuniao_sem_link';
+const PROBLEMA_LINK_SEM_REUNIAO = 'link_sem_reuniao';
+const PROBLEMA_SEM_REUNIAO_FUTURA = 'sem_reuniao_futura';
+
+// Um link que nao comeca com http:// ou https:// nao e clicavel no WhatsApp — o app so
+// transforma em link o que tem esquema. NAO exigimos meet.google.com: a sala pode vir de um
+// dominio proprio do cliente, e recusar isso seria inventar uma regra que o negocio nao tem.
+function linkPareceUrl(link) {
+  return /^https?:\/\/\S+$/i.test(String(link || '').trim());
+}
+const PROBLEMA_LINK_SEM_ESQUEMA = 'link_sem_esquema';
+
+// Estado completo da entrevista em grupo de UMA vaga, para a tela.
+//
+// `problemas` sai em ordem de gravidade decrescente (o que impede a mensagem primeiro), para
+// a tela poder so imprimir na ordem recebida.
+function diagnosticarEntrevistaGrupo(vaga, agora = new Date()) {
+  const link = linkMeetDe(vaga);
+  const slots = lerEntrevistasGrupo(vaga);
+  const proxima = proximaEntrevistaGrupo(vaga, agora);
+
+  const comAlgo = slots.filter((s) => s.estado !== VAZIO);
+  const validos = slots.filter((s) => s.estado === OK);
+  const problemas = [];
+
+  if (!link && !comAlgo.length) {
+    // Nem link nem reuniao: a vaga inteira cai no fallback. Nao e "erro de preenchimento" —
+    // e o estado de toda vaga anterior a esta feature, e por isso e o primeiro aviso.
+    problemas.push(PROBLEMA_NADA_CADASTRADO);
+  } else {
+    if (validos.length && !link) problemas.push(PROBLEMA_REUNIAO_SEM_LINK);
+    if (link && !comAlgo.length) problemas.push(PROBLEMA_LINK_SEM_REUNIAO);
+    if (slots.some((s) => s.estado === INVALIDO)) problemas.push(PROBLEMA_DATA_INVALIDA);
+    if (slots.some((s) => s.estado === INCOMPLETO)) problemas.push(PROBLEMA_PAR_INCOMPLETO);
+    // Fora de ordem e aviso de CADASTRO, nao de mensagem: proximaEntrevistaGrupo ordena por
+    // instante e acerta de qualquer jeito (ver o cabecalho). O aviso existe porque ordem
+    // trocada quase sempre e digito errado, e quem consegue notar isso e o admin.
+    if (validos.length > 1) {
+      const instantes = validos.map((s) => s.instante.getTime());
+      const crescente = instantes.every((t, i) => i === 0 || instantes[i - 1] <= t);
+      if (!crescente) problemas.push(PROBLEMA_FORA_DE_ORDEM);
+    }
+    // So faz sentido reclamar de "nenhuma futura" quando ha reuniao valida cadastrada: sem
+    // nenhuma, o aviso correto e LINK_SEM_REUNIAO (ou NADA_CADASTRADO), ja emitidos acima.
+    if (link && validos.length && !proxima) problemas.push(PROBLEMA_SEM_REUNIAO_FUTURA);
+    if (link && !linkPareceUrl(link)) problemas.push(PROBLEMA_LINK_SEM_ESQUEMA);
+  }
+
+  return { link, slots, proxima, problemas, usaFallback: proxima === null };
+}
+
 module.exports = {
   proximaEntrevistaGrupo,
   temEntrevistaGrupoFutura,
   lerEntrevistasGrupo,
+  diagnosticarEntrevistaGrupo,
   linkMeetDe,
+  linkPareceUrl,
   SLOTS,
   VAZIO,
   INCOMPLETO,
   INVALIDO,
   OK,
+  PROBLEMA_NADA_CADASTRADO,
+  PROBLEMA_PAR_INCOMPLETO,
+  PROBLEMA_DATA_INVALIDA,
+  PROBLEMA_FORA_DE_ORDEM,
+  PROBLEMA_REUNIAO_SEM_LINK,
+  PROBLEMA_LINK_SEM_REUNIAO,
+  PROBLEMA_SEM_REUNIAO_FUTURA,
+  PROBLEMA_LINK_SEM_ESQUEMA,
 };
