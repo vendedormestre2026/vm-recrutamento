@@ -18,20 +18,15 @@ function paraDataUtc(valor) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-const FUSO_BRASILIA = 'America/Sao_Paulo';
-
-// Offset de `timeZone` (em minutos, negativo para fusos atras de UTC) NO INSTANTE `data`.
-// Consultado via Intl em vez de hardcodado: Brasil nao tem horario de verao desde 2019, mas
-// hardcodar '-03:00' seria apostar que essa regra nunca muda. `longOffset` devolve algo como
-// "GMT-03:00", que a regex abaixo decompoe.
-function offsetMinutos(data, timeZone) {
-  const partes = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' }).formatToParts(data);
-  const nome = (partes.find((p) => p.type === 'timeZoneName') || {}).value || 'GMT+00:00';
-  const m = nome.match(/GMT([+-])(\d{2}):(\d{2})/);
-  if (!m) return 0;
-  const sinal = m[1] === '-' ? -1 : 1;
-  return sinal * (Number(m[2]) * 60 + Number(m[3]));
-}
+// FUSO_BRASILIA e offsetMinutos moravam AQUI e agora vem de lib/fusoBrasilia (modulo-folha).
+//
+// Motivo da extracao: ganharam um segundo consumidor (lib/entrevistaGrupo, o convite da
+// entrevista em grupo) e ha um terceiro previsto. Duas leituras de "que horas sao em Brasilia"
+// que divergem produzem horarios diferentes para o mesmo dado, e o sintoma aparece na mensagem
+// que chega ao candidato — nao aqui. Ver o cabecalho de lib/fusoBrasilia.
+//
+// Reexportados no final deste modulo para nao quebrar quem os importava daqui.
+const { FUSO_BRASILIA, offsetMinutos } = require('./fusoBrasilia');
 
 // Meio-dia do dia seguinte ao momento base, horario de Brasilia (America/Sao_Paulo).
 //
@@ -159,4 +154,8 @@ module.exports = {
   paraDataUtc,
   calcularPrazoAmanhaMeioDia,
   DENTRO_PRAZO_VALIDOS,
+  // Reexportados de lib/fusoBrasilia (onde passaram a morar) para nao quebrar importacoes
+  // existentes. Codigo NOVO deve importar do modulo folha, nao daqui.
+  FUSO_BRASILIA,
+  offsetMinutos,
 };
