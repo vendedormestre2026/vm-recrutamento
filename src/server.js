@@ -25,6 +25,7 @@ const lembreteInicio = require('./lib/lembreteInicio');
 const limpezaAudio = require('./lib/limpezaAudio');
 const dispararPromocao = require('./lib/dispararPromocao');
 const sequenciaWhatsapp = require('./whatsapp/sequenciaOutbox');
+const massaWhatsapp = require('./whatsapp/massaOutbox');
 const conexaoWhatsapp = require('./whatsapp/connection');
 const campanhaWhatsapp = require('./lib/campanhaWhatsapp');
 const { router: webhookMeta } = require('./routes/webhook_meta');
@@ -67,6 +68,12 @@ const INTERVALO_WHATSAPP_SEQ_MS = 5 * 60 * 1000;
 // nao ha nada "imediato" — campanha e envio em massa, e o custo de espalhar no tempo e zero
 // contra o risco de rajada, que a Meta mede como qualidade.
 const INTERVALO_CAMPANHA_WA_MS = 10 * 60 * 1000;
+
+// Disparo em massa por WhatsApp: 1 min, o mais curto de todas as varreduras — e o unico caso em que
+// isso NAO significa mais vazao. O tick so CONFERE se ja pode enviar; quem decide o ritmo e a
+// cadencia gravada no banco (proximo_envio_em). Um tick longo faria a campanha perder janelas de
+// envio por arredondamento, sem deixar o envio mais lento de proposito.
+const INTERVALO_MASSA_WA_MS = 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -162,6 +169,7 @@ function iniciar() {
   agendarDisparoPromocao();
   agendarSequenciaWhatsapp();
   agendarCampanhaWhatsapp();
+  agendarMassaWhatsapp();
   conectarWhatsappNoBoot();
 }
 
@@ -373,6 +381,24 @@ function agendarCampanhaWhatsapp() {
   console.log(
     `[campanha-wa] varredura agendada a cada ${INTERVALO_CAMPANHA_WA_MS / 60000} min ` +
       `(1a passada no boot; ate ${campanhaWhatsapp.ENVIOS_POR_CICLO} envios por ciclo).`,
+  );
+}
+
+// ── Disparo em massa por WhatsApp (Baileys) ──
+//
+// Agendada como as outras sete. O interruptor de banco (massa_wa_ativa) nasce DESLIGADO e o modo
+// mock nasce LIGADO, entao registrar o intervalo aqui nao envia nada: o ciclo sai no primeiro
+// if do worker enquanto alguem nao ligar as duas coisas de propria mao.
+function agendarMassaWhatsapp() {
+  void massaWhatsapp.varrerSeOcioso();
+
+  setInterval(() => {
+    void massaWhatsapp.varrerSeOcioso();
+  }, INTERVALO_MASSA_WA_MS);
+
+  console.log(
+    `[massa-wa] varredura agendada a cada ${INTERVALO_MASSA_WA_MS / 60000} min ` +
+      '(1a passada no boot; interruptor de banco desligado por padrao).',
   );
 }
 

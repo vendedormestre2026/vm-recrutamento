@@ -71,6 +71,7 @@ const campanhaWhatsapp = require('../lib/campanhaWhatsapp');
 const optoutWhatsapp = require('../lib/optoutWhatsapp');
 const { criarRouterOptout, seloOptout, botaoMarcarOptout } = require('./admin_optout');
 const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
+const { criarRouterMassaWa } = require('./admin_massa_wa');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
 
@@ -5838,6 +5839,9 @@ router.use(
 // Opt-outs de WhatsApp. Mesmo mount protegido das telas acima — ver o comentario da
 // Promocao de Vagas sobre o que acontece se esta linha subir para antes do adminAuth.
 router.use('/optouts', criarRouterOptout({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }));
+// Disparo em massa por WhatsApp (Baileys). Montado DEPOIS do router.use(adminAuth) la em cima,
+// como os demais — mover para antes deixaria as telas de disparo publicas.
+router.use('/massa-wa', criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }));
 
 // ── ROTULO_STATUS_CAMPANHA_EMAIL_RESUMO / linhaResumoWhatsapp: badges replicados, nao
 // importados ──
