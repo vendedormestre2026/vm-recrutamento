@@ -166,6 +166,40 @@ function migrar() {
   adicionarColunaSeFaltar('jobs', 'video_intro_tipo', 'TEXT');
   adicionarColunaSeFaltar('jobs', 'video_intro_ref', 'TEXT');
 
+  // ── Entrevista em GRUPO por vaga: 1 link do Meet + ate 3 reunioes (data + horario) ──
+  //
+  // Alimentam a mensagem automatica WA2, que passa de "grave um video" para "convite para a
+  // entrevista em grupo". A mensagem usa SEMPRE a proxima reuniao FUTURA (ver
+  // lib/entrevistaGrupo.proximaEntrevistaGrupo): vencida a reuniao 1, o texto passa a usar a
+  // 2, depois a 3, sem ninguem mexer em nada.
+  //
+  // ── POR QUE HORA DE PAREDE DE BRASILIA, E NAO INSTANTE UTC ──
+  // As duas colunas por reuniao guardam o que o admin digita e le: data 'YYYY-MM-DD' (do
+  // <input type="date">) e hora 'HH:MM' (do <input type="time">), no fuso America/Sao_Paulo.
+  // Guardar um instante UTC aqui teria dois custos concretos: formatarDataHora (routes/admin)
+  // NAO converte fuso — exibiria a reuniao deslocada — e um SELECT de diagnostico deixaria de
+  // ser legivel. A conversao para instante acontece SO na comparacao com "agora", em
+  // lib/entrevistaGrupo, usando o offset real do dia (lib/fusoBrasilia).
+  //
+  // ── POR QUE 7 COLUNAS PLANAS, E NAO UM JSON ──
+  // Mesmo precedente de video_intro_* logo acima: sao 3 slots FIXOS, mapeados 1:1 nos campos
+  // do formulario e inspecionaveis em SQL sem json_extract. `skills`/`secoes_extras` sao JSON
+  // porque tem cardinalidade livre, que nao e o caso aqui.
+  //
+  // Todas nullable: vaga sem link ou sem reuniao futura cai no fallback da mensagem (nunca
+  // sai link vencido). Os pares 2 e 3 sao opcionais por regra de negocio — nem toda vaga
+  // chega a ter tres reunioes.
+  //
+  // link_meet vazio = "sem reuniao utilizavel", MESMO com datas futuras cadastradas: convite
+  // sem sala nao e convite (decisao de negocio, travada por teste em lib/entrevistaGrupo).
+  adicionarColunaSeFaltar('jobs', 'link_meet', 'TEXT');
+  adicionarColunaSeFaltar('jobs', 'entrevista_grupo_1_data', 'TEXT');
+  adicionarColunaSeFaltar('jobs', 'entrevista_grupo_1_hora', 'TEXT');
+  adicionarColunaSeFaltar('jobs', 'entrevista_grupo_2_data', 'TEXT');
+  adicionarColunaSeFaltar('jobs', 'entrevista_grupo_2_hora', 'TEXT');
+  adicionarColunaSeFaltar('jobs', 'entrevista_grupo_3_data', 'TEXT');
+  adicionarColunaSeFaltar('jobs', 'entrevista_grupo_3_hora', 'TEXT');
+
   // Func. 2 - toggle por-vaga do modo do funil: 1 = Completo (entrevista automatica,
   // comportamento atual), 0 = Simples (so confirmacao + WhatsApp). Default 1 preserva
   // o comportamento de todas as vagas existentes. So vale quando o toggle GERAL esta ON.
@@ -326,6 +360,25 @@ function migrar() {
   adicionarColunaSeFaltar('applications', 'wa2_video_recebido_em', 'TEXT');
   adicionarColunaSeFaltar('applications', 'wa2_video_dentro_prazo', 'TEXT');
   adicionarColunaSeFaltar('applications', 'wa2_video_confirmado_por', 'TEXT');
+
+  // ── Qual VARIANTE do texto saiu naquele envio ──
+  //
+  // Primeira coluna que whatsapp_sequencia_envios ganha por migracao (a tabela inteira nasceu
+  // em schema.sql). Mora aqui, e nao no CREATE TABLE, porque a tabela ja existe em producao —
+  // mesmo caminho de toda coluna adicionada depois do fato.
+  //
+  // Nasce do convite da entrevista em grupo: o WA2 tem DOIS textos possiveis — o convite com
+  // link/data, e o fallback "estamos definindo as proximas datas" quando a vaga nao tem
+  // reuniao futura. Sem esta coluna a ficha do candidato nao saberia qual dos dois chegou no
+  // aparelho dele: inferir depois ("hoje a vaga nao tem data") passa a responder ERRADO no
+  // minuto em que a data nova for cadastrada — e o candidato que recebeu o fallback e
+  // justamente quem precisa ser reconvidado a mao.
+  //
+  // NULL = envio anterior a esta coluna, ou etapa que nunca teve variante (wa1, reprovacao).
+  // Valores: 'convite_grupo' | 'sem_reuniao'. Sem CHECK, pelo precedente de enum extensivel
+  // do projeto (ver campanhas_whatsapp.tipo_mensagem abaixo) e porque o SQLite nao aceita
+  // CHECK em ADD COLUMN.
+  adicionarColunaSeFaltar('whatsapp_sequencia_envios', 'variante', 'TEXT');
 
   // ── Campanha por WhatsApp: segundo TIPO de mensagem ──
   //

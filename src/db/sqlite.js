@@ -133,12 +133,20 @@ function criarVaga(vaga) {
        beneficios, atividades, requisitos, requisitos_obrigatorios, secoes_extras,
        endereco, cidade, modalidade, regime, horario,
        descricao, sobre_empresa, cultura_empresa, empresa, video_intro_tipo, video_intro_ref,
+       link_meet,
+       entrevista_grupo_1_data, entrevista_grupo_1_hora,
+       entrevista_grupo_2_data, entrevista_grupo_2_hora,
+       entrevista_grupo_3_data, entrevista_grupo_3_hora,
        roteiro_id, ativo, entrevista_ativa)
     VALUES
       (@slug, @titulo, @perfil, @faixa_pagamento, @potencial_ganhos, @skills,
        @beneficios, @atividades, @requisitos, @requisitos_obrigatorios, @secoes_extras,
        @endereco, @cidade, @modalidade, @regime, @horario,
        @descricao, @sobre_empresa, @cultura_empresa, @empresa, @video_intro_tipo, @video_intro_ref,
+       @link_meet,
+       @entrevista_grupo_1_data, @entrevista_grupo_1_hora,
+       @entrevista_grupo_2_data, @entrevista_grupo_2_hora,
+       @entrevista_grupo_3_data, @entrevista_grupo_3_hora,
        @roteiro_id, @ativo, @entrevista_ativa)
   `);
   const info = stmt.run({
@@ -168,6 +176,16 @@ function criarVaga(vaga) {
     // Item 8 — video introdutorio (TEXT simples, sem JSON): tipo + ID canonico.
     video_intro_tipo: vaga.video_intro_tipo || null,
     video_intro_ref: vaga.video_intro_ref || null,
+    // Entrevista em grupo: link do Meet + ate 3 pares data/hora (hora de parede de Brasilia;
+    // ver o bloco em db/migrate.js). `|| null` uniforme com os vizinhos: '' e ausencia aqui,
+    // e NULL e o que proximaEntrevistaGrupo le como "nao cadastrado".
+    link_meet: vaga.link_meet || null,
+    entrevista_grupo_1_data: vaga.entrevista_grupo_1_data || null,
+    entrevista_grupo_1_hora: vaga.entrevista_grupo_1_hora || null,
+    entrevista_grupo_2_data: vaga.entrevista_grupo_2_data || null,
+    entrevista_grupo_2_hora: vaga.entrevista_grupo_2_hora || null,
+    entrevista_grupo_3_data: vaga.entrevista_grupo_3_data || null,
+    entrevista_grupo_3_hora: vaga.entrevista_grupo_3_hora || null,
     roteiro_id: vaga.roteiro_id || null,
     ativo: vaga.ativo === false ? 0 : 1,
     // Default 1 (Completo). So vira 0 (Simples) quando explicitamente desmarcado.
@@ -203,6 +221,13 @@ function atualizarVaga(id, campos) {
          empresa          = @empresa,
          video_intro_tipo = @video_intro_tipo,
          video_intro_ref  = @video_intro_ref,
+         link_meet        = @link_meet,
+         entrevista_grupo_1_data = @entrevista_grupo_1_data,
+         entrevista_grupo_1_hora = @entrevista_grupo_1_hora,
+         entrevista_grupo_2_data = @entrevista_grupo_2_data,
+         entrevista_grupo_2_hora = @entrevista_grupo_2_hora,
+         entrevista_grupo_3_data = @entrevista_grupo_3_data,
+         entrevista_grupo_3_hora = @entrevista_grupo_3_hora,
          ativo            = @ativo,
          entrevista_ativa = @entrevista_ativa
        WHERE id = @id`,
@@ -230,6 +255,14 @@ function atualizarVaga(id, campos) {
       // Item 8 — video introdutorio (TEXT simples, sem JSON): tipo + ID canonico.
       video_intro_tipo: campos.video_intro_tipo || null,
       video_intro_ref: campos.video_intro_ref || null,
+      // Entrevista em grupo — mesma leitura de criarVaga acima.
+      link_meet: campos.link_meet || null,
+      entrevista_grupo_1_data: campos.entrevista_grupo_1_data || null,
+      entrevista_grupo_1_hora: campos.entrevista_grupo_1_hora || null,
+      entrevista_grupo_2_data: campos.entrevista_grupo_2_data || null,
+      entrevista_grupo_2_hora: campos.entrevista_grupo_2_hora || null,
+      entrevista_grupo_3_data: campos.entrevista_grupo_3_data || null,
+      entrevista_grupo_3_hora: campos.entrevista_grupo_3_hora || null,
       ativo: campos.ativo === false ? 0 : 1,
       entrevista_ativa: campos.entrevista_ativa === false ? 0 : 1,
     });
@@ -3181,7 +3214,20 @@ function listarPendentesSequenciaWhatsapp({ limite = 50, agora = null } = {}) {
               j.titulo AS job_titulo, j.empresa AS job_empresa, j.perfil AS job_perfil,
               j.slug AS job_slug, j.faixa_pagamento AS job_faixa_pagamento,
               j.potencial_ganhos AS job_potencial_ganhos, j.endereco AS job_endereco,
-              j.cidade AS job_cidade, j.modalidade AS job_modalidade, j.regime AS job_regime
+              j.cidade AS job_cidade, j.modalidade AS job_modalidade, j.regime AS job_regime,
+              -- Entrevista em grupo (WA2). SO chega ao texto da mensagem o que esta LISTADO
+              -- aqui: textoDaEtapa monta o objeto job a partir destas colunas e de mais
+              -- nada. Uma coluna nova em jobs que nao entre nesta lista produz o pior
+              -- desfecho possivel — a mensagem sai sem link/data e ninguem percebe, porque
+              -- nao ha erro: o campo so chega undefined. Por isso ha teste que falha se o
+              -- convite sair sem link ou sem data (test/entrevistaGrupoWa2.test.js).
+              j.link_meet AS job_link_meet,
+              j.entrevista_grupo_1_data AS job_entrevista_grupo_1_data,
+              j.entrevista_grupo_1_hora AS job_entrevista_grupo_1_hora,
+              j.entrevista_grupo_2_data AS job_entrevista_grupo_2_data,
+              j.entrevista_grupo_2_hora AS job_entrevista_grupo_2_hora,
+              j.entrevista_grupo_3_data AS job_entrevista_grupo_3_data,
+              j.entrevista_grupo_3_hora AS job_entrevista_grupo_3_hora
          FROM whatsapp_sequencia_envios s
          JOIN applications a ON a.id = s.application_id
          LEFT JOIN jobs j ON j.id = a.job_id
@@ -3201,15 +3247,22 @@ function listarPendentesSequenciaWhatsapp({ limite = 50, agora = null } = {}) {
 
 // Marca como enviada. Condicional ao 'pendente', mesmo padrao de marcarEnvioCampanhaEnviado:
 // se dois ciclos se cruzarem, o segundo grava 0 linhas.
-function marcarSequenciaWhatsappEnviada(id, quando = null) {
+//
+// `variante` (3o parametro, opcional): QUAL texto saiu, quando a etapa tem mais de um — hoje
+// so o WA2 tem ('convite_grupo' | 'sem_reuniao'; ver a coluna em db/migrate.js). Omitido
+// mantem NULL, que e o valor correto para wa1/reprovacao e para todo envio anterior a coluna.
+// Gravado na MESMA instrucao do 'enviado', de proposito: um UPDATE separado poderia falhar
+// depois do sucesso e deixar a linha afirmando que enviou sem dizer o que.
+function marcarSequenciaWhatsappEnviada(id, quando = null, variante = null) {
   return getDb()
     .prepare(
       `UPDATE whatsapp_sequencia_envios
           SET status = 'enviado', enviado_em = COALESCE(?, datetime('now')), erro = NULL,
+              variante = COALESCE(?, variante),
               tentativas = tentativas + 1
         WHERE id = ? AND status = 'pendente'`,
     )
-    .run(quando, id).changes;
+    .run(quando, variante, id).changes;
 }
 
 // Conta a tentativa e DEIXA em 'pendente' — a linha volta no proximo ciclo.
@@ -3267,7 +3320,10 @@ function marcarSequenciaWhatsappOptout(id) {
 function listarSequenciaWhatsappDaApplication(applicationId) {
   return getDb()
     .prepare(
-      `SELECT etapa, status, telefone_e164, agendado_para, enviado_em, erro, tentativas
+      // `variante`: qual texto saiu naquele envio (WA2 tem dois). A ficha do candidato usa
+      // isso para dizer se chegou o convite com link/data ou o fallback "datas em breve" —
+      // ver a nota da coluna em db/migrate.js sobre por que isso nao pode ser inferido depois.
+      `SELECT etapa, status, telefone_e164, agendado_para, enviado_em, erro, tentativas, variante
          FROM whatsapp_sequencia_envios
         WHERE application_id = ?
         ORDER BY etapa`,
