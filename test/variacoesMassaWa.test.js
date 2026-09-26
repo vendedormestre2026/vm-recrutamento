@@ -61,6 +61,32 @@ test('o seed tem exatamente 7 variacoes, todas distintas', () => {
   assert.equal(new Set(VARIACOES_SEED).size, TOTAL_VARIACOES);
 });
 
+test('os tres trechos corrigidos pelo Rafael estao exatos', () => {
+  // Chegaram truncados na primeira passagem e foram corrigidos pelo texto exato dele. Ficam
+  // TRAVADOS aqui porque sao os pontos que uma reescrita distraida reverteria sem ninguem notar —
+  // e o fecho do descadastro em especial: mudar "envie SAIR" para "responda SAIR" apagaria a
+  // variacao de forma entre as sete, que e a razao de elas existirem.
+  assert.ok(
+    TEXTO_BASE_PADRAO.includes('Vamos fazer uma entrevista em grupo online:'),
+    'o texto base introduz as linhas de data/hora/link com dois-pontos',
+  );
+  assert.ok(
+    VARIACOES_SEED[1].endsWith('Para deixar de receber nossas mensagens, envie SAIR.'),
+    'variacao 2 fecha com "envie SAIR"',
+  );
+  assert.ok(
+    VARIACOES_SEED[4].endsWith('Para parar de receber nossas mensagens, responda SAIR.'),
+    'variacao 5 fecha com "Para parar de receber"',
+  );
+});
+
+test('as 7 variacoes fecham o descadastro com formulacoes DIFERENTES', () => {
+  // Sete textos que terminam com a mesma frase exata sao sete textos com a mesma assinatura no
+  // fim — justamente o padrao que as variacoes existem para quebrar.
+  const fechos = VARIACOES_SEED.map((t) => t.slice(t.lastIndexOf('.', t.length - 2) + 1).trim());
+  assert.ok(new Set(fechos).size >= 5, `poucos fechos distintos: ${new Set(fechos).size}`);
+});
+
 test('o texto base tambem e valido como mensagem', () => {
   // Ele e semente da tela, mas tambem e o que o operador ve primeiro: se nao passasse as proprias
   // regras, a primeira coisa que a tela faria era acusar erro no texto que ela mesma sugeriu.

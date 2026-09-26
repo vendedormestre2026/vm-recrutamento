@@ -78,15 +78,16 @@ const TOTAL_VARIACOES = 7;
 // Fornecidos pelo Rafael e usados como PONTO DE PARTIDA: ficam editaveis no admin, e o que vale
 // no envio e sempre o que esta gravado em campanhas_massa_wa_variacoes.
 //
-// ⚠️ TRES TRECHOS FORAM RECONSTRUIDOS: o texto chegou truncado em tres pontos (o fim da frase do
-// texto base, e a frase de descadastro das variacoes 2 e 5). A reconstrucao e obvia e esta
-// marcada com um comentario em cada caso — conferir na tela de variacoes antes do primeiro
-// disparo real.
+// Tres trechos chegaram truncados na primeira passagem (o fim da frase do texto base e o fecho das
+// variacoes 2 e 5) e foram CORRIGIDOS pelo texto exato que ele enviou depois — nao ha mais nada
+// inferido aqui. Cada variacao fecha com uma formulacao propria do descadastro ("responda SAIR",
+// "envie SAIR", "Responda SAIR"), e isso e de proposito: e o mesmo conteudo dito de sete formas,
+// que e a razao de existirem sete.
 const TEXTO_BASE_PADRAO = [
   '{saudacao} Você se candidatou à vaga de {vaga} na {empresa} e queremos te conhecer melhor.',
   '',
-  // RECONSTRUIDO: o original chegou cortado em "Vamos fazer uma entr".
-  'Vamos fazer uma entrevista em grupo online.',
+  // Dois-pontos: a frase INTRODUZ as tres linhas de dado logo abaixo.
+  'Vamos fazer uma entrevista em grupo online:',
   '',
   '📅 {data}',
   '⏰ {horario} (horário de Brasília)',
@@ -107,8 +108,7 @@ const VARIACOES_SEED = Object.freeze([
   '{saudacao} Tudo bem? Sobre a sua candidatura à vaga de {vaga} na {empresa}: chegou a hora da '
     + 'próxima etapa, uma entrevista em grupo pelo Google Meet. 📅 {data} ⏰ {horario} (horário de '
     + 'Brasília) 🔗 {link_meet} Recomendo entrar um pouco antes e estar em um lugar tranquilo. '
-    // RECONSTRUIDO: o original chegou cortado em "Para deixar de receber nossas m".
-    + 'Dúvidas? É só responder. Para deixar de receber nossas mensagens, responda SAIR.',
+    + 'Dúvidas? É só responder. Para deixar de receber nossas mensagens, envie SAIR.',
 
   '{saudacao} Você se inscreveu para {vaga} na {empresa}, e o próximo passo é uma entrevista em '
     + 'grupo online. Anote: {data}, {horario} (Brasília). A reunião acontece neste link: '
@@ -124,8 +124,7 @@ const VARIACOES_SEED = Object.freeze([
   '{saudacao} Convite para a etapa seguinte do processo seletivo de {vaga} na {empresa}: '
     + 'entrevista em grupo online. Quando: {data}, {horario} (Brasília). Onde: {link_meet}. '
     + 'Sugestão: entre alguns minutos antes e escolha um ambiente silencioso. Se precisar tirar '
-    // RECONSTRUIDO: o original chegou cortado em "Par nossas mensagens, responda SAIR".
-    + 'alguma dúvida, responda por aqui. Para deixar de receber nossas mensagens, responda SAIR.',
+    + 'alguma dúvida, responda por aqui. Para parar de receber nossas mensagens, responda SAIR.',
 
   '{saudacao} Estamos avançando com quem se candidatou à vaga de {vaga} na {empresa}, e você está '
     + 'na lista para a entrevista em grupo. Data e hora: {data}, às {horario} (horário de '
