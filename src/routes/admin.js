@@ -72,6 +72,7 @@ const optoutWhatsapp = require('../lib/optoutWhatsapp');
 const { criarRouterOptout, seloOptout, botaoMarcarOptout } = require('./admin_optout');
 const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const { criarRouterMassaWa } = require('./admin_massa_wa');
+const { CHAVE_CAPTURA_ATIVA } = require('../lib/entradaWhatsapp');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
 
@@ -5406,6 +5407,7 @@ router.get('/config', (req, res) => {
   const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
   const whatsappSeqAtiva = db.obterConfigBool(CHAVE_WHATSAPP_SEQ, false);
   const campanhaWaAtiva = db.obterConfigBool(CHAVE_CAMPANHA_WA, false);
+  const capturaSaidaAtiva = db.obterConfigBool(CHAVE_CAPTURA_ATIVA, false);
   // Default TRUE, ao contrario de todos os outros desta tela.
   const optoutWaAtivo = optoutWhatsapp.ativo();
   const optoutLinkAtivo = optoutWhatsapp.linkAtivo();
@@ -5557,6 +5559,17 @@ router.get('/config', (req, res) => {
             </span>
           </label>
           <h3 style="margin:1.5rem 0 .5rem;">Opt-out (quem pediu para não receber)</h3>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="wa_captura_saida_ativa" value="1"${capturaSaidaAtiva ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Ler respostas “SAIR”</b> —
+              registrar opt-out <b>automaticamente</b> quando alguém responder SAIR (ou parar,
+              cancelar, remover) no WhatsApp. Só vale para quem recebeu um
+              <b>disparo em massa nos últimos 7 dias</b>, e o opt-out registrado é de
+              <b>campanha</b>: a pessoa continua recebendo as mensagens do processo seletivo dela
+              (WA1/WA2 e resultado da candidatura). Desligado, nenhuma mensagem recebida é lida.
+            </span>
+          </label>
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="optout_whatsapp_ativo" value="1"${optoutWaAtivo ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
@@ -5774,6 +5787,9 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
   db.definirConfigBool(CHAVE_WHATSAPP_SEQ, marcado('whatsapp_sequencia_ativa'));
   db.definirConfigBool(CHAVE_CAMPANHA_WA, marcado('campanha_whatsapp_ativa'));
+  // Leitura das respostas "SAIR" (captura de opt-out pelo Baileys). Default FALSE no leitor e
+  // gravado SEMPRE explicito aqui, como os vizinhos: checkbox desmarcado nao e 'chave ausente'.
+  db.definirConfigBool(CHAVE_CAPTURA_ATIVA, marcado('wa_captura_saida_ativa'));
   // Default TRUE no LEITOR (optoutWhatsapp.ativo), mas gravado SEMPRE explicito aqui, como
   // as duas linhas de formulario abaixo: checkbox desmarcado nao e 'chave ausente', e sem
   // este definirConfigBool nao haveria como desligar a supressao pela tela.

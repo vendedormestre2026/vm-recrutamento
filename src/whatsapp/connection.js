@@ -37,6 +37,7 @@ const { resolverVersaoWa } = require('./waVersion');
 // lib/entradaWhatsapp; aqui so ligamos o listener e agimos sobre a decisao.
 const entrada = require('../lib/entradaWhatsapp');
 const optout = require('../lib/optoutWhatsapp');
+const dbPadrao = require('../db');
 
 // ── INSTANTE DO BOOT: a trava contra o despejo de historico ──
 //
@@ -213,9 +214,18 @@ function tratarUpdate(update, deps = {}) {
 //
 // O escopo e SEMPRE 'campanha'. Ver o cabecalho de lib/entradaWhatsapp.
 function tratarMensagensRecebidas(evento, deps = {}) {
+  const db = deps.db || dbPadrao;
   const bootEm = deps.bootEm === undefined ? BOOT_EM : deps.bootEm;
   const registrar = deps.registrarOptout || optout.registrarOptout;
   const resumo = { optouts: 0, descartadas: 0, porMotivo: {} };
+
+  // ── INTERRUPTOR DA CAPTURA, ANTES DE QUALQUER COISA ──
+  // Default FALSE. Desligado, a mensagem recebida nao e classificada nem gravada — nada e olhado.
+  // Ver o cabecalho de lib/entradaWhatsapp para por que esta chave existe separada das outras.
+  const capturaLigada = deps.capturaAtiva === undefined
+    ? db.obterConfigBool(entrada.CHAVE_CAPTURA_ATIVA, false)
+    : deps.capturaAtiva;
+  if (!capturaLigada) return { ...resumo, desativado: true };
 
   let decisoes = [];
   try {

@@ -28,6 +28,7 @@ process.env.NODE_ENV = 'test';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const entrada = require('../src/lib/entradaWhatsapp');
 const conexao = require('../src/whatsapp/connection');
@@ -227,6 +228,7 @@ test('o handler registra opt-out de ESCOPO CAMPANHA, nunca total', () => {
   const r = comLogsSilenciados(() =>
     conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' })]), {
       bootEm: BOOT,
+      capturaAtiva: true,
       registrarOptout: (args) => registros.push(args),
     }),
   );
@@ -251,7 +253,7 @@ test('o handler NAO registra nada para historico, grupo, @lid e fromMe', () => {
         msg({ texto: 'sair', fromMe: true }),
         msg({ texto: 'obrigado' }),
       ]),
-      { bootEm: BOOT, registrarOptout: (args) => registros.push(args) },
+      { bootEm: BOOT, capturaAtiva: true, registrarOptout: (args) => registros.push(args) },
     ),
   );
 
@@ -270,6 +272,7 @@ test('falha ao gravar o opt-out NAO derruba o listener', () => {
   const r = comLogsSilenciados(() =>
     conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' }), msg({ texto: 'parar', jid: '5531996820290@s.whatsapp.net' })]), {
       bootEm: BOOT,
+      capturaAtiva: true,
       registrarOptout: () => { throw new Error('banco fora'); },
     }),
   );
@@ -279,9 +282,57 @@ test('falha ao gravar o opt-out NAO derruba o listener', () => {
 test('o handler nao lanca com evento invalido', () => {
   for (const evento of [null, undefined, {}, { type: 'notify', messages: 'x' }]) {
     assert.doesNotThrow(() =>
-      comLogsSilenciados(() => conexao.tratarMensagensRecebidas(evento, { bootEm: BOOT, registrarOptout: () => {} })),
+      comLogsSilenciados(() => conexao.tratarMensagensRecebidas(evento, { bootEm: BOOT, capturaAtiva: true, registrarOptout: () => {} })),
     );
   }
+});
+
+// ══════════════════ O INTERRUPTOR DA CAPTURA ══════════════════
+
+test('DESLIGADO (o default): nao classifica e nao grava nada', () => {
+  // O listener e registrado sob WHATSAPP_BAILEYS_ATIVO, que em producao ja esta ligado. Sem esta
+  // chave propria, o simples deploy do codigo faria o sistema comecar a gravar opt-out a partir de
+  // respostas — comportamento novo que escreve na base chegando como efeito colateral de um deploy.
+  const registros = [];
+  const r = comLogsSilenciados(() =>
+    conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' }), msg({ texto: 'parar' })]), {
+      bootEm: BOOT,
+      capturaAtiva: false,
+      registrarOptout: (args) => registros.push(args),
+    }),
+  );
+
+  assert.equal(r.desativado, true);
+  assert.equal(r.optouts, 0);
+  assert.equal(r.descartadas, 0, 'nem chega a classificar');
+  assert.equal(registros.length, 0);
+});
+
+test('o interruptor e LIDO DO BANCO quando nao e injetado, e o default e OFF', () => {
+  const registros = [];
+  const deps = { bootEm: BOOT, registrarOptout: (args) => registros.push(args) };
+
+  // Sem a chave no banco: desligado.
+  db.getDb().prepare('DELETE FROM configuracoes WHERE chave = ?').run(entrada.CHAVE_CAPTURA_ATIVA);
+  assert.equal(
+    comLogsSilenciados(() => conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' })]), deps)).desativado,
+    true,
+  );
+  assert.equal(registros.length, 0);
+
+  // Ligada pelo painel: passa a capturar.
+  db.definirConfigBool(entrada.CHAVE_CAPTURA_ATIVA, true);
+  const r = comLogsSilenciados(() => conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' })]), deps));
+  assert.equal(r.desativado, undefined);
+  assert.equal(r.optouts, 1);
+
+  // Desligada de novo: para na hora.
+  db.definirConfigBool(entrada.CHAVE_CAPTURA_ATIVA, false);
+  assert.equal(
+    comLogsSilenciados(() => conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' })]), deps)).desativado,
+    true,
+  );
+  assert.equal(registros.length, 1, 'so o envio da janela ligada foi gravado');
 });
 
 test('BOOT_EM e fixado no carregamento do modulo (reconexao nao move o corte)', () => {

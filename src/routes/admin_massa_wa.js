@@ -32,6 +32,7 @@ const variacoesLib = require('../lib/variacoesMassaWa');
 const publico = require('../lib/publicoMassaWhatsapp');
 const { normalizarTelefoneWhatsapp } = require('../lib/whatsapp');
 const { proximaEntrevistaGrupo, temEntrevistaGrupoFutura } = require('../lib/entrevistaGrupo');
+const { CHAVE_CAPTURA_ATIVA } = require('../lib/entradaWhatsapp');
 
 // Rotulos dos status da campanha. Aqui (apresentacao), nao na lib.
 const ROTULO_STATUS = {
@@ -134,6 +135,9 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
   function blocoEstado() {
     const ligado = worker.ativo({ db });
     const mock = worker.modoMock();
+    // A captura de "SAIR" tem interruptor PROPRIO (ver lib/entradaWhatsapp): o operador precisa ver
+    // os dois estados, porque a mensagem promete "responda SAIR" e quem cumpre a promessa e ela.
+    const capturaSaida = db.obterConfigBool(CHAVE_CAPTURA_ATIVA, false);
     const s = conexao.status();
     const selo = (ok, texto) =>
       `<span class="badge ${ok ? 'badge--ativa' : 'badge--encerrada'}">${escapeHtml(texto)}</span>`;
@@ -152,12 +156,19 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           ${selo(ligado, ligado ? 'Disparo em massa LIGADO' : 'Disparo em massa DESLIGADO')}
           ${selo(!mock, mock ? 'MOCK (não envia)' : 'Envio real')}
           ${selo(s.status === 'conectado', `WhatsApp: ${s.status}`)}
+          ${selo(capturaSaida, capturaSaida ? 'Lendo respostas “SAIR”' : 'NÃO lê respostas “SAIR”')}
         </div>
         <p style="color:var(--cinza);font-size:.82rem;margin:.6rem 0 0;">
           O interruptor (<code>${escapeHtml(worker.CHAVE_ATIVO)}</code>) fica em
           <a href="/admin/config">Configurações</a>. Com ele desligado, nenhuma campanha envia —
           nem as que estão ativas. A sessão do WhatsApp é a mesma do WA1/WA2, em
           <a href="/admin/whatsapp">Conexão</a>.</p>
+        <p style="color:var(--cinza);font-size:.82rem;margin:.4rem 0 0;">
+          A leitura das respostas “SAIR” tem interruptor <b>próprio</b>
+          (<code>${escapeHtml(CHAVE_CAPTURA_ATIVA)}</code>, também em Configurações) e nasce
+          desligada. Com ela desligada, a mensagem diz “responda SAIR” e <b>ninguém lê a
+          resposta</b> — o descadastro volta a depender de alguém registrar à mão em
+          <a href="/admin/optouts">Opt-outs</a>.</p>
         ${avisoMock}
       </section>`;
   }

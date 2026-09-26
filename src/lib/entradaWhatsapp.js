@@ -46,6 +46,24 @@
 const { pedeSaida } = require('./pedidoSaidaWhatsapp');
 const { normalizarTelefoneRecebido } = require('./whatsapp');
 
+// ══════════════════════════════════════════════════════════════
+// A CAPTURA TEM INTERRUPTOR PROPRIO, E ELE NASCE DESLIGADO
+// ══════════════════════════════════════════════════════════════
+//
+// Chave no store `configuracoes`, no mesmo padrao de whatsapp_sequencia_ativa e massa_wa_ativa.
+// A CONSTANTE mora aqui (junto das regras da feature, modulo folha); a LEITURA do banco mora em
+// whatsapp/connection, que e quem tem o socket e o db.
+//
+// ── POR QUE NAO BASTAVA O INTERRUPTOR DA CAMPANHA ──
+// O listener e registrado no `conectar()`, guardado SO por WHATSAPP_BAILEYS_ATIVO — que em producao
+// ja esta ligado. Sem uma chave propria, o simples deploy deste codigo faria o sistema comecar a
+// gravar opt-out a partir de respostas de WhatsApp, sem ninguem ter ligado nada. Um comportamento
+// novo que escreve na base nao pode chegar como efeito colateral de um deploy.
+//
+// Default FALSE, e a leitura acontece ANTES de qualquer classificacao ou gravacao: com a chave
+// desligada, uma mensagem recebida nao e nem olhada.
+const CHAVE_CAPTURA_ATIVA = 'wa_captura_saida_ativa';
+
 // Decisoes possiveis.
 const ACAO_OPTOUT = 'optout';
 const DESCARTE_TIPO = 'tipo_nao_notify';
@@ -155,6 +173,7 @@ function classificarUpsert(evento, { bootEm = null } = {}) {
 }
 
 module.exports = {
+  CHAVE_CAPTURA_ATIVA,
   classificarUpsert,
   classificarMensagem,
   textoDaMensagem,
