@@ -226,6 +226,103 @@ test('MOCK: marca como enviado sem tocar o socket', async () => {
   assert.deepEqual(porStatus(id), { enviado: 3 });
 });
 
+// ══════════════════ LOG DO CICLO DESATIVADO ══════════════════
+//
+// O tick e de 1 minuto: uma linha por passada seriam ~1.440 por dia de uma informacao que nao mudou,
+// afogando no stdout justamente a linha que importa num incidente.
+
+// Captura as linhas de console.log de um bloco.
+async function capturandoLog(fn) {
+  const linhas = [];
+  const { log, warn, error } = console;
+  console.log = (...a) => linhas.push(a.join(' '));
+  console.warn = (...a) => linhas.push(a.join(' '));
+  console.error = (...a) => linhas.push(a.join(' '));
+  try {
+    await fn();
+  } finally {
+    console.log = log;
+    console.warn = warn;
+    console.error = error;
+  }
+  return linhas;
+}
+
+const linhasDeDesativado = (linhas) => linhas.filter((l) => /\[massa-wa\] (desativado|segue desativado)/.test(l));
+
+test('desativado loga UMA vez, e nao a cada tick', async () => {
+  limpar();
+  db.definirConfigBool(worker.CHAVE_ATIVO, false);
+  const jobId = criarVaga();
+  const id = criarCampanha({ jobId });
+  materializar(id, 3, { jobId });
+
+  const deps = { db, agora: AGORA, mock: true, baileysLigado: true, socketConectado: true, aleatorio: () => 0, espacamentoGlobalMs: 0, dormir: async () => {} };
+  const linhas = await capturandoLog(async () => {
+    for (let k = 0; k < 10; k += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await worker.processarCicloMassaWa(deps);
+    }
+  });
+
+  assert.equal(linhasDeDesativado(linhas).length, 1, `logou ${linhasDeDesativado(linhas).length} vezes em 10 ticks`);
+  assert.match(linhasDeDesativado(linhas)[0], /ciclos serao pulados em silencio/);
+});
+
+test('mudanca de MOTIVO loga de novo (ligaram um switch e nao o outro)', async () => {
+  limpar();
+  db.definirConfigBool(worker.CHAVE_ATIVO, false);
+  const base = { db, agora: AGORA, mock: true, socketConectado: true, aleatorio: () => 0, espacamentoGlobalMs: 0, dormir: async () => {} };
+
+  const linhas = await capturandoLog(async () => {
+    // Motivo 1: os dois desligados.
+    await worker.processarCicloMassaWa({ ...base, baileysLigado: false });
+    await worker.processarCicloMassaWa({ ...base, baileysLigado: false });
+    // Motivo 2: o env ligou, a config nao.
+    await worker.processarCicloMassaWa({ ...base, baileysLigado: true });
+    await worker.processarCicloMassaWa({ ...base, baileysLigado: true });
+  });
+
+  assert.equal(linhasDeDesativado(linhas).length, 2, 'uma linha por motivo, nao por tick');
+});
+
+test('quando o ciclo VOLTA a rodar, o log diz que reativou', async () => {
+  limpar();
+  db.definirConfigBool(worker.CHAVE_ATIVO, false);
+  const jobId = criarVaga();
+  const id = criarCampanha({ jobId });
+  materializar(id, 2, { jobId });
+  const deps = { db, agora: AGORA, mock: true, baileysLigado: true, socketConectado: true, aleatorio: () => 0, espacamentoGlobalMs: 0, dormir: async () => {} };
+
+  const linhas = await capturandoLog(async () => {
+    await worker.processarCicloMassaWa(deps);
+    db.definirConfigBool(worker.CHAVE_ATIVO, true);
+    await worker.processarCicloMassaWa(deps);
+  });
+
+  assert.ok(linhas.some((l) => /reativado/.test(l)), 'a volta ao normal precisa aparecer no log');
+});
+
+test('socket caido tambem nao loga por tick, e nao alterna com "reativado"', async () => {
+  // Se o estado fosse limpo logo depois do kill-switch, um socket caido com o interruptor ligado
+  // alternaria "reativado" e "desativado" a cada minuto — o DOBRO do ruido que o ajuste remove.
+  limpar();
+  const jobId = criarVaga();
+  const id = criarCampanha({ jobId });
+  materializar(id, 2, { jobId });
+  const deps = { db, agora: AGORA, mock: false, baileysLigado: true, socketConectado: false, aleatorio: () => 0, espacamentoGlobalMs: 0, dormir: async () => {}, enviarTexto: async () => {} };
+
+  const linhas = await capturandoLog(async () => {
+    for (let k = 0; k < 5; k += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await worker.processarCicloMassaWa(deps);
+    }
+  });
+
+  assert.equal(linhasDeDesativado(linhas).length, 1);
+  assert.equal(linhas.filter((l) => /reativado/.test(l)).length, 0, 'nao pode alternar reativado/desativado');
+});
+
 // ══════════════════ CADENCIA ══════════════════
 
 test('envia o LOTE sorteado, e o resto continua pendente', async () => {

@@ -82,6 +82,45 @@ function modoMock() {
   return String(process.env.MASSA_WA_MOCK || 'true').toLowerCase() !== 'false';
 }
 
+// ── LOG DE "DESATIVADO": UMA LINHA POR MUDANCA DE ESTADO, NAO POR TICK ──
+//
+// O tick e de 1 minuto. Logar "desativado; ciclo pulado" em cada passada produz ~1.440 linhas por
+// dia de uma informacao que nao mudou — e o stdout do Railway e onde se investiga incidente. Ruido
+// nesse volume nao e inofensivo: ele afoga a linha que importa.
+//
+// A regra: loga na PRIMEIRA vez, sempre que o MOTIVO mudar (ligaram um switch e nao o outro), e a
+// cada TICKS_ENTRE_LEMBRETES passadas silenciosas — o lembrete existe para o estado nao virar
+// invisivel em quem olha o log de hoje sem ter visto o de ontem.
+const TICKS_ENTRE_LEMBRETES = 60; // ~1 h com tick de 1 min
+let ultimoMotivoDesativado = null;
+let ticksDesativado = 0;
+
+function logarDesativado(quais) {
+  ticksDesativado += 1;
+  const mudou = quais !== ultimoMotivoDesativado;
+  if (mudou) {
+    ultimoMotivoDesativado = quais;
+    ticksDesativado = 1;
+    console.log(`[massa-wa] desativado (${quais}); ciclos serao pulados em silencio.`);
+    return;
+  }
+  if (ticksDesativado % TICKS_ENTRE_LEMBRETES === 0) {
+    console.log(
+      `[massa-wa] segue desativado (${quais}) — ${ticksDesativado} ciclos pulados desde o aviso.`,
+    );
+  }
+}
+
+// Chamado quando o ciclo VOLTA a rodar: sem isto, religar e desligar de novo com o mesmo motivo
+// nao produziria log nenhum (o motivo nao teria "mudado").
+function limparEstadoDesativado() {
+  if (ultimoMotivoDesativado !== null) {
+    console.log(`[massa-wa] reativado (era: ${ultimoMotivoDesativado}); voltando a processar.`);
+  }
+  ultimoMotivoDesativado = null;
+  ticksDesativado = 0;
+}
+
 function dormirPadrao(ms) {
   if (!(ms > 0)) return Promise.resolve();
   return new Promise((r) => setTimeout(r, ms));
@@ -129,7 +168,7 @@ async function processarCicloMassaWa(deps = {}) {
     const quais = [!switchBanco ? CHAVE_ATIVO : null, !switchEnv ? 'WHATSAPP_BAILEYS_ATIVO' : null]
       .filter(Boolean)
       .join(' e ');
-    console.log(`[massa-wa] desativado (${quais}); ciclo pulado.`);
+    logarDesativado(quais);
     return { ...resumo, desativado: true };
   }
 
@@ -149,10 +188,18 @@ async function processarCicloMassaWa(deps = {}) {
       ? conexao.status().status === 'conectado'
       : deps.socketConectado;
     if (!conectado) {
-      console.warn('[massa-wa] socket do WhatsApp nao esta conectado; ciclo pulado.');
+      // Mesma regra do log acima: o socket pode ficar horas fora, e uma linha por minuto afogaria o
+      // log exatamente quando alguem esta investigando por que ele caiu.
+      logarDesativado('socket do WhatsApp desconectado');
       return { ...resumo, desativado: true, motivo: 'socket desconectado' };
     }
   }
+
+  // Passou por TODAS as portas: o ciclo vai rodar de verdade. So aqui o estado "desativado" e
+  // limpo — se fosse limpo logo depois do kill-switch, um socket caido com o interruptor ligado
+  // alternaria "reativado" e "desativado" a cada minuto, que e o dobro do ruido que este ajuste
+  // veio remover.
+  limparEstadoDesativado();
 
   let ativas = [];
   try {
@@ -499,6 +546,7 @@ async function varrerSeOcioso(deps = {}) {
 
 module.exports = {
   processarCicloMassaWa,
+  TICKS_ENTRE_LEMBRETES,
   processarCampanha,
   varrerSeOcioso,
   ativo,
