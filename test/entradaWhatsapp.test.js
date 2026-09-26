@@ -206,6 +206,17 @@ test('mensagem malformada no meio de um lote nao contamina as outras', () => {
 });
 
 // ══════════════════ O HANDLER DE connection.js ══════════════════
+//
+// ⚠️ A GRAVACAO E ASSINCRONA. O handler classifica e EMPILHA; quem grava e um dreno em
+// setImmediate, uma entrada por tick. Por isso todo teste que confere `registros` precisa drenar
+// antes — e e justamente essa espera que PROVA que nada foi gravado dentro do callback do socket.
+async function drenar() {
+  // Um tick por entrada da fila, com folga. O dreno se reagenda enquanto houver item.
+  for (let i = 0; i < 400 && conexao.tamanhoFilaSaida() > 0; i += 1) {
+    await new Promise((r) => setImmediate(r));
+  }
+  await new Promise((r) => setImmediate(r));
+}
 
 function comLogsSilenciados(fn) {
   const { log, warn, error } = console;
@@ -221,7 +232,7 @@ function comLogsSilenciados(fn) {
   }
 }
 
-test('o handler registra opt-out de ESCOPO CAMPANHA, nunca total', () => {
+test('o handler registra opt-out de ESCOPO CAMPANHA, nunca total', async () => {
   // Quem responde "SAIR" a uma divulgacao quer parar de receber ofertas — nao perder o resultado de
   // uma candidatura futura (WA1/WA2), que so `total` suprimiria.
   const registros = [];
@@ -233,7 +244,9 @@ test('o handler registra opt-out de ESCOPO CAMPANHA, nunca total', () => {
     }),
   );
 
-  assert.equal(r.optouts, 1);
+  assert.equal(r.enfileirados, 1);
+  assert.equal(registros.length, 0, 'nada gravado ainda: a gravacao sai do caminho do socket');
+  await drenar();
   assert.equal(registros.length, 1);
   assert.equal(registros[0].telefone, '5547999582500');
   assert.equal(registros[0].escopo, 'campanha');
@@ -242,7 +255,7 @@ test('o handler registra opt-out de ESCOPO CAMPANHA, nunca total', () => {
   assert.match(registros[0].motivo, /sair/);
 });
 
-test('o handler NAO registra nada para historico, grupo, @lid e fromMe', () => {
+test('o handler NAO registra nada para historico, grupo, @lid e fromMe', async () => {
   const registros = [];
   const r = comLogsSilenciados(() =>
     conexao.tratarMensagensRecebidas(
@@ -257,8 +270,9 @@ test('o handler NAO registra nada para historico, grupo, @lid e fromMe', () => {
     ),
   );
 
+  await drenar();
   assert.equal(registros.length, 0);
-  assert.equal(r.optouts, 0);
+  assert.equal(r.enfileirados, 0);
   assert.equal(r.descartadas, 5);
   assert.equal(r.porMotivo[entrada.DESCARTE_HISTORICO], 1);
   assert.equal(r.porMotivo[entrada.DESCARTE_GRUPO], 1);
@@ -266,7 +280,7 @@ test('o handler NAO registra nada para historico, grupo, @lid e fromMe', () => {
   assert.equal(r.porMotivo[entrada.DESCARTE_FROM_ME], 1);
 });
 
-test('falha ao gravar o opt-out NAO derruba o listener', () => {
+test('falha ao gravar o opt-out NAO derruba o listener', async () => {
   // Este codigo roda dentro de um listener do socket: uma excecao sobe pelo event emitter do
   // Baileys e pode derrubar a conexao — um texto inesperado de UMA pessoa tiraria o WhatsApp do ar.
   const r = comLogsSilenciados(() =>
@@ -276,7 +290,10 @@ test('falha ao gravar o opt-out NAO derruba o listener', () => {
       registrarOptout: () => { throw new Error('banco fora'); },
     }),
   );
-  assert.equal(r.optouts, 0, 'nenhum registro deu certo');
+  assert.equal(r.enfileirados, 2, 'os dois foram enfileirados');
+  // A excecao acontece no DRENO, fora do callback do socket. Drenar nao pode lancar.
+  await assert.doesNotReject(async () => { await drenar(); });
+  assert.equal(conexao.tamanhoFilaSaida(), 0, 'a fila drenou mesmo com as duas gravacoes falhando');
 });
 
 test('o handler nao lanca com evento invalido', () => {
@@ -303,12 +320,12 @@ test('DESLIGADO (o default): nao classifica e nao grava nada', () => {
   );
 
   assert.equal(r.desativado, true);
-  assert.equal(r.optouts, 0);
+  assert.equal(r.enfileirados, 0);
   assert.equal(r.descartadas, 0, 'nem chega a classificar');
   assert.equal(registros.length, 0);
 });
 
-test('o interruptor e LIDO DO BANCO quando nao e injetado, e o default e OFF', () => {
+test('o interruptor e LIDO DO BANCO quando nao e injetado, e o default e OFF', async () => {
   const registros = [];
   const deps = { bootEm: BOOT, registrarOptout: (args) => registros.push(args) };
 
@@ -324,7 +341,8 @@ test('o interruptor e LIDO DO BANCO quando nao e injetado, e o default e OFF', (
   db.definirConfigBool(entrada.CHAVE_CAPTURA_ATIVA, true);
   const r = comLogsSilenciados(() => conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' })]), deps));
   assert.equal(r.desativado, undefined);
-  assert.equal(r.optouts, 1);
+  assert.equal(r.enfileirados, 1);
+  await drenar();
 
   // Desligada de novo: para na hora.
   db.definirConfigBool(entrada.CHAVE_CAPTURA_ATIVA, false);
@@ -333,6 +351,91 @@ test('o interruptor e LIDO DO BANCO quando nao e injetado, e o default e OFF', (
     true,
   );
   assert.equal(registros.length, 1, 'so o envio da janela ligada foi gravado');
+});
+
+// ══════════════════ A FILA (a gravacao fora do caminho do socket) ══════════════════
+
+test('uma rajada de N "SAIR" NAO executa N escritas dentro do callback do socket', async () => {
+  // O teste que o ajuste existe para sustentar. A gravacao e SINCRONA (better-sqlite3): se ela
+  // acontecesse no handler, N pedidos legitimos viravam N fsyncs seguidos no event loop do socket.
+  const N = 50;
+  const registros = [];
+  const mensagens = Array.from({ length: N }, (_, i) =>
+    msg({ texto: 'sair', jid: `55479995${String(80000 + i).padStart(5, '0')}@s.whatsapp.net` }),
+  );
+
+  const r = comLogsSilenciados(() =>
+    conexao.tratarMensagensRecebidas(upsert(mensagens), {
+      bootEm: BOOT,
+      capturaAtiva: true,
+      registrarOptout: (args) => registros.push(args),
+    }),
+  );
+
+  assert.equal(r.enfileirados, N);
+  assert.equal(registros.length, 0, 'ZERO escritas dentro do callback');
+  assert.equal(conexao.tamanhoFilaSaida(), N);
+
+  // Uma por tick: depois de UM tick, no maximo uma escrita aconteceu.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(registros.length <= 1, `escreveu ${registros.length} num unico tick`);
+
+  await drenar();
+  assert.equal(registros.length, N, 'todas gravadas ao final');
+  assert.equal(conexao.tamanhoFilaSaida(), 0);
+});
+
+test('a fila tem TETO: o excedente e descartado, e a memoria nao cresce sem limite', async () => {
+  // Crescer sem limite transformaria um banco travado em OOM, matando o processo e levando a conexao
+  // do WhatsApp junto. Perder o registro de um pedido e ruim; perder a conexao para todos e pior.
+  const acima = conexao.TETO_FILA_SAIDA + 20;
+  const registros = [];
+  const mensagens = Array.from({ length: acima }, (_, i) =>
+    msg({ texto: 'sair', jid: `5547${String(900000000 + i)}@s.whatsapp.net` }),
+  );
+
+  const r = comLogsSilenciados(() =>
+    conexao.tratarMensagensRecebidas(upsert(mensagens), {
+      bootEm: BOOT,
+      capturaAtiva: true,
+      registrarOptout: (args) => registros.push(args),
+    }),
+  );
+
+  assert.equal(r.enfileirados, conexao.TETO_FILA_SAIDA);
+  assert.equal(r.descartadosFila, 20);
+  assert.ok(conexao.tamanhoFilaSaida() <= conexao.TETO_FILA_SAIDA);
+
+  await drenar();
+  assert.equal(registros.length, conexao.TETO_FILA_SAIDA);
+});
+
+test('o dreno sobrevive a uma gravacao que lanca e continua com as seguintes', async () => {
+  const registros = [];
+  let n = 0;
+  comLogsSilenciados(() =>
+    conexao.tratarMensagensRecebidas(
+      upsert([
+        msg({ texto: 'sair', jid: '5547999580001@s.whatsapp.net' }),
+        msg({ texto: 'parar', jid: '5547999580002@s.whatsapp.net' }),
+        msg({ texto: 'stop', jid: '5547999580003@s.whatsapp.net' }),
+      ]),
+      {
+        bootEm: BOOT,
+        capturaAtiva: true,
+        registrarOptout: (args) => {
+          n += 1;
+          if (n === 2) throw new Error('banco fora');
+          registros.push(args);
+        },
+      },
+    ),
+  );
+
+  await drenar();
+  assert.equal(n, 3, 'as tres tentativas aconteceram');
+  assert.equal(registros.length, 2, 'a do meio falhou, as outras duas passaram');
+  assert.equal(conexao.tamanhoFilaSaida(), 0);
 });
 
 test('BOOT_EM e fixado no carregamento do modulo (reconexao nao move o corte)', () => {

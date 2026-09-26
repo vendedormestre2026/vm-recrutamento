@@ -203,6 +203,88 @@ function tratarUpdate(update, deps = {}) {
   return { acao: 'reconectar', atraso };
 }
 
+// ══════════════════════════════════════════════════════════════
+// FILA DE OPT-OUT: A GRAVACAO SAI DO CAMINHO DO SOCKET
+// ══════════════════════════════════════════════════════════════
+//
+// ── O QUE ESTAVA ERRADO ──
+// A primeira versao chamava registrarOptout DENTRO do callback de messages.upsert, com um comentario
+// afirmando que "o `void` e a ausencia de await sao deliberados: o listener nao pode bloquear". Isso
+// era falso: registrarOptout -> db.registrarWhatsappOptout -> better-sqlite3 e ESCRITA SINCRONA.
+// Nao havia await a omitir; a escrita acontecia ali mesmo, no event loop do socket. Uma rajada de N
+// pedidos de saida legitimos virava N fsyncs seguidos dentro do callback.
+//
+// ── O MECANISMO REAL, AGORA ──
+// O callback so CLASSIFICA (puro, microssegundos) e EMPILHA. Um setImmediate drena a fila UMA
+// gravacao por vez, cada uma em seu proprio tick: entre duas escritas o event loop respira, e o
+// socket volta a processar seus proprios eventos. Nada de Promise nem de async aqui — o que tira a
+// escrita do caminho nao e `await`, e o agendamento em outro tick.
+//
+// ── TETO, E POR QUE DESCARTAR E O LADO CERTO ──
+// A fila tem tamanho maximo. Crescer sem limite transformaria um problema de banco (escrita travada)
+// em consumo de memoria ilimitado, com o processo morrendo por OOM e levando a conexao do WhatsApp
+// junto. Estourado o teto, o excedente e DESCARTADO com log: perder o registro de um pedido de saida
+// e ruim, e perder a conexao para todos e pior. O log e o que permite reprocessar a mao.
+const TETO_FILA_SAIDA = 200;
+
+const filaSaida = [];
+let drenando = false;
+let descartadosFila = 0;
+
+// Empilha um pedido. Devolve false quando a fila esta cheia.
+function enfileirarSaida(item) {
+  if (filaSaida.length >= TETO_FILA_SAIDA) {
+    descartadosFila += 1;
+    // Log so no primeiro descarte de cada enchimento: uma fila cheia produziria uma linha por
+    // mensagem, e o volume esconderia justamente o aviso.
+    if (descartadosFila === 1) {
+      console.error(
+        `[wa-entrada] fila de opt-out cheia (${TETO_FILA_SAIDA}); pedidos excedentes serao ` +
+          'DESCARTADOS. Verifique se o banco esta respondendo e registre os pedidos a mao em ' +
+          '/admin/optouts.',
+      );
+    }
+    return false;
+  }
+  filaSaida.push(item);
+  agendarDreno();
+  return true;
+}
+
+function agendarDreno() {
+  if (drenando) return;
+  drenando = true;
+  setImmediate(drenarFilaSaida);
+}
+
+// Drena UMA entrada e reagenda. Um item por tick de proposito: um laco que esvazia a fila inteira
+// dentro de um unico tick reintroduziria exatamente o bloqueio que esta fila existe para remover.
+function drenarFilaSaida() {
+  const item = filaSaida.shift();
+  if (!item) {
+    drenando = false;
+    if (descartadosFila) {
+      console.warn(`[wa-entrada] fila drenada; ${descartadosFila} pedido(s) foram descartados no caminho.`);
+      descartadosFila = 0;
+    }
+    return;
+  }
+
+  try {
+    item.gravar();
+  } catch (err) {
+    // Falha ao gravar NAO pode parar o dreno nem derrubar nada: o pedido se perde e o log e a pista.
+    console.error(`[wa-entrada] falha ao registrar opt-out (ignorado): ${err.message}`);
+  }
+
+  setImmediate(drenarFilaSaida);
+}
+
+// Quantos pedidos esperam gravacao. Exportado para teste e para diagnostico.
+function tamanhoFilaSaida() {
+  return filaSaida.length;
+}
+
 // ── MENSAGENS RECEBIDAS: registra opt-out de quem responde "SAIR" ──
 //
 // Extraido do listener para ser testavel sem socket, mesmo padrao de tratarUpdate. `deps` permite
@@ -217,7 +299,9 @@ function tratarMensagensRecebidas(evento, deps = {}) {
   const db = deps.db || dbPadrao;
   const bootEm = deps.bootEm === undefined ? BOOT_EM : deps.bootEm;
   const registrar = deps.registrarOptout || optout.registrarOptout;
-  const resumo = { optouts: 0, descartadas: 0, porMotivo: {} };
+  // `enfileirados` (e nao `optouts`): quando esta funcao retorna, NADA foi gravado ainda. Dizer
+  // "optouts: 1" seria afirmar um fato que ainda nao aconteceu.
+  const resumo = { enfileirados: 0, descartadosFila: 0, descartadas: 0, porMotivo: {} };
 
   // ── INTERRUPTOR DA CAPTURA, ANTES DE QUALQUER COISA ──
   // Default FALSE. Desligado, a mensagem recebida nao e classificada nem gravada — nada e olhado.
@@ -251,22 +335,24 @@ function tratarMensagensRecebidas(evento, deps = {}) {
       continue;
     }
 
-    try {
-      registrar({
-        telefone: d.telefone,
-        escopo: optout.ESCOPO_CAMPANHA,
-        origem: optout.ORIGEM_RESPOSTA,
-        motivo: `respondeu "${String(d.texto).slice(0, 60)}" no WhatsApp`,
-      });
-      resumo.optouts += 1;
-      console.log(
-        `[wa-entrada] opt-out de campanha registrado por resposta de ${mascararNumero(d.telefone)}.`,
-      );
-    } catch (err) {
-      // Falha ao gravar NAO pode derrubar o listener. O pedido se perde, e o log e a unica pista —
-      // mas a conexao continua de pe para todos os outros.
-      console.error(`[wa-entrada] falha ao registrar opt-out (ignorado): ${err.message}`);
-    }
+    // ENFILEIRA — nao grava aqui. Ver o bloco da fila acima: a gravacao e sincrona e sairia no
+    // event loop do socket.
+    const enfileirado = enfileirarSaida({
+      telefone: d.telefone,
+      gravar: () => {
+        registrar({
+          telefone: d.telefone,
+          escopo: optout.ESCOPO_CAMPANHA,
+          origem: optout.ORIGEM_RESPOSTA,
+          motivo: `respondeu "${String(d.texto).slice(0, 60)}" no WhatsApp`,
+        });
+        console.log(
+          `[wa-entrada] opt-out de campanha registrado por resposta de ${mascararNumero(d.telefone)}.`,
+        );
+      },
+    });
+    if (enfileirado) resumo.enfileirados += 1;
+    else resumo.descartadosFila += 1;
   }
 
   return resumo;
@@ -311,9 +397,11 @@ async function conectar(deps = {}) {
   estado.socket = socket;
 
   socket.ev.on('creds.update', saveCreds);
-  // Mensagens recebidas (Incremento B6 do disparo em massa). O `void` e a ausencia de await sao
-  // deliberados: o listener nao pode bloquear o event loop do socket, e tratarMensagensRecebidas
-  // nunca lanca.
+  // Mensagens recebidas (Incremento B6 do disparo em massa).
+  //
+  // tratarMensagensRecebidas nunca lanca e NAO grava nada: ela classifica (puro) e empilha. A
+  // gravacao sai em setImmediate, uma por tick — ver o bloco da fila acima. E isso que mantem o
+  // callback do socket curto; nao e a ausencia de `await` (a gravacao e sincrona, nao havia await).
   socket.ev.on('messages.upsert', (evento) => {
     tratarMensagensRecebidas(evento);
   });
@@ -442,6 +530,9 @@ module.exports = {
   limparQr,
   tratarUpdate,
   tratarMensagensRecebidas,
+  tamanhoFilaSaida,
+  drenarFilaSaida,
+  TETO_FILA_SAIDA,
   BOOT_EM,
   shouldReconnect,
   isRestartRequired,
