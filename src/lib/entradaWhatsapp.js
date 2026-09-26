@@ -64,6 +64,26 @@ const { normalizarTelefoneRecebido } = require('./whatsapp');
 // desligada, uma mensagem recebida nao e nem olhada.
 const CHAVE_CAPTURA_ATIVA = 'wa_captura_saida_ativa';
 
+// ══════════════════════════════════════════════════════════════
+// O "SAIR" SO VALE PARA QUEM RECEBEU DISPARO EM MASSA RECENTE
+// ══════════════════════════════════════════════════════════════
+//
+// O listener le TODA mensagem que chega ao numero — inclusive de quem esta apenas no fluxo
+// transacional (WA1/WA2) e nunca recebeu campanha. Um "sair" dessa pessoa quase sempre significa
+// "quero sair do processo seletivo", nao "parem de me oferecer vagas". Registrar opt-out de campanha
+// ali responde a pergunta errada: ela continua recebendo as mensagens do processo (que e o que a
+// incomodava) e perde as divulgacoes (que ela nem citou).
+//
+// Entao a captura so age quando existe, para aquele telefone canonico, um envio em massa NOSSO nos
+// ultimos JANELA_MASSA_DIAS dias — ou seja, quando ha uma mensagem a que o "sair" plausivelmente
+// responde. Quem nao tem: apenas um log mascarado, e o pedido segue como antes (alguem registra a
+// mao em /admin/optouts, que e o caminho que sempre existiu).
+//
+// 7 dias e uma constante de negocio, facil de ajustar: cobre com folga o intervalo entre receber a
+// mensagem e responder (a maioria responde em minutos ou horas), sem transformar um "sair" de
+// semanas depois — provavelmente sobre outra coisa — num opt-out.
+const JANELA_MASSA_DIAS = 7;
+
 // Decisoes possiveis.
 const ACAO_OPTOUT = 'optout';
 const DESCARTE_TIPO = 'tipo_nao_notify';
@@ -174,6 +194,7 @@ function classificarUpsert(evento, { bootEm = null } = {}) {
 
 module.exports = {
   CHAVE_CAPTURA_ATIVA,
+  JANELA_MASSA_DIAS,
   classificarUpsert,
   classificarMensagem,
   textoDaMensagem,

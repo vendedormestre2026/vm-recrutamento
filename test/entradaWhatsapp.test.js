@@ -240,6 +240,7 @@ test('o handler registra opt-out de ESCOPO CAMPANHA, nunca total', async () => {
     conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' })]), {
       bootEm: BOOT,
       capturaAtiva: true,
+      recebeuMassaRecente: () => true,
       registrarOptout: (args) => registros.push(args),
     }),
   );
@@ -266,7 +267,7 @@ test('o handler NAO registra nada para historico, grupo, @lid e fromMe', async (
         msg({ texto: 'sair', fromMe: true }),
         msg({ texto: 'obrigado' }),
       ]),
-      { bootEm: BOOT, capturaAtiva: true, registrarOptout: (args) => registros.push(args) },
+      { bootEm: BOOT, capturaAtiva: true, recebeuMassaRecente: () => true, registrarOptout: (args) => registros.push(args) },
     ),
   );
 
@@ -287,6 +288,7 @@ test('falha ao gravar o opt-out NAO derruba o listener', async () => {
     conexao.tratarMensagensRecebidas(upsert([msg({ texto: 'sair' }), msg({ texto: 'parar', jid: '5531996820290@s.whatsapp.net' })]), {
       bootEm: BOOT,
       capturaAtiva: true,
+      recebeuMassaRecente: () => true,
       registrarOptout: () => { throw new Error('banco fora'); },
     }),
   );
@@ -327,7 +329,7 @@ test('DESLIGADO (o default): nao classifica e nao grava nada', () => {
 
 test('o interruptor e LIDO DO BANCO quando nao e injetado, e o default e OFF', async () => {
   const registros = [];
-  const deps = { bootEm: BOOT, registrarOptout: (args) => registros.push(args) };
+  const deps = { bootEm: BOOT, recebeuMassaRecente: () => true, registrarOptout: (args) => registros.push(args) };
 
   // Sem a chave no banco: desligado.
   db.getDb().prepare('DELETE FROM configuracoes WHERE chave = ?').run(entrada.CHAVE_CAPTURA_ATIVA);
@@ -368,6 +370,7 @@ test('uma rajada de N "SAIR" NAO executa N escritas dentro do callback do socket
     conexao.tratarMensagensRecebidas(upsert(mensagens), {
       bootEm: BOOT,
       capturaAtiva: true,
+      recebeuMassaRecente: () => true,
       registrarOptout: (args) => registros.push(args),
     }),
   );
@@ -398,6 +401,7 @@ test('a fila tem TETO: o excedente e descartado, e a memoria nao cresce sem limi
     conexao.tratarMensagensRecebidas(upsert(mensagens), {
       bootEm: BOOT,
       capturaAtiva: true,
+      recebeuMassaRecente: () => true,
       registrarOptout: (args) => registros.push(args),
     }),
   );
@@ -423,6 +427,7 @@ test('o dreno sobrevive a uma gravacao que lanca e continua com as seguintes', a
       {
         bootEm: BOOT,
         capturaAtiva: true,
+        recebeuMassaRecente: () => true,
         registrarOptout: (args) => {
           n += 1;
           if (n === 2) throw new Error('banco fora');
@@ -436,6 +441,126 @@ test('o dreno sobrevive a uma gravacao que lanca e continua com as seguintes', a
   assert.equal(n, 3, 'as tres tentativas aconteceram');
   assert.equal(registros.length, 2, 'a do meio falhou, as outras duas passaram');
   assert.equal(conexao.tamanhoFilaSaida(), 0);
+});
+
+// ══════════════════ A TRAVA DE CONTEXTO: SO QUEM RECEBEU DISPARO EM MASSA RECENTE ══════════════════
+//
+// O listener le TODA mensagem que chega ao numero, inclusive de quem esta apenas no fluxo
+// transacional (WA1/WA2) e nunca recebeu campanha. Um "sair" dessa pessoa quase sempre significa
+// "quero sair do processo seletivo", nao "parem de me oferecer vagas" — e registrar opt-out de
+// campanha ali responde a pergunta errada: ela continua recebendo o que a incomodava e perde o que
+// nem citou.
+
+const { JANELA_MASSA_DIAS } = entrada;
+
+// Cria um envio em massa JA ENVIADO para um telefone canonico, com `enviado_em` controlado.
+function envioEmMassa(telefoneCanonico, diasAtras) {
+  const jobId = db.criarVaga({ slug: `v-trava-${Date.now()}-${Math.random().toString(16).slice(2)}`, titulo: 'Closer', perfil: 'CLOSER' });
+  const campanhaId = db.criarCampanhaMassaWa({ nome: 'Campanha trava' });
+  db.definirStatusCampanhaMassaWa(campanhaId, 'ativa');
+  db.materializarCampanhaMassaWa(campanhaId, [
+    { telefone: '5547999582500', telefoneCanonico, nome: 'Pessoa', jobId },
+  ]);
+  const envio = db.listarPendentesCampanhaMassaWa(campanhaId, { limite: 1 })[0];
+  const quando = new Date(Date.now() - diasAtras * 24 * 60 * 60 * 1000)
+    .toISOString().replace('T', ' ').slice(0, 19);
+  db.marcarEnvioMassaWaEnviado(envio.id, { variacaoIndice: 1, quando });
+  return campanhaId;
+}
+
+function limparMassa() {
+  const conn = db.getDb();
+  conn.exec('DELETE FROM campanhas_massa_wa_envios');
+  conn.exec('DELETE FROM campanhas_massa_wa_variacoes');
+  conn.exec('DELETE FROM campanhas_massa_wa');
+  conn.exec('DELETE FROM jobs');
+}
+
+// O handler com a trava REAL (sem injetar recebeuMassaRecente), lendo do banco.
+async function comTravaReal(texto, jid = '5547999582500@s.whatsapp.net') {
+  const registros = [];
+  comLogsSilenciados(() =>
+    conexao.tratarMensagensRecebidas(upsert([msg({ texto, jid })]), {
+      bootEm: BOOT,
+      capturaAtiva: true,
+      registrarOptout: (args) => registros.push(args),
+    }),
+  );
+  await drenar();
+  return registros;
+}
+
+test('COM disparo em massa recente: registra o opt-out', async () => {
+  limparMassa();
+  envioEmMassa('554799582500', 1); // ontem
+  const registros = await comTravaReal('sair');
+  assert.equal(registros.length, 1);
+  assert.equal(registros[0].escopo, 'campanha');
+});
+
+test('SEM disparo em massa nenhum: NAO registra, so loga', async () => {
+  // O caso de quem esta apenas no WA1/WA2. O "sair" dele nao vira opt-out de campanha.
+  limparMassa();
+  const registros = await comTravaReal('sair');
+  assert.equal(registros.length, 0);
+});
+
+test('disparo em massa com MAIS de 7 dias: NAO registra', async () => {
+  limparMassa();
+  envioEmMassa('554799582500', JANELA_MASSA_DIAS + 1);
+  const registros = await comTravaReal('sair');
+  assert.equal(registros.length, 0, 'um "sair" semanas depois provavelmente e sobre outra coisa');
+});
+
+test('na borda da janela (dentro de 7 dias) ainda registra', async () => {
+  limparMassa();
+  envioEmMassa('554799582500', JANELA_MASSA_DIAS - 1);
+  assert.equal((await comTravaReal('sair')).length, 1);
+});
+
+test('a trava usa a chave CANONICA: recebeu sem o 9, responde com o 9', async () => {
+  // A pessoa recebeu no numero sem o nono digito e responde pelo numero com o 9 (ou o contrario).
+  // Sem a chave canonica, a trava concluiria "essa pessoa nunca recebeu nada" e ignoraria o pedido.
+  limparMassa();
+  envioEmMassa('553196820290', 1);
+  const registros = await comTravaReal('sair', '5531996820290@s.whatsapp.net');
+  assert.equal(registros.length, 1);
+});
+
+test('envio em massa que NAO saiu (pendente/falha) nao habilita a captura', async () => {
+  // A trava pergunta "nos incomodamos esta pessoa?", e uma linha pendente nao incomodou ninguem.
+  limparMassa();
+  const jobId = db.criarVaga({ slug: `v-pend-${Date.now()}`, titulo: 'Closer', perfil: 'CLOSER' });
+  const campanhaId = db.criarCampanhaMassaWa({ nome: 'So pendente' });
+  db.definirStatusCampanhaMassaWa(campanhaId, 'ativa');
+  db.materializarCampanhaMassaWa(campanhaId, [
+    { telefone: '5547999582500', telefoneCanonico: '554799582500', nome: 'P', jobId },
+  ]);
+
+  assert.equal((await comTravaReal('sair')).length, 0);
+});
+
+test('"sair" com contexto de candidatura continua sendo ignorado pela heuristica, ANTES da trava', async () => {
+  // A regra 4 de pedeSaida (contexto alheio) derruba o pedido mesmo com disparo recente: quem
+  // escreve "cancelar minha candidatura" esta falando da candidatura, nao da divulgacao.
+  limparMassa();
+  envioEmMassa('554799582500', 1);
+  for (const texto of ['cancelar minha candidatura', 'quero sair da vaga', 'nao quero parar']) {
+    // eslint-disable-next-line no-await-in-loop
+    assert.equal((await comTravaReal(texto)).length, 0, texto);
+  }
+});
+
+test('recebeuMassaWaDesde: contrato da consulta', async () => {
+  limparMassa();
+  envioEmMassa('554799582500', 2);
+  const desde3dias = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+  const desde1dia = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+
+  assert.equal(db.recebeuMassaWaDesde('554799582500', desde3dias), true);
+  assert.equal(db.recebeuMassaWaDesde('554799582500', desde1dia), false, 'o envio e mais antigo que a janela');
+  assert.equal(db.recebeuMassaWaDesde('550000000000', desde3dias), false);
+  assert.equal(db.recebeuMassaWaDesde(null, desde3dias), false);
 });
 
 test('BOOT_EM e fixado no carregamento do modulo (reconexao nao move o corte)', () => {

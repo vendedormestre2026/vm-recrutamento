@@ -248,6 +248,7 @@ module.exports = {
   distribuicaoVariacoesMassaWa: driver.distribuicaoVariacoesMassaWa,
   existePendenciaSequenciaWhatsapp: driver.existePendenciaSequenciaWhatsapp,
   ultimoEnvioSequenciaWhatsapp: driver.ultimoEnvioSequenciaWhatsapp,
+  recebeuMassaWaDesde: driver.recebeuMassaWaDesde,
 
   registrarOptOutWhatsapp: driver.registrarOptOutWhatsapp,
   estaOptOutWhatsapp: driver.estaOptOutWhatsapp,

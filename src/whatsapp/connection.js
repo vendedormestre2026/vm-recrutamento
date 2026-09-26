@@ -38,6 +38,8 @@ const { resolverVersaoWa } = require('./waVersion');
 const entrada = require('../lib/entradaWhatsapp');
 const optout = require('../lib/optoutWhatsapp');
 const dbPadrao = require('../db');
+const { chaveCanonicaTelefone } = require('../lib/chaveTelefone');
+const { paraTextoSqlUtc } = require('../lib/fusoBrasilia');
 
 // ── INSTANTE DO BOOT: a trava contra o despejo de historico ──
 //
@@ -299,6 +301,7 @@ function tratarMensagensRecebidas(evento, deps = {}) {
   const db = deps.db || dbPadrao;
   const bootEm = deps.bootEm === undefined ? BOOT_EM : deps.bootEm;
   const registrar = deps.registrarOptout || optout.registrarOptout;
+  const recebeuMassaRecente = deps.recebeuMassaRecente || db.recebeuMassaWaDesde;
   // `enfileirados` (e nao `optouts`): quando esta funcao retorna, NADA foi gravado ainda. Dizer
   // "optouts: 1" seria afirmar um fato que ainda nao aconteceu.
   const resumo = { enfileirados: 0, descartadosFila: 0, descartadas: 0, porMotivo: {} };
@@ -337,9 +340,27 @@ function tratarMensagensRecebidas(evento, deps = {}) {
 
     // ENFILEIRA — nao grava aqui. Ver o bloco da fila acima: a gravacao e sincrona e sairia no
     // event loop do socket.
+    //
+    // A checagem de "recebeu disparo em massa recente" tambem vai para dentro do `gravar`, e nao
+    // para ca: ela e uma LEITURA de banco, e fazer leitura no callback do socket seria trocar um
+    // bloqueio por outro. Ver o cabecalho de lib/entradaWhatsapp para a regra.
     const enfileirado = enfileirarSaida({
       telefone: d.telefone,
       gravar: () => {
+        const canonico = chaveCanonicaTelefone(d.telefone);
+        const desde = paraTextoSqlUtc(
+          new Date(Date.now() - entrada.JANELA_MASSA_DIAS * 24 * 60 * 60 * 1000),
+        );
+        if (!recebeuMassaRecente(canonico, desde)) {
+          // NAO registra. Log mascarado para o pedido nao desaparecer: ele segue valendo como
+          // pedido, so nao como opt-out automatico de campanha.
+          console.log(
+            `[wa-entrada] ${mascararNumero(d.telefone)} respondeu pedindo saida, mas NAO recebeu ` +
+              `disparo em massa nos ultimos ${entrada.JANELA_MASSA_DIAS} dias; nada registrado. ` +
+              'Se for um pedido para sair do processo, trate a mao.',
+          );
+          return;
+        }
         registrar({
           telefone: d.telefone,
           escopo: optout.ESCOPO_CAMPANHA,
