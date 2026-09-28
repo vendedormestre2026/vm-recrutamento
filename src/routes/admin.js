@@ -1234,6 +1234,7 @@ router.get('/', (req, res) => {
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
         <a class="btn btn--ghost" href="/admin/dashboard">Funil de Conversão</a>
         <a class="btn btn--ghost" href="/admin/vagas">Vagas</a>
+        <a class="btn btn--ghost" href="/admin/convites-sem-data">Convites sem data</a>
         <a class="btn btn--ghost" href="/admin/talentos">Banco de talentos</a>
         <a class="btn btn--ghost" href="/admin/divulgacao-vagas">Divulgação de Vagas</a>
         <a class="btn btn--ghost" href="/admin/optouts">Opt-outs</a>
