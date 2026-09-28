@@ -5939,6 +5939,7 @@ function montarResumoDivulgacaoVagas({ formatarDataHora, fmtInt }) {
       <a class="btn btn--ghost" href="/admin">← Voltar ao painel</a>
       <a class="btn btn--ghost" href="/admin/promocao">Campanha por Email</a>
       <a class="btn btn--ghost" href="/admin/campanhas-whatsapp">Campanha por WhatsApp</a>
+      <a class="btn btn--ghost" href="/admin/massa-wa">Disparo em massa (Baileys)</a>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1.25rem;align-items:start;">
       ${coluna({

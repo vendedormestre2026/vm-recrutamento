@@ -136,6 +136,10 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
 
     const conteudo = `
     <h1>WhatsApp — pareamento</h1>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <a class="btn btn--ghost" href="/admin/config">← Configurações</a>
+      <a class="btn btn--ghost" href="/admin/massa-wa">Disparo em massa (Baileys)</a>
+    </div>
     <p class="admin-sub" style="margin-bottom:1.25rem">
       Instância <b>${escapeHtml(conexao.status().instancia)}</b>. Esta tela apenas exibe o
       estado e o QR — a conexão é aberta pela aplicação ao iniciar, e somente quando o

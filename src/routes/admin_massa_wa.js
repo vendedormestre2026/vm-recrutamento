@@ -266,7 +266,11 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       .join('');
 
     const conteudo = `
-      <p><a class="btn btn--ghost" href="/admin">← Voltar ao painel</a></p>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+        <a class="btn btn--ghost" href="/admin">← Voltar ao painel</a>
+        <a class="btn btn--ghost" href="/admin/divulgacao-vagas">Divulgação de Vagas</a>
+        <a class="btn btn--ghost" href="/admin/config">Configurações</a>
+      </div>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
         <h1 style="margin:0;">Disparo em massa (WhatsApp)</h1>
         <a class="btn" href="/admin/massa-wa/nova">+ Nova campanha</a>
