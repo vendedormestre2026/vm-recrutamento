@@ -306,6 +306,9 @@ test('a tela mostra a previa da mensagem com dados REAIS da vaga', async () => {
     assert.match(html, /Acme Ltda/);
     assert.match(html, /19:30/);
     assert.match(html, /Olá, Maria!/);
+    // O *negrito* do WhatsApp aparece como negrito na previa, e nao com asteriscos.
+    assert.match(html, /<b>Acme Ltda<\/b>/);
+    assert.match(html, /\/descadastro-whatsapp\//, 'a previa mostra onde vai o link de descadastro');
   });
 });
 

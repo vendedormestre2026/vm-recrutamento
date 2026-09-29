@@ -63,23 +63,20 @@ test('o seed tem exatamente 7 variacoes, todas distintas', () => {
   assert.equal(new Set(VARIACOES_SEED).size, TOTAL_VARIACOES);
 });
 
-test('os tres trechos corrigidos pelo Rafael estao exatos', () => {
-  // Chegaram truncados na primeira passagem e foram corrigidos pelo texto exato dele. Ficam
-  // TRAVADOS aqui porque sao os pontos que uma reescrita distraida reverteria sem ninguem notar.
-  // Os fechos de descadastro trocaram "SAIR" pelo {link_descadastro}, mantendo a formulacao
-  // propria de cada variacao.
-  assert.ok(
-    TEXTO_BASE_PADRAO.includes('Vamos fazer uma entrevista em grupo online:'),
-    'o texto base introduz as linhas de data/hora/link com dois-pontos',
-  );
-  assert.ok(
-    VARIACOES_SEED[1].endsWith('Para deixar de receber nossas mensagens: {link_descadastro}'),
-    'variacao 2 fecha com o link de descadastro',
-  );
-  assert.ok(
-    VARIACOES_SEED[4].endsWith('Para parar de receber nossas mensagens, acesse {link_descadastro}'),
-    'variacao 5 fecha com "Para parar de receber"',
-  );
+test('texto base: introduz as linhas de data/hora/link com dois-pontos', () => {
+  assert.ok(TEXTO_BASE_PADRAO.includes('Vamos fazer uma *entrevista em grupo online*:'));
+});
+
+test('formatacao das seeds: paragrafos, negrito na vaga/empresa, link FORA do negrito', () => {
+  // Pedido do Rafael: leitura fluida, com paragrafos e negrito no que importa. O link do Meet e o
+  // de descadastro nunca ficam entre asteriscos — asterisco colado na URL pode quebrar o link.
+  for (const [i, texto] of [TEXTO_BASE_PADRAO, ...VARIACOES_SEED].entries()) {
+    assert.ok(texto.includes('\n\n'), `texto ${i} sem paragrafos`);
+    assert.ok(texto.includes('*{vaga}*'), `texto ${i} sem a vaga em negrito`);
+    assert.ok(texto.includes('*{empresa}*'), `texto ${i} sem a empresa em negrito`);
+    assert.doesNotMatch(texto, /\*[^*\n]*\{link_(meet|descadastro)\}[^*\n]*\*/, `texto ${i} com link em negrito`);
+    assert.doesNotMatch(texto, /(^|\s)_\S/, `texto ${i} usa _italico_ (o token do link pode ter "_")`);
+  }
 });
 
 test('as 7 variacoes fecham o descadastro com formulacoes DIFERENTES', () => {

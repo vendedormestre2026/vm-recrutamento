@@ -83,65 +83,143 @@ const TOTAL_VARIACOES = 7;
 // Fornecidos pelo Rafael e usados como PONTO DE PARTIDA: ficam editaveis no admin, e o que vale
 // no envio e sempre o que esta gravado em campanhas_massa_wa_variacoes.
 //
-// Tres trechos chegaram truncados na primeira passagem (o fim da frase do texto base e o fecho das
-// variacoes 2 e 5) e foram CORRIGIDOS pelo texto exato que ele enviou depois — nao ha mais nada
-// inferido aqui. Cada variacao fecha com uma formulacao propria do descadastro, sempre com o
-// {link_descadastro}, e isso e de proposito: e o mesmo conteudo dito de sete formas, que e a razao
-// de existirem sete. (O fecho original era "responda SAIR"; trocado pelo link — ver
-// TOKENS_OBRIGATORIOS.)
+// ── FORMATACAO DO WHATSAPP ──
+// Paragrafos curtos (linha em branco entre eles) e *negrito* do WhatsApp no que o candidato
+// precisa achar de relance: vaga, empresa, data e horario. O link fica FORA do negrito — asterisco
+// colado numa URL pode quebrar a deteccao do link no aparelho. Sem _italico_: o token do link de
+// descadastro e base64url e pode conter "_".
+//
+// As sete mudam a ESTRUTURA, nao so as palavras (lista com emoji, rotulos "Quando/Onde", marcador,
+// frase corrida): sete textos com o mesmo esqueleto e so sinonimos trocados continuam parecendo o
+// mesmo texto. Cada uma fecha o descadastro com uma formulacao propria, sempre com o
+// {link_descadastro} (o fecho original era "responda SAIR" — ver TOKENS_OBRIGATORIOS).
 const TEXTO_BASE_PADRAO = [
-  '{saudacao} Você se candidatou à vaga de {vaga} na {empresa} e queremos te conhecer melhor.',
+  '{saudacao} Você se candidatou à vaga de *{vaga}* na *{empresa}* e queremos te conhecer melhor! 😊',
   '',
   // Dois-pontos: a frase INTRODUZ as tres linhas de dado logo abaixo.
-  'Vamos fazer uma entrevista em grupo online:',
+  'Vamos fazer uma *entrevista em grupo online*:',
   '',
-  '📅 {data}',
-  '⏰ {horario} (horário de Brasília)',
+  '📅 *{data}*',
+  '⏰ *{horario}* (horário de Brasília)',
   '🔗 {link_meet}',
   '',
-  'Entre alguns minutos antes, em um lugar tranquilo e com boa internet. Se tiver dúvida, é só responder aqui.',
+  'Entre alguns minutos antes, em um lugar tranquilo e com boa internet.',
+  '',
+  'Se tiver dúvida, é só responder aqui.',
   '',
   'Para não receber mais mensagens nossas, acesse: {link_descadastro}',
 ].join('\n');
 
 const VARIACOES_SEED = Object.freeze([
-  '{saudacao} Passando para te convidar: sua candidatura para {vaga} na {empresa} avançou e '
-    + 'queremos conversar com você em uma entrevista em grupo online. É em {data}, às {horario} '
-    + '(Brasília). Link da sala: {link_meet}. Entre uns minutos antes, de um lugar silencioso e '
-    + 'com internet estável. Qualquer dúvida, responda por aqui. Se preferir não receber mais '
-    + 'mensagens, acesse: {link_descadastro}',
+  [
+    '{saudacao} 👋',
+    '',
+    'Sua candidatura para *{vaga}* na *{empresa}* avançou, e queremos conversar com você! 🎉',
+    '',
+    'Te convidamos para uma *entrevista em grupo online*:',
+    '',
+    '📅 *{data}*',
+    '⏰ *{horario}* (horário de Brasília)',
+    '🔗 {link_meet}',
+    '',
+    'Entre uns minutos antes, de um lugar silencioso e com internet estável.',
+    '',
+    'Qualquer dúvida, responda por aqui.',
+    '',
+    'Se preferir não receber mais mensagens, acesse: {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Tudo bem? Sobre a sua candidatura à vaga de {vaga} na {empresa}: chegou a hora da '
-    + 'próxima etapa, uma entrevista em grupo pelo Google Meet. 📅 {data} ⏰ {horario} (horário de '
-    + 'Brasília) 🔗 {link_meet} Recomendo entrar um pouco antes e estar em um lugar tranquilo. '
-    + 'Dúvidas? É só responder. Para deixar de receber nossas mensagens: {link_descadastro}',
+  [
+    '{saudacao} Tudo bem?',
+    '',
+    'Sobre a sua candidatura à vaga de *{vaga}* na *{empresa}*: chegou a hora da próxima etapa! 🚀',
+    '',
+    'É uma *entrevista em grupo pelo Google Meet*:',
+    '🗓️ *{data}*',
+    '🕐 *{horario}* (horário de Brasília)',
+    '💻 {link_meet}',
+    '',
+    'Recomendo entrar um pouco antes e estar em um lugar tranquilo.',
+    '',
+    'Dúvidas? É só responder.',
+    '',
+    'Para deixar de receber nossas mensagens: {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Você se inscreveu para {vaga} na {empresa}, e o próximo passo é uma entrevista em '
-    + 'grupo online. Anote: {data}, {horario} (Brasília). A reunião acontece neste link: '
-    + '{link_meet}. Vale entrar alguns minutos antes, com boa conexão e sem barulho. Se tiver '
-    + 'qualquer pergunta, me chame aqui. Não quer mais receber mensagens? {link_descadastro}',
+  [
+    '{saudacao}',
+    '',
+    'Você se inscreveu para *{vaga}* na *{empresa}*, e o próximo passo é uma *entrevista em grupo online*. Anote aí:',
+    '',
+    '*Data:* {data}',
+    '*Horário:* {horario} (Brasília)',
+    '*Link da reunião:* {link_meet}',
+    '',
+    '💡 Vale entrar alguns minutos antes, com boa conexão e sem barulho.',
+    '',
+    'Se tiver qualquer pergunta, me chame aqui.',
+    '',
+    'Não quer mais receber mensagens? {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Temos novidade sobre a sua candidatura a {vaga} na {empresa}: queremos te ver na '
-    + 'entrevista em grupo. Será em {data} às {horario}, horário de Brasília, pelo Google Meet: '
-    + '{link_meet}. Procure um lugar calmo e uma internet estável, e entre um pouco antes do '
-    + 'horário. Ficou com dúvida? Responda esta mensagem. Se não quiser receber mais avisos, '
-    + 'clique aqui: {link_descadastro}',
+  [
+    '{saudacao} Temos novidade! ✨',
+    '',
+    'Queremos te ver na *entrevista em grupo* da vaga de *{vaga}* na *{empresa}*.',
+    '',
+    '📌 *{data}, às {horario}* (horário de Brasília)',
+    '📌 Pelo Google Meet: {link_meet}',
+    '',
+    'Procure um lugar calmo e uma internet estável, e entre um pouco antes do horário.',
+    '',
+    'Ficou com dúvida? Responda esta mensagem.',
+    '',
+    'Se não quiser receber mais avisos, clique aqui: {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Convite para a etapa seguinte do processo seletivo de {vaga} na {empresa}: '
-    + 'entrevista em grupo online. Quando: {data}, {horario} (Brasília). Onde: {link_meet}. '
-    + 'Sugestão: entre alguns minutos antes e escolha um ambiente silencioso. Se precisar tirar '
-    + 'alguma dúvida, responda por aqui. Para parar de receber nossas mensagens, acesse {link_descadastro}',
+  [
+    '{saudacao}',
+    '',
+    '*Convite:* etapa seguinte do processo seletivo de *{vaga}* na *{empresa}* — uma entrevista em grupo online.',
+    '',
+    '➡️ *Quando:* {data}, {horario} (Brasília)',
+    '➡️ *Onde:* {link_meet}',
+    '',
+    '*Sugestão:* entre alguns minutos antes e escolha um ambiente silencioso.',
+    '',
+    'Se precisar tirar alguma dúvida, responda por aqui.',
+    '',
+    'Para parar de receber nossas mensagens, acesse {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Estamos avançando com quem se candidatou à vaga de {vaga} na {empresa}, e você está '
-    + 'na lista para a entrevista em grupo. Data e hora: {data}, às {horario} (horário de '
-    + 'Brasília). Acesso pelo Google Meet: {link_meet}. Entre um pouco antes, com internet boa e '
-    + 'em um lugar sem ruído. Alguma dúvida? Pode responder aqui. Caso não queira mais receber '
-    + 'mensagens, é só tocar aqui: {link_descadastro}',
+  [
+    '{saudacao} Estamos avançando com quem se candidatou à vaga de *{vaga}* na *{empresa}*, e *você está na lista* para a entrevista em grupo! 🙌',
+    '',
+    '📅 *{data}*, às *{horario}* (horário de Brasília)',
+    '🔗 Acesso pelo Google Meet: {link_meet}',
+    '',
+    'Entre um pouco antes, com internet boa e em um lugar sem ruído.',
+    '',
+    'Alguma dúvida? Pode responder aqui.',
+    '',
+    'Caso não queira mais receber mensagens, é só tocar aqui: {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Sobre a vaga de {vaga} na {empresa}, para a qual você se candidatou: agora é a '
-    + 'entrevista em grupo, online. Fica assim: {data}, {horario} (Brasília), no link {link_meet}. '
-    + 'Chegue uns minutos antes e busque um lugar tranquilo com conexão estável. Se ficar com '
-    + 'alguma dúvida, me responda. Para sair da nossa lista de mensagens: {link_descadastro}',
+  [
+    '{saudacao}',
+    '',
+    'Sobre a vaga de *{vaga}* na *{empresa}*, para a qual você se candidatou: agora é a *entrevista em grupo, online*. Fica assim:',
+    '',
+    '• *{data}*',
+    '• *{horario}* (Brasília)',
+    '• {link_meet}',
+    '',
+    'Chegue uns minutos antes e busque um lugar tranquilo com conexão estável.',
+    '',
+    'Se ficar com alguma dúvida, me responda.',
+    '',
+    'Para sair da nossa lista de mensagens: {link_descadastro}',
+  ].join('\n'),
 ]);
 
 // ══════════════════════════════════════════════════════════════

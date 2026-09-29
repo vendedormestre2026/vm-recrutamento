@@ -90,6 +90,12 @@ function frasesDosProblemas(problemas, escapeHtml) {
   });
 }
 
+// *negrito* do WhatsApp como <b> na previa, para o operador ver a mensagem como ela chega. Recebe
+// texto JA escapado. So o negrito: e o unico marcador que as seeds usam (ver TEXTO_BASE_PADRAO).
+function negritoWhatsapp(html) {
+  return String(html).replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
+}
+
 function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }) {
   const router = express.Router();
 
@@ -427,7 +433,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       .map(
         (t, i) => `
         <label class="campo"><span>Variação ${i + 1}</span>
-          <textarea name="variacao_${i + 1}" rows="5">${escapeHtml(t)}</textarea></label>`,
+          <textarea name="variacao_${i + 1}" rows="14">${escapeHtml(t)}</textarea></label>`,
       )
       .join('');
 
@@ -451,7 +457,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
         linkDescadastro: `${config.baseUrl}/descadastro-whatsapp/(link-de-cada-destinatario)`,
       });
       const { texto } = variacoesLib.resolverTexto(textos[0] || '', ctx);
-      return `<pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${escapeHtml(texto)}</pre>`;
+      return `<pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(texto))}</pre>`;
     })();
 
     return `
@@ -790,4 +796,4 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
   return router;
 }
 
-module.exports = { criarRouterMassaWa, ROTULO_STATUS, ROTULO_ENVIO, frasesDosProblemas };
+module.exports = { criarRouterMassaWa, ROTULO_STATUS, ROTULO_ENVIO, frasesDosProblemas, negritoWhatsapp };
