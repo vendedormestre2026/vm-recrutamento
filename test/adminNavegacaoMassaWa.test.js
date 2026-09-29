@@ -112,7 +112,8 @@ test('/admin/config tem a caixa do disparo em massa, desligada por padrao e avis
   assert.equal(status, 200);
   assert.match(html, /name="massa_wa_ativa" value="1">/, 'a caixa existe e nasce desmarcada');
   assert.match(html, /Disparo em massa \(Baileys\)/);
-  assert.match(html, /Servidor em MOCK/);
+  assert.match(html, /Modo simulação:<\/b> nenhuma mensagem chega aos candidatos/);
+  assert.doesNotMatch(html, /Envio real:<\/b>/);
 });
 
 test('salvar Configuracoes liga e desliga massa_wa_ativa', async () => {

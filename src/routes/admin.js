@@ -5695,12 +5695,10 @@ router.get('/config', (req, res) => {
           <label class="campo-check">
             <input type="checkbox" form="form-notificacoes" name="massa_wa_ativa" value="1"${massaWaAtiva ? ' checked' : ''}>
             <span style="color:var(--preto);text-transform:none;">
-              <b style="text-transform:uppercase;letter-spacing:.03em;">Disparo em massa (Baileys)</b> —
-              enviar as campanhas de <a href="/admin/massa-wa">Disparo em massa</a> pelo WhatsApp
-              conectado. Desligado, nenhuma campanha envia, nem as ativas.
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Disparo em massa (Baileys)</b>.
               ${massaWaMock
-                ? '<br><b>Servidor em MOCK</b> (<code>MASSA_WA_MOCK</code>): mesmo ligado, nada sai de verdade — o texto vai para o log. Para envio real, defina <code>MASSA_WA_MOCK=false</code> no Railway.'
-                : '<br><b>Servidor em ENVIO REAL</b>: ligado, as mensagens saem de verdade.'}
+                ? '⚠️ <b>Modo simulação:</b> nenhuma mensagem chega aos candidatos, mesmo com esta caixa marcada.'
+                : '🔴 <b>Envio real:</b> marcado, as campanhas ativas enviam mensagens de verdade.'}
             </span>
           </label>
           <h3 style="margin:1.5rem 0 .5rem;">Opt-out (quem pediu para não receber)</h3>
