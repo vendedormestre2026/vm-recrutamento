@@ -22,6 +22,7 @@ process.env.DATABASE_PATH = path.join(
 );
 process.env.INTERVIEW_MOCK = 'true';
 process.env.SESSION_SECRET = 'segredo-de-teste';
+process.env.OPTOUT_TOKEN_SECRET = 'segredo-hmac-de-teste';
 process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
@@ -654,7 +655,7 @@ test('vaga sem EMPRESA: falha com o motivo escrito (token obrigatorio sem valor)
 
 // ══════════════════ O TEXTO QUE SAI ══════════════════
 
-test('o texto sai com a vaga, a empresa, a data, o horario, o link e o SAIR', async () => {
+test('o texto sai com a vaga, a empresa, a data, o horario, o link e o link de descadastro', async () => {
   limpar();
   const jobId = criarVaga();
   const id = criarCampanha({ jobId, lote: 1 });
@@ -669,7 +670,8 @@ test('o texto sai com a vaga, a empresa, a data, o horario, o link e o SAIR', as
   assert.match(texto, /01\/10\/2026/);
   assert.match(texto, /19:30/);
   assert.ok(texto.includes(LINK_MEET));
-  assert.match(texto, /\bSAIR\b/);
+  assert.match(texto, /\/descadastro-whatsapp\/[A-Za-z0-9_-]+\.[0-9a-f]{32}/);
+  assert.doesNotMatch(texto, /\bSAIR\b/);
   // Nenhum token sem resolver, e nenhum valor vazado.
   assert.doesNotMatch(texto, /[{}]/);
   assert.doesNotMatch(texto, /undefined|null|NaN/);

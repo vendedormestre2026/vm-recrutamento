@@ -32,7 +32,7 @@ const variacoesLib = require('../lib/variacoesMassaWa');
 const publico = require('../lib/publicoMassaWhatsapp');
 const { normalizarTelefoneWhatsapp } = require('../lib/whatsapp');
 const { proximaEntrevistaGrupo, temEntrevistaGrupoFutura } = require('../lib/entrevistaGrupo');
-const { CHAVE_CAPTURA_ATIVA } = require('../lib/entradaWhatsapp');
+const { config } = require('../config');
 
 // Rotulos dos status da campanha. Aqui (apresentacao), nao na lib.
 const ROTULO_STATUS = {
@@ -79,7 +79,7 @@ function frasesDosProblemas(problemas, escapeHtml) {
       case variacoesLib.PROBLEMA_CHAVE_DUPLA:
         return `${onde}usa {{chave dupla}}, que é a sintaxe dos templates da Meta — aqui é {chave simples}.`;
       case variacoesLib.PROBLEMA_SEM_DESCADASTRO:
-        return `${onde}falta a instrução de descadastro com a palavra SAIR em maiúscula.`;
+        return `${onde}falta o link de descadastro <code>{link_descadastro}</code>.`;
       case variacoesLib.PROBLEMA_LONGA:
         return `${onde}tem ${p.tamanho} caracteres (o teto é ${p.teto}).`;
       case variacoesLib.PROBLEMA_DUPLICADA:
@@ -88,6 +88,12 @@ function frasesDosProblemas(problemas, escapeHtml) {
         return `${onde}${escapeHtml(p.codigo)}`;
     }
   });
+}
+
+// *negrito* do WhatsApp como <b> na previa, para o operador ver a mensagem como ela chega. Recebe
+// texto JA escapado. So o negrito: e o unico marcador que as seeds usam (ver TEXTO_BASE_PADRAO).
+function negritoWhatsapp(html) {
+  return String(html).replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
 }
 
 function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }) {
@@ -135,9 +141,6 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
   function blocoEstado() {
     const ligado = worker.ativo({ db });
     const mock = worker.modoMock();
-    // A captura de "SAIR" tem interruptor PROPRIO (ver lib/entradaWhatsapp): o operador precisa ver
-    // os dois estados, porque a mensagem promete "responda SAIR" e quem cumpre a promessa e ela.
-    const capturaSaida = db.obterConfigBool(CHAVE_CAPTURA_ATIVA, false);
     const s = conexao.status();
     const selo = (ok, texto) =>
       `<span class="badge ${ok ? 'badge--ativa' : 'badge--encerrada'}">${escapeHtml(texto)}</span>`;
@@ -156,7 +159,6 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           ${selo(ligado, ligado ? 'Disparo em massa LIGADO' : 'Disparo em massa DESLIGADO')}
           ${selo(!mock, mock ? 'MOCK (não envia)' : 'Envio real')}
           ${selo(s.status === 'conectado', `WhatsApp: ${s.status}`)}
-          ${selo(capturaSaida, capturaSaida ? 'Lendo respostas “SAIR”' : 'NÃO lê respostas “SAIR”')}
         </div>
         <p style="color:var(--cinza);font-size:.82rem;margin:.6rem 0 0;">
           O interruptor (<code>${escapeHtml(worker.CHAVE_ATIVO)}</code>) fica em
@@ -164,11 +166,9 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           nem as que estão ativas. A sessão do WhatsApp é a mesma do WA1/WA2, em
           <a href="/admin/whatsapp">Conexão</a>.</p>
         <p style="color:var(--cinza);font-size:.82rem;margin:.4rem 0 0;">
-          A leitura das respostas “SAIR” tem interruptor <b>próprio</b>
-          (<code>${escapeHtml(CHAVE_CAPTURA_ATIVA)}</code>, também em Configurações) e nasce
-          desligada. Com ela desligada, a mensagem diz “responda SAIR” e <b>ninguém lê a
-          resposta</b> — o descadastro volta a depender de alguém registrar à mão em
-          <a href="/admin/optouts">Opt-outs</a>.</p>
+          Toda mensagem leva o <b>link de descadastro</b> do destinatário, o mesmo das campanhas
+          via API. Quem clica entra em <a href="/admin/optouts">Opt-outs</a> e sai das próximas
+          campanhas.</p>
         ${avisoMock}
       </section>`;
   }
@@ -433,7 +433,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       .map(
         (t, i) => `
         <label class="campo"><span>Variação ${i + 1}</span>
-          <textarea name="variacao_${i + 1}" rows="5">${escapeHtml(t)}</textarea></label>`,
+          <textarea name="variacao_${i + 1}" rows="14">${escapeHtml(t)}</textarea></label>`,
       )
       .join('');
 
@@ -449,9 +449,15 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           não tem entrevista em grupo futura com link. Cadastre o link do Meet e as datas na vaga —
           sem isso, <b>nenhum destinatário</b> recebe mensagem (cada item vira “Vaga sem data”).</p>`;
       }
-      const ctx = variacoesLib.montarContexto({ nome: 'Maria Souza', job: vaga, proxima });
+      // O link de descadastro e por destinatario; na previa vai um exemplo, nao um token valido.
+      const ctx = variacoesLib.montarContexto({
+        nome: 'Maria Souza',
+        job: vaga,
+        proxima,
+        linkDescadastro: `${config.baseUrl}/descadastro-whatsapp/(link-de-cada-destinatario)`,
+      });
       const { texto } = variacoesLib.resolverTexto(textos[0] || '', ctx);
-      return `<pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${escapeHtml(texto)}</pre>`;
+      return `<pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(texto))}</pre>`;
     })();
 
     return `
@@ -462,7 +468,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           : '<p class="aviso-ok">As 7 variações passam na validação.</p>'}
         <p style="color:var(--cinza);font-size:.85rem;">
           Toda variação precisa ter ${variacoesLib.TOKENS_OBRIGATORIOS.map((t) => `<code>{${t}}</code>`).join(' ')}
-          e a palavra <b>SAIR</b> em maiúscula. Tokens: ${variacoesLib.TOKENS.map((t) => `<code>{${t}}</code>`).join(' ')}.</p>
+          (o link de descadastro de cada destinatário). Tokens: ${variacoesLib.TOKENS.map((t) => `<code>{${t}}</code>`).join(' ')}.</p>
 
         <h3 style="font-size:.95rem;margin:1rem 0 .3rem;">Prévia da variação 1, com dados reais</h3>
         ${preview}
@@ -762,7 +768,13 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     if (!proxima) return res.redirect(`/admin/massa-wa/${id}?erro=sem_reuniao_teste`);
 
     const escolhida = variacoesLib.sortearVariacao(lista, campanha.ultima_variacao);
-    const ctx = variacoesLib.montarContexto({ nome: 'teste', job: vaga, proxima });
+    // Link REAL do telefone de teste: clicar nele registra o opt-out desse numero.
+    const ctx = variacoesLib.montarContexto({
+      nome: 'teste',
+      job: vaga,
+      proxima,
+      linkDescadastro: variacoesLib.linkDescadastroPara(telefone),
+    });
     const { texto, faltando } = variacoesLib.resolverTexto(escolhida.texto, ctx);
     if (faltando.length) return res.redirect(`/admin/massa-wa/${id}?erro=variacoes_invalidas`);
 
@@ -784,4 +796,4 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
   return router;
 }
 
-module.exports = { criarRouterMassaWa, ROTULO_STATUS, ROTULO_ENVIO, frasesDosProblemas };
+module.exports = { criarRouterMassaWa, ROTULO_STATUS, ROTULO_ENVIO, frasesDosProblemas, negritoWhatsapp };

@@ -22,6 +22,7 @@ process.env.DATABASE_PATH = path.join(
 );
 process.env.INTERVIEW_MOCK = 'true';
 process.env.SESSION_SECRET = 'segredo-de-teste';
+process.env.OPTOUT_TOKEN_SECRET = 'segredo-hmac-de-teste';
 process.env.ADMIN_USER = 'admin-teste';
 process.env.ADMIN_PASSWORD = 'senha-teste';
 process.env.NODE_ENV = 'test';
@@ -286,7 +287,7 @@ test('variacao invalida e SALVA, mas a tela lista o problema em portugues', asyn
     const html = await get(base, `/admin/massa-wa/${id}`);
     assert.match(html, /Pendências/);
     assert.match(html, /Variação 3: falta/);
-    assert.match(html, /instrução de descadastro/);
+    assert.match(html, /falta o link de descadastro/);
     // O texto ruim continua no campo, para o operador corrigir.
     assert.ok(html.includes('Oi {vaga}, sem mais nada.'));
   });
@@ -305,6 +306,9 @@ test('a tela mostra a previa da mensagem com dados REAIS da vaga', async () => {
     assert.match(html, /Acme Ltda/);
     assert.match(html, /19:30/);
     assert.match(html, /Olá, Maria!/);
+    // O *negrito* do WhatsApp aparece como negrito na previa, e nao com asteriscos.
+    assert.match(html, /<b>Acme Ltda<\/b>/);
+    assert.match(html, /\/descadastro-whatsapp\//, 'a previa mostra onde vai o link de descadastro');
   });
 });
 

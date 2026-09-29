@@ -12,7 +12,7 @@
 // Enviar a MESMA string para centenas de pessoas e um dos padroes que o WhatsApp usa para
 // identificar automacao. Sete redacoes diferentes, sorteadas por destinatario, quebram esse
 // padrao sem mudar o CONTEUDO: todas dizem a mesma coisa, com os mesmos dados (vaga, empresa,
-// data, horario, link) e a mesma instrucao de descadastro.
+// data, horario, link) e o mesmo link de descadastro.
 //
 // ⚠️ ISSO NAO E A PRINCIPAL PROTECAO ANTI-BLOQUEIO, e nao deve ser tratado como se fosse. O que
 // mais pesa e (1) o volume e a rampa, (2) mandar so para quem deu o numero esperando contato —
@@ -24,7 +24,7 @@
 // ══════════════════════════════════════════════════════════════
 //
 // Chave UNICA entre chaves simples: {saudacao}, {vaga}, {empresa}, {data}, {horario},
-// {link_meet}. NAO usamos {{duplo}} — o duplo e a convencao dos templates da Meta
+// {link_meet}, {link_descadastro}. NAO usamos {{duplo}} — o duplo e a convencao dos templates da Meta
 // (lib/templatesWhatsapp), e reaproveitar a mesma sintaxe em dois subsistemas que nao se falam
 // convidaria alguem a colar um texto de um no outro.
 //
@@ -37,6 +37,9 @@
 //   {data}        proximaEntrevistaGrupo(vaga, agora).dataTexto   ("quinta-feira, 01/10/2026")
 //   {horario}     proximaEntrevistaGrupo(vaga, agora).horaTexto   ("19:30")
 //   {link_meet}   proximaEntrevistaGrupo(vaga, agora).linkMeet
+//   {link_descadastro}  lib/descadastroWhatsapp.montarUrlDescadastroWhatsapp(telefone) — o MESMO
+//                 link /descadastro-whatsapp/<token> que vai no botao das campanhas via API. Um
+//                 por destinatario (o token e funcao do telefone), montado por quem envia.
 //
 // Os tres ultimos vem da MESMA chamada, no MOMENTO DO ENVIO: congelar data e link na
 // materializacao faria uma campanha de tres dias anunciar, no segundo dia, uma reuniao que
@@ -46,22 +49,24 @@ const { saudacao } = require('./whatsappSequencia');
 const { textoEmpresa } = require('./whatsapp');
 
 // Tokens reconhecidos. Ordem estavel (usada em mensagem de erro e na tela de ajuda).
-const TOKENS = Object.freeze(['saudacao', 'vaga', 'empresa', 'data', 'horario', 'link_meet']);
+const TOKENS = Object.freeze(['saudacao', 'vaga', 'empresa', 'data', 'horario', 'link_meet', 'link_descadastro']);
 
 // Tokens que TODA variacao precisa ter.
 //
 // {saudacao} fica de fora de proposito: uma variacao pode legitimamente comecar sem cumprimentar.
-// Os cinco abaixo, nao — sem eles a mensagem deixa de ser um convite (some a data, o horario ou a
-// sala) ou deixa de dizer do que se trata (some a vaga ou a empresa).
-const TOKENS_OBRIGATORIOS = Object.freeze(['vaga', 'empresa', 'data', 'horario', 'link_meet']);
-
-// A instrucao de descadastro. Reconhecida pela PALAVRA de comando, nao pela frase inteira: o
-// operador vai reescrever a frase em cada variacao ("responda SAIR", "é só responder SAIR"), e
-// exigir texto identico transformaria a validacao num decoreba.
+// Os cinco primeiros, nao — sem eles a mensagem deixa de ser um convite (some a data, o horario ou
+// a sala) ou deixa de dizer do que se trata (some a vaga ou a empresa).
 //
-// Maiuscula obrigatoria: e o que faz a palavra parecer um comando dentro da frase, e e o que a
-// captura do "SAIR" (lib/pedidoSaidaWhatsapp) reconhece de volta quando a pessoa responde.
-const RE_DESCADASTRO = /\bSAIR\b/;
+// {link_descadastro} tambem e obrigatorio, e por isso esta aqui: resolverTexto recusa (e o worker
+// NAO envia) quando o link nao pode ser montado. Mensagem de massa sem caminho de saida nao sai.
+// No validador ele ganha problema proprio (PROBLEMA_SEM_DESCADASTRO), para a tela dizer isso
+// com todas as letras em vez de listar mais um token.
+//
+// ── POR QUE LINK, E NAO "RESPONDA SAIR" ──
+// A primeira versao pedia a palavra SAIR na mensagem. Nao foi pedido automacao por palavra-chave:
+// o descadastro das campanhas e o link /descadastro-whatsapp, igual ao das campanhas via API.
+const TOKEN_DESCADASTRO = 'link_descadastro';
+const TOKENS_OBRIGATORIOS = Object.freeze(['vaga', 'empresa', 'data', 'horario', 'link_meet', TOKEN_DESCADASTRO]);
 
 // Teto de caracteres. O limite do WhatsApp e ~4096; 1200 e uma regra NOSSA, de negocio: uma
 // mensagem de divulgacao que passa disso vira parede de texto e nao e lida. As seeds abaixo tem
@@ -78,64 +83,143 @@ const TOTAL_VARIACOES = 7;
 // Fornecidos pelo Rafael e usados como PONTO DE PARTIDA: ficam editaveis no admin, e o que vale
 // no envio e sempre o que esta gravado em campanhas_massa_wa_variacoes.
 //
-// Tres trechos chegaram truncados na primeira passagem (o fim da frase do texto base e o fecho das
-// variacoes 2 e 5) e foram CORRIGIDOS pelo texto exato que ele enviou depois — nao ha mais nada
-// inferido aqui. Cada variacao fecha com uma formulacao propria do descadastro ("responda SAIR",
-// "envie SAIR", "Responda SAIR"), e isso e de proposito: e o mesmo conteudo dito de sete formas,
-// que e a razao de existirem sete.
+// ── FORMATACAO DO WHATSAPP ──
+// Paragrafos curtos (linha em branco entre eles) e *negrito* do WhatsApp no que o candidato
+// precisa achar de relance: vaga, empresa, data e horario. O link fica FORA do negrito — asterisco
+// colado numa URL pode quebrar a deteccao do link no aparelho. Sem _italico_: o token do link de
+// descadastro e base64url e pode conter "_".
+//
+// As sete mudam a ESTRUTURA, nao so as palavras (lista com emoji, rotulos "Quando/Onde", marcador,
+// frase corrida): sete textos com o mesmo esqueleto e so sinonimos trocados continuam parecendo o
+// mesmo texto. Cada uma fecha o descadastro com uma formulacao propria, sempre com o
+// {link_descadastro} (o fecho original era "responda SAIR" — ver TOKENS_OBRIGATORIOS).
 const TEXTO_BASE_PADRAO = [
-  '{saudacao} Você se candidatou à vaga de {vaga} na {empresa} e queremos te conhecer melhor.',
+  '{saudacao} Você se candidatou à vaga de *{vaga}* na *{empresa}* e queremos te conhecer melhor! 😊',
   '',
   // Dois-pontos: a frase INTRODUZ as tres linhas de dado logo abaixo.
-  'Vamos fazer uma entrevista em grupo online:',
+  'Vamos fazer uma *entrevista em grupo online*:',
   '',
-  '📅 {data}',
-  '⏰ {horario} (horário de Brasília)',
+  '📅 *{data}*',
+  '⏰ *{horario}* (horário de Brasília)',
   '🔗 {link_meet}',
   '',
-  'Entre alguns minutos antes, em um lugar tranquilo e com boa internet. Se tiver dúvida, é só responder aqui.',
+  'Entre alguns minutos antes, em um lugar tranquilo e com boa internet.',
   '',
-  'Para não receber mais mensagens nossas, responda SAIR.',
+  'Se tiver dúvida, é só responder aqui.',
+  '',
+  'Para não receber mais mensagens nossas, acesse: {link_descadastro}',
 ].join('\n');
 
 const VARIACOES_SEED = Object.freeze([
-  '{saudacao} Passando para te convidar: sua candidatura para {vaga} na {empresa} avançou e '
-    + 'queremos conversar com você em uma entrevista em grupo online. É em {data}, às {horario} '
-    + '(Brasília). Link da sala: {link_meet}. Entre uns minutos antes, de um lugar silencioso e '
-    + 'com internet estável. Qualquer dúvida, responda por aqui. Se preferir não receber mais '
-    + 'mensagens, responda SAIR.',
+  [
+    '{saudacao} 👋',
+    '',
+    'Sua candidatura para *{vaga}* na *{empresa}* avançou, e queremos conversar com você! 🎉',
+    '',
+    'Te convidamos para uma *entrevista em grupo online*:',
+    '',
+    '📅 *{data}*',
+    '⏰ *{horario}* (horário de Brasília)',
+    '🔗 {link_meet}',
+    '',
+    'Entre uns minutos antes, de um lugar silencioso e com internet estável.',
+    '',
+    'Qualquer dúvida, responda por aqui.',
+    '',
+    'Se preferir não receber mais mensagens, acesse: {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Tudo bem? Sobre a sua candidatura à vaga de {vaga} na {empresa}: chegou a hora da '
-    + 'próxima etapa, uma entrevista em grupo pelo Google Meet. 📅 {data} ⏰ {horario} (horário de '
-    + 'Brasília) 🔗 {link_meet} Recomendo entrar um pouco antes e estar em um lugar tranquilo. '
-    + 'Dúvidas? É só responder. Para deixar de receber nossas mensagens, envie SAIR.',
+  [
+    '{saudacao} Tudo bem?',
+    '',
+    'Sobre a sua candidatura à vaga de *{vaga}* na *{empresa}*: chegou a hora da próxima etapa! 🚀',
+    '',
+    'É uma *entrevista em grupo pelo Google Meet*:',
+    '🗓️ *{data}*',
+    '🕐 *{horario}* (horário de Brasília)',
+    '💻 {link_meet}',
+    '',
+    'Recomendo entrar um pouco antes e estar em um lugar tranquilo.',
+    '',
+    'Dúvidas? É só responder.',
+    '',
+    'Para deixar de receber nossas mensagens: {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Você se inscreveu para {vaga} na {empresa}, e o próximo passo é uma entrevista em '
-    + 'grupo online. Anote: {data}, {horario} (Brasília). A reunião acontece neste link: '
-    + '{link_meet}. Vale entrar alguns minutos antes, com boa conexão e sem barulho. Se tiver '
-    + 'qualquer pergunta, me chame aqui. Não quer mais receber mensagens? Responda SAIR.',
+  [
+    '{saudacao}',
+    '',
+    'Você se inscreveu para *{vaga}* na *{empresa}*, e o próximo passo é uma *entrevista em grupo online*. Anote aí:',
+    '',
+    '*Data:* {data}',
+    '*Horário:* {horario} (Brasília)',
+    '*Link da reunião:* {link_meet}',
+    '',
+    '💡 Vale entrar alguns minutos antes, com boa conexão e sem barulho.',
+    '',
+    'Se tiver qualquer pergunta, me chame aqui.',
+    '',
+    'Não quer mais receber mensagens? {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Temos novidade sobre a sua candidatura a {vaga} na {empresa}: queremos te ver na '
-    + 'entrevista em grupo. Será em {data} às {horario}, horário de Brasília, pelo Google Meet: '
-    + '{link_meet}. Procure um lugar calmo e uma internet estável, e entre um pouco antes do '
-    + 'horário. Ficou com dúvida? Responda esta mensagem. Se não quiser receber mais avisos, '
-    + 'responda SAIR.',
+  [
+    '{saudacao} Temos novidade! ✨',
+    '',
+    'Queremos te ver na *entrevista em grupo* da vaga de *{vaga}* na *{empresa}*.',
+    '',
+    '📌 *{data}, às {horario}* (horário de Brasília)',
+    '📌 Pelo Google Meet: {link_meet}',
+    '',
+    'Procure um lugar calmo e uma internet estável, e entre um pouco antes do horário.',
+    '',
+    'Ficou com dúvida? Responda esta mensagem.',
+    '',
+    'Se não quiser receber mais avisos, clique aqui: {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Convite para a etapa seguinte do processo seletivo de {vaga} na {empresa}: '
-    + 'entrevista em grupo online. Quando: {data}, {horario} (Brasília). Onde: {link_meet}. '
-    + 'Sugestão: entre alguns minutos antes e escolha um ambiente silencioso. Se precisar tirar '
-    + 'alguma dúvida, responda por aqui. Para parar de receber nossas mensagens, responda SAIR.',
+  [
+    '{saudacao}',
+    '',
+    '*Convite:* etapa seguinte do processo seletivo de *{vaga}* na *{empresa}* — uma entrevista em grupo online.',
+    '',
+    '➡️ *Quando:* {data}, {horario} (Brasília)',
+    '➡️ *Onde:* {link_meet}',
+    '',
+    '*Sugestão:* entre alguns minutos antes e escolha um ambiente silencioso.',
+    '',
+    'Se precisar tirar alguma dúvida, responda por aqui.',
+    '',
+    'Para parar de receber nossas mensagens, acesse {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Estamos avançando com quem se candidatou à vaga de {vaga} na {empresa}, e você está '
-    + 'na lista para a entrevista em grupo. Data e hora: {data}, às {horario} (horário de '
-    + 'Brasília). Acesso pelo Google Meet: {link_meet}. Entre um pouco antes, com internet boa e '
-    + 'em um lugar sem ruído. Alguma dúvida? Pode responder aqui. Caso não queira mais receber '
-    + 'mensagens, responda SAIR.',
+  [
+    '{saudacao} Estamos avançando com quem se candidatou à vaga de *{vaga}* na *{empresa}*, e *você está na lista* para a entrevista em grupo! 🙌',
+    '',
+    '📅 *{data}*, às *{horario}* (horário de Brasília)',
+    '🔗 Acesso pelo Google Meet: {link_meet}',
+    '',
+    'Entre um pouco antes, com internet boa e em um lugar sem ruído.',
+    '',
+    'Alguma dúvida? Pode responder aqui.',
+    '',
+    'Caso não queira mais receber mensagens, é só tocar aqui: {link_descadastro}',
+  ].join('\n'),
 
-  '{saudacao} Sobre a vaga de {vaga} na {empresa}, para a qual você se candidatou: agora é a '
-    + 'entrevista em grupo, online. Fica assim: {data}, {horario} (Brasília), no link {link_meet}. '
-    + 'Chegue uns minutos antes e busque um lugar tranquilo com conexão estável. Se ficar com '
-    + 'alguma dúvida, me responda. Se preferir não receber mais mensagens, é só responder SAIR.',
+  [
+    '{saudacao}',
+    '',
+    'Sobre a vaga de *{vaga}* na *{empresa}*, para a qual você se candidatou: agora é a *entrevista em grupo, online*. Fica assim:',
+    '',
+    '• *{data}*',
+    '• *{horario}* (Brasília)',
+    '• {link_meet}',
+    '',
+    'Chegue uns minutos antes e busque um lugar tranquilo com conexão estável.',
+    '',
+    'Se ficar com alguma dúvida, me responda.',
+    '',
+    'Para sair da nossa lista de mensagens: {link_descadastro}',
+  ].join('\n'),
 ]);
 
 // ══════════════════════════════════════════════════════════════
@@ -206,7 +290,7 @@ function validarVariacao(texto, indice) {
   if (/\{\{|\}\}/.test(t)) problemas.push({ indice, codigo: PROBLEMA_CHAVE_DUPLA });
 
   const presentes = new Set(tokensDe(t));
-  const faltando = TOKENS_OBRIGATORIOS.filter((tok) => !presentes.has(tok));
+  const faltando = TOKENS_OBRIGATORIOS.filter((tok) => tok !== TOKEN_DESCADASTRO && !presentes.has(tok));
   if (faltando.length) problemas.push({ indice, codigo: PROBLEMA_TOKEN_FALTANDO, tokens: faltando });
 
   // Token escrito errado ({horário}, {linkmeet}) nao resolve e sai literal na mensagem.
@@ -215,7 +299,7 @@ function validarVariacao(texto, indice) {
     problemas.push({ indice, codigo: PROBLEMA_TOKEN_DESCONHECIDO, tokens: desconhecidos });
   }
 
-  if (!RE_DESCADASTRO.test(t)) problemas.push({ indice, codigo: PROBLEMA_SEM_DESCADASTRO });
+  if (!presentes.has(TOKEN_DESCADASTRO)) problemas.push({ indice, codigo: PROBLEMA_SEM_DESCADASTRO });
 
   return problemas;
 }
@@ -290,7 +374,10 @@ function sortearVariacao(variacoes, ultimaIndice = null, aleatorio = Math.random
 // `proxima` e o retorno de proximaEntrevistaGrupo (ou null). Quando e null, os tres tokens da
 // reuniao ficam vazios — e resolverTexto devolve `faltando`, o que faz o worker NAO enviar. E o
 // mesmo criterio do convite do WA2: nunca sai mensagem com data/link em branco.
-function montarContexto({ nome, job, proxima } = {}) {
+//
+// `linkDescadastro` vem pronto de quem chama (ver linkDescadastroPara): esta funcao continua pura.
+// Ausente, o token fica vazio e o envio e recusado pelo mesmo `faltando`.
+function montarContexto({ nome, job, proxima, linkDescadastro } = {}) {
   return {
     saudacao: saudacao(nome),
     vaga: String((job && job.titulo) || '').trim(),
@@ -298,7 +385,24 @@ function montarContexto({ nome, job, proxima } = {}) {
     data: (proxima && proxima.dataTexto) || '',
     horario: (proxima && proxima.horaTexto) || '',
     link_meet: (proxima && proxima.linkMeet) || '',
+    link_descadastro: String(linkDescadastro || '').trim(),
   };
+}
+
+// Link de descadastro de UM telefone, ou '' se nao der para montar (OPTOUT_TOKEN_SECRET ausente,
+// telefone sem chave canonica). NUNCA lanca: o chamador e o laco de envio, e o '' vira `faltando`
+// em resolverTexto — o destinatario nao recebe, o ciclo segue. Diferente das campanhas via API,
+// aqui NAO ha fallback textual: o link e o unico caminho de saida da mensagem.
+//
+// `montarUrl` e injetavel so para teste.
+function linkDescadastroPara(telefone, montarUrl) {
+  try {
+    const fn = montarUrl || require('./descadastroWhatsapp').montarUrlDescadastroWhatsapp;
+    return String(fn(telefone) || '');
+  } catch (err) {
+    console.warn(`[massa-wa] falha ao montar o link de descadastro (${err.message}); destinatario pulado.`);
+    return '';
+  }
 }
 
 // Substitui os tokens. Devolve { texto, faltando } — `faltando` sao os tokens OBRIGATORIOS que o
@@ -335,7 +439,7 @@ module.exports = {
   TOKENS_OBRIGATORIOS,
   TOTAL_VARIACOES,
   MAX_CARACTERES,
-  RE_DESCADASTRO,
+  TOKEN_DESCADASTRO,
   TEXTO_BASE_PADRAO,
   VARIACOES_SEED,
   tokensDe,
@@ -344,6 +448,7 @@ module.exports = {
   validarVariacoes,
   sortearVariacao,
   montarContexto,
+  linkDescadastroPara,
   resolverTexto,
   PROBLEMA_VAZIA,
   PROBLEMA_TOKEN_FALTANDO,
