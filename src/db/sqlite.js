@@ -4906,6 +4906,57 @@ function distribuicaoVariacoesMassaWa(campanhaId) {
 // tem SQL fora de src/db. `datetime('now')` (e nao um instante do chamador) porque a coluna
 // agendado_para e gravada com o mesmo relogio do SQLite — comparar as duas com o mesmo relogio
 // e o que mantem a comparacao entre iguais (ver a nota de iso() em sequenciaOutbox.js).
+// Esta pessoa recebeu um disparo em massa DESTA funcionalidade desde `desdeUtc`?
+//
+// ── PARA QUE SERVE: O "SAIR" SO VALE PARA QUEM FOI INCOMODADO POR NOS ──
+// A captura de opt-out le TODA mensagem recebida pelo numero — inclusive de quem esta apenas no
+// fluxo transacional (WA1/WA2) e nunca recebeu campanha. Um "sair" dessa pessoa quase sempre
+// significa "quero sair do processo seletivo", e nao "parem de me oferecer vagas": registrar
+// opt-out de campanha ali responde a pergunta errada e sequestra a intencao dela.
+//
+// Com esta checagem, a captura so age quando ha um disparo em massa RECENTE para aquele numero —
+// ou seja, quando ha uma mensagem NOSSA, daquele tipo, a que o "sair" plausivelmente responde.
+//
+// A chave e o telefone CANONICO (DDI + DDD + ultimos 8), a mesma identidade do opt-out: a pessoa
+// pode responder pelo numero com o 9 e ter recebido no numero sem o 9.
+//
+// `desdeUtc` vem do chamador (lib/entradaWhatsapp calcula a janela), pelo mesmo motivo de
+// contarEnviosMassaWaDesde: a aritmetica de data mora no app, nao no SQL.
+function recebeuMassaWaDesde(telefoneCanonico, desdeUtc) {
+  if (!telefoneCanonico) return false;
+  return Boolean(
+    getDb()
+      .prepare(
+        `SELECT 1 FROM campanhas_massa_wa_envios
+          WHERE telefone_canonico = ?
+            AND status = 'enviado'
+            AND enviado_em >= ?
+          LIMIT 1`,
+      )
+      .get(telefoneCanonico, desdeUtc),
+  );
+}
+
+// Momento do ULTIMO envio da sequencia transacional (WA1/WA2/reprovacao), ou null.
+//
+// ── PARA QUE SERVE: O ESPACAMENTO MINIMO GLOBAL ──
+// O disparo em massa e a sequencia dividem UM socket. Alem de ceder a vez quando ha pendencia
+// (existePendenciaSequenciaWhatsapp, abaixo), a massa respeita um intervalo minimo desde QUALQUER
+// envio — inclusive os que o outro motor acabou de fazer. Sem isso, os dois motores poderiam
+// disparar no mesmo segundo, produzindo exatamente a rajada que a cadencia existe para evitar.
+//
+// ── POR QUE LER DO BANCO EM VEZ DE O OUTRO MOTOR AVISAR ──
+// A alternativa seria um registrador em memoria que whatsapp/sequenciaOutbox alimentasse. Isso
+// exigiria mexer no motor TRANSACIONAL — o caminho mais critico do sistema — para servir a uma
+// feature de campanha. Ler `MAX(enviado_em)` da tabela dele custa uma consulta por ciclo, nao toca
+// em nada que ja funciona, e tem a precisao de segundo que a regra (15 s) pede.
+function ultimoEnvioSequenciaWhatsapp() {
+  const linha = getDb()
+    .prepare("SELECT MAX(enviado_em) AS ultimo FROM whatsapp_sequencia_envios WHERE status = 'enviado'")
+    .get();
+  return (linha && linha.ultimo) || null;
+}
+
 function existePendenciaSequenciaWhatsapp(agora = null) {
   return Boolean(
     getDb()
@@ -4999,6 +5050,8 @@ module.exports = {
   distribuicaoVariacoesMassaWa,
   // Prioridade do transacional sobre a fila de massa: as duas dividem UM socket Baileys.
   existePendenciaSequenciaWhatsapp,
+  ultimoEnvioSequenciaWhatsapp,
+  recebeuMassaWaDesde,
 
   registrarOptOutWhatsapp,
   estaOptOutWhatsapp,

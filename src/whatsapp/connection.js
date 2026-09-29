@@ -33,6 +33,21 @@ const { DisconnectReason } = require('@whiskeysockets/baileys');
 
 const { criarAuthState, limparAuthState, INSTANCIA_PADRAO } = require('./authState');
 const { resolverVersaoWa } = require('./waVersion');
+// Entrada de mensagens: a classificacao (o que fazer com cada mensagem recebida) e PURA e mora em
+// lib/entradaWhatsapp; aqui so ligamos o listener e agimos sobre a decisao.
+const entrada = require('../lib/entradaWhatsapp');
+const optout = require('../lib/optoutWhatsapp');
+const dbPadrao = require('../db');
+const { chaveCanonicaTelefone } = require('../lib/chaveTelefone');
+const { paraTextoSqlUtc } = require('../lib/fusoBrasilia');
+
+// ── INSTANTE DO BOOT: a trava contra o despejo de historico ──
+//
+// Fixado no CARREGAMENTO DO MODULO, e nao na abertura do socket. A diferenca importa: se fosse na
+// abertura, cada reconexao moveria o corte para frente e descartaria as mensagens que chegaram
+// durante a queda — perdendo pedidos de saida legitimos. Com o boot do processo, uma reconexao nao
+// mexe no corte, e o historico antigo (que e o risco de verdade) continua barrado pelo timestamp.
+const BOOT_EM = Date.now();
 
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_TETO_MS = 60000;
@@ -190,6 +205,188 @@ function tratarUpdate(update, deps = {}) {
   return { acao: 'reconectar', atraso };
 }
 
+// ══════════════════════════════════════════════════════════════
+// FILA DE OPT-OUT: A GRAVACAO SAI DO CAMINHO DO SOCKET
+// ══════════════════════════════════════════════════════════════
+//
+// ── O QUE ESTAVA ERRADO ──
+// A primeira versao chamava registrarOptout DENTRO do callback de messages.upsert, com um comentario
+// afirmando que "o `void` e a ausencia de await sao deliberados: o listener nao pode bloquear". Isso
+// era falso: registrarOptout -> db.registrarWhatsappOptout -> better-sqlite3 e ESCRITA SINCRONA.
+// Nao havia await a omitir; a escrita acontecia ali mesmo, no event loop do socket. Uma rajada de N
+// pedidos de saida legitimos virava N fsyncs seguidos dentro do callback.
+//
+// ── O MECANISMO REAL, AGORA ──
+// O callback so CLASSIFICA (puro, microssegundos) e EMPILHA. Um setImmediate drena a fila UMA
+// gravacao por vez, cada uma em seu proprio tick: entre duas escritas o event loop respira, e o
+// socket volta a processar seus proprios eventos. Nada de Promise nem de async aqui — o que tira a
+// escrita do caminho nao e `await`, e o agendamento em outro tick.
+//
+// ── TETO, E POR QUE DESCARTAR E O LADO CERTO ──
+// A fila tem tamanho maximo. Crescer sem limite transformaria um problema de banco (escrita travada)
+// em consumo de memoria ilimitado, com o processo morrendo por OOM e levando a conexao do WhatsApp
+// junto. Estourado o teto, o excedente e DESCARTADO com log: perder o registro de um pedido de saida
+// e ruim, e perder a conexao para todos e pior. O log e o que permite reprocessar a mao.
+const TETO_FILA_SAIDA = 200;
+
+const filaSaida = [];
+let drenando = false;
+let descartadosFila = 0;
+
+// Empilha um pedido. Devolve false quando a fila esta cheia.
+function enfileirarSaida(item) {
+  if (filaSaida.length >= TETO_FILA_SAIDA) {
+    descartadosFila += 1;
+    // Log so no primeiro descarte de cada enchimento: uma fila cheia produziria uma linha por
+    // mensagem, e o volume esconderia justamente o aviso.
+    if (descartadosFila === 1) {
+      console.error(
+        `[wa-entrada] fila de opt-out cheia (${TETO_FILA_SAIDA}); pedidos excedentes serao ` +
+          'DESCARTADOS. Verifique se o banco esta respondendo e registre os pedidos a mao em ' +
+          '/admin/optouts.',
+      );
+    }
+    return false;
+  }
+  filaSaida.push(item);
+  agendarDreno();
+  return true;
+}
+
+function agendarDreno() {
+  if (drenando) return;
+  drenando = true;
+  setImmediate(drenarFilaSaida);
+}
+
+// Drena UMA entrada e reagenda. Um item por tick de proposito: um laco que esvazia a fila inteira
+// dentro de um unico tick reintroduziria exatamente o bloqueio que esta fila existe para remover.
+function drenarFilaSaida() {
+  const item = filaSaida.shift();
+  if (!item) {
+    drenando = false;
+    if (descartadosFila) {
+      console.warn(`[wa-entrada] fila drenada; ${descartadosFila} pedido(s) foram descartados no caminho.`);
+      descartadosFila = 0;
+    }
+    return;
+  }
+
+  try {
+    item.gravar();
+  } catch (err) {
+    // Falha ao gravar NAO pode parar o dreno nem derrubar nada: o pedido se perde e o log e a pista.
+    console.error(`[wa-entrada] falha ao registrar opt-out (ignorado): ${err.message}`);
+  }
+
+  setImmediate(drenarFilaSaida);
+}
+
+// Quantos pedidos esperam gravacao. Exportado para teste e para diagnostico.
+function tamanhoFilaSaida() {
+  return filaSaida.length;
+}
+
+// ── MENSAGENS RECEBIDAS: registra opt-out de quem responde "SAIR" ──
+//
+// Extraido do listener para ser testavel sem socket, mesmo padrao de tratarUpdate. `deps` permite
+// injetar o registrador e o instante do boot.
+//
+// NUNCA LANCA. Este codigo roda dentro de um listener do socket: uma excecao aqui sobe pelo
+// event emitter do Baileys e pode derrubar a conexao — ou seja, um texto inesperado de UMA pessoa
+// tiraria o WhatsApp do ar para todos.
+//
+// O escopo e SEMPRE 'campanha'. Ver o cabecalho de lib/entradaWhatsapp.
+function tratarMensagensRecebidas(evento, deps = {}) {
+  const db = deps.db || dbPadrao;
+  const bootEm = deps.bootEm === undefined ? BOOT_EM : deps.bootEm;
+  const registrar = deps.registrarOptout || optout.registrarOptout;
+  const recebeuMassaRecente = deps.recebeuMassaRecente || db.recebeuMassaWaDesde;
+  // `enfileirados` (e nao `optouts`): quando esta funcao retorna, NADA foi gravado ainda. Dizer
+  // "optouts: 1" seria afirmar um fato que ainda nao aconteceu.
+  const resumo = { enfileirados: 0, descartadosFila: 0, descartadas: 0, porMotivo: {} };
+
+  // ── INTERRUPTOR DA CAPTURA, ANTES DE QUALQUER COISA ──
+  // Default FALSE. Desligado, a mensagem recebida nao e classificada nem gravada — nada e olhado.
+  // Ver o cabecalho de lib/entradaWhatsapp para por que esta chave existe separada das outras.
+  const capturaLigada = deps.capturaAtiva === undefined
+    ? db.obterConfigBool(entrada.CHAVE_CAPTURA_ATIVA, false)
+    : deps.capturaAtiva;
+  if (!capturaLigada) return { ...resumo, desativado: true };
+
+  let decisoes = [];
+  try {
+    decisoes = entrada.classificarUpsert(evento, { bootEm });
+  } catch (err) {
+    console.error(`[wa-entrada] falha ao classificar mensagens recebidas (ignorado): ${err.message}`);
+    return resumo;
+  }
+
+  for (const d of decisoes) {
+    if (d.decisao !== entrada.ACAO_OPTOUT) {
+      resumo.descartadas += 1;
+      resumo.porMotivo[d.decisao] = (resumo.porMotivo[d.decisao] || 0) + 1;
+      // Log SO dos descartes que merecem olho humano. Silenciar o resto e deliberado: cada
+      // mensagem recebida passaria por aqui, e um log por mensagem esconderia o que importa.
+      if (d.decisao === entrada.DESCARTE_LID) {
+        console.warn(
+          '[wa-entrada] mensagem com JID @lid descartada: o @lid nao e o telefone, e um opt-out '
+            + 'gravado a partir dele nao suprimiria ninguem. Se isso virar comum, e preciso '
+            + 'resolver o @lid para o numero antes de registrar.',
+        );
+      }
+      continue;
+    }
+
+    // ENFILEIRA — nao grava aqui. Ver o bloco da fila acima: a gravacao e sincrona e sairia no
+    // event loop do socket.
+    //
+    // A checagem de "recebeu disparo em massa recente" tambem vai para dentro do `gravar`, e nao
+    // para ca: ela e uma LEITURA de banco, e fazer leitura no callback do socket seria trocar um
+    // bloqueio por outro. Ver o cabecalho de lib/entradaWhatsapp para a regra.
+    const enfileirado = enfileirarSaida({
+      telefone: d.telefone,
+      gravar: () => {
+        const canonico = chaveCanonicaTelefone(d.telefone);
+        const desde = paraTextoSqlUtc(
+          new Date(Date.now() - entrada.JANELA_MASSA_DIAS * 24 * 60 * 60 * 1000),
+        );
+        if (!recebeuMassaRecente(canonico, desde)) {
+          // NAO registra. Log mascarado para o pedido nao desaparecer: ele segue valendo como
+          // pedido, so nao como opt-out automatico de campanha.
+          console.log(
+            `[wa-entrada] ${mascararNumero(d.telefone)} respondeu pedindo saida, mas NAO recebeu ` +
+              `disparo em massa nos ultimos ${entrada.JANELA_MASSA_DIAS} dias; nada registrado. ` +
+              'Se for um pedido para sair do processo, trate a mao.',
+          );
+          return;
+        }
+        registrar({
+          telefone: d.telefone,
+          escopo: optout.ESCOPO_CAMPANHA,
+          origem: optout.ORIGEM_RESPOSTA,
+          motivo: `respondeu "${String(d.texto).slice(0, 60)}" no WhatsApp`,
+        });
+        console.log(
+          `[wa-entrada] opt-out de campanha registrado por resposta de ${mascararNumero(d.telefone)}.`,
+        );
+      },
+    });
+    if (enfileirado) resumo.enfileirados += 1;
+    else resumo.descartadosFila += 1;
+  }
+
+  return resumo;
+}
+
+// Telefone mascarado para log. Mesma regra de whatsapp/sequenciaOutbox.mascarar — recopiada (uma
+// linha) em vez de importada porque aquele modulo importa ESTE, e o require inverso abriria ciclo.
+function mascararNumero(telefone) {
+  const d = String(telefone || '');
+  if (d.length < 6) return '***';
+  return `${d.slice(0, 4)}${'*'.repeat(Math.max(0, d.length - 8))}${d.slice(-4)}`;
+}
+
 function agendarReconexao(atrasoMs) {
   if (estado.timerReconexao) clearTimeout(estado.timerReconexao);
   estado.timerReconexao = setTimeout(() => {
@@ -221,6 +418,14 @@ async function conectar(deps = {}) {
   estado.socket = socket;
 
   socket.ev.on('creds.update', saveCreds);
+  // Mensagens recebidas (Incremento B6 do disparo em massa).
+  //
+  // tratarMensagensRecebidas nunca lanca e NAO grava nada: ela classifica (puro) e empilha. A
+  // gravacao sai em setImmediate, uma por tick — ver o bloco da fila acima. E isso que mantem o
+  // callback do socket curto; nao e a ausencia de `await` (a gravacao e sincrona, nao havia await).
+  socket.ev.on('messages.upsert', (evento) => {
+    tratarMensagensRecebidas(evento);
+  });
   socket.ev.on('connection.update', (u) => {
     const r = tratarUpdate(u);
     // Socket morto depois de close: a proxima conexao cria outro.
@@ -345,6 +550,11 @@ module.exports = {
   qrAtual,
   limparQr,
   tratarUpdate,
+  tratarMensagensRecebidas,
+  tamanhoFilaSaida,
+  drenarFilaSaida,
+  TETO_FILA_SAIDA,
+  BOOT_EM,
   shouldReconnect,
   isRestartRequired,
   atrasoBackoff,
