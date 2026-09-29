@@ -27,6 +27,7 @@ const express = require('express');
 const db = require('../db');
 const conexao = require('../whatsapp/connection');
 const worker = require('../whatsapp/massaOutbox');
+const { varianteSemNono } = require('../whatsapp/sequenciaOutbox');
 const cadencia = require('../lib/cadenciaMassaWa');
 const variacoesLib = require('../lib/variacoesMassaWa');
 const publico = require('../lib/publicoMassaWhatsapp');
@@ -123,6 +124,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     telefone: 'Número de teste inválido. Use o formato +55 47 99999-9999.',
     sem_reuniao_teste: 'Nenhuma vaga ativa tem entrevista em grupo futura — o teste não teria data nem link para enviar.',
     envio_teste: 'Falha ao enviar o teste (o motivo está no log do servidor).',
+    teste_nao_confirmado: 'O WhatsApp não confirmou esse número (testado com e sem o 9). Confira o DDD e o número, com o 55 na frente.',
   };
 
   function flash(req) {
@@ -786,8 +788,16 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     }
 
     try {
-      await conexao.enviarTexto(telefone, texto);
-      console.log(`[massa-wa] TESTE enviado para ${telefone} (variacao ${escolhida.indice}).`);
+      // Mesma regra do worker: so sai para numero CONFIRMADO, com o 9 ou sem ele (ver a decisao 1
+      // em whatsapp/massaOutbox). Sem isto o teste "da certo" e a mensagem nao chega.
+      const semNono = varianteSemNono(telefone);
+      const mapa = await conexao.onWhatsAppLote(semNono ? [telefone, semNono] : [telefone]);
+      const destino = mapa.get(telefone) === true
+        ? telefone
+        : semNono && mapa.get(semNono) === true ? semNono : null;
+      if (!destino) return res.redirect(`/admin/massa-wa/${id}?erro=teste_nao_confirmado`);
+      await conexao.enviarTexto(destino, texto);
+      console.log(`[massa-wa] TESTE enviado para ${destino} (variacao ${escolhida.indice}).`);
       return res.redirect(`/admin/massa-wa/${id}?ok=teste_enviado`);
     } catch (err) {
       console.error(`[massa-wa] falha no envio de teste: ${err.message}`);

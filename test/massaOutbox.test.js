@@ -567,37 +567,100 @@ test('opt-out na tabela ANTIGA tambem suprime no envio', async () => {
   assert.deepEqual(porStatus(id), { enviado: 1, opt_out: 1 });
 });
 
-test('numero sem WhatsApp (false explicito) vira sem_whatsapp; "nao verificado" NAO exclui', async () => {
+// ── NONO DIGITO E CONFIRMACAO (primeira campanha real, 2026-09-29: 50 "enviados", 4 entregues) ──
+
+const semNove = (t) => t.replace(/^55(\d{2})9(\d{8})$/, '55$1$2');
+
+test('DDD com WhatsApp registrado SEM o 9: envia para a variante sem o 9', async () => {
+  limpar();
+  const jobId = criarVaga();
+  const id = criarCampanha({ jobId, lote: 5 });
+  const itens = materializar(id, 1, { jobId });
+  const tel = itens[0].telefone;
+  assert.notEqual(semNove(tel), tel, 'o telefone do teste precisa ser celular com 9');
+
+  const envio = envioDuble();
+  await rodar({
+    enviarTexto: envio.fn,
+    // O WhatsApp so conhece a conta sem o 9 — o caso do DDD 47.
+    onWhatsAppLote: async (telefones) => new Map(telefones.map((t) => [t, t === semNove(tel) ? true : null])),
+  });
+
+  assert.equal(envio.chamadas.length, 1);
+  assert.equal(envio.chamadas[0].telefone, semNove(tel), 'mandar para o numero com 9 e mandar para o vazio');
+  assert.deepEqual(porStatus(id), { enviado: 1 });
+});
+
+test('a consulta leva as DUAS variantes numa chamada so', async () => {
+  limpar();
+  const jobId = criarVaga();
+  const id = criarCampanha({ jobId, lote: 5 });
+  const itens = materializar(id, 2, { jobId });
+
+  const consultas = [];
+  await rodar({
+    enviarTexto: envioDuble().fn,
+    onWhatsAppLote: async (telefones) => {
+      consultas.push(telefones);
+      return new Map(telefones.map((t) => [t, true]));
+    },
+  });
+
+  assert.equal(consultas.length, 1);
+  for (const it of itens) {
+    assert.ok(consultas[0].includes(it.telefone));
+    assert.ok(consultas[0].includes(semNove(it.telefone)));
+  }
+});
+
+test('confirmado com o 9: usa o numero como esta, mesmo que a variante sem 9 tambem exista', async () => {
+  limpar();
+  const jobId = criarVaga();
+  const id = criarCampanha({ jobId, lote: 5 });
+  const itens = materializar(id, 1, { jobId });
+
+  const envio = envioDuble();
+  await rodar({ enviarTexto: envio.fn });
+
+  assert.equal(envio.chamadas[0].telefone, itens[0].telefone);
+});
+
+test('numero NAO confirmado (nem com nem sem o 9) vira sem_whatsapp e NUNCA enviado', async () => {
   limpar();
   const jobId = criarVaga();
   const id = criarCampanha({ jobId, lote: 5 });
   const itens = materializar(id, 3, { jobId });
+  const naoConfirmado = itens[0].telefone;
 
   const envio = envioDuble();
   await rodar({
     enviarTexto: envio.fn,
     onWhatsAppLote: async (telefones) =>
-      new Map(telefones.map((t) => [t, t === itens[0].telefone ? false : null])),
-  });
-
-  assert.equal(envio.chamadas.length, 2, 'os "null" (nao verificado) seguem sendo enviados');
-  assert.deepEqual(porStatus(id), { enviado: 2, sem_whatsapp: 1 });
-});
-
-test('falha do onWhatsApp nao exclui ninguem (best-effort)', async () => {
-  limpar();
-  const jobId = criarVaga();
-  const id = criarCampanha({ jobId, lote: 5 });
-  materializar(id, 2, { jobId });
-
-  const envio = envioDuble();
-  await rodar({
-    enviarTexto: envio.fn,
-    onWhatsAppLote: async () => { throw new Error('socket instavel'); },
+      new Map(telefones.map((t) => [t, t === naoConfirmado || t === semNove(naoConfirmado) ? null : true])),
   });
 
   assert.equal(envio.chamadas.length, 2);
-  assert.deepEqual(porStatus(id), { enviado: 2 });
+  assert.ok(!envio.chamadas.some((c) => c.telefone === naoConfirmado || c.telefone === semNove(naoConfirmado)));
+  assert.deepEqual(porStatus(id), { enviado: 2, sem_whatsapp: 1 });
+});
+
+test('consulta que nao confirma NINGUEM (ou falha): nada sai, ninguem e queimado, lote volta depois', async () => {
+  for (const onWhatsAppLote of [
+    async () => { throw new Error('socket instavel'); },
+    async (telefones) => new Map(telefones.map((t) => [t, null])),
+  ]) {
+    limpar();
+    const jobId = criarVaga();
+    const id = criarCampanha({ jobId, lote: 5 });
+    materializar(id, 3, { jobId });
+
+    const envio = envioDuble();
+    await rodar({ enviarTexto: envio.fn, onWhatsAppLote });
+
+    assert.equal(envio.chamadas.length, 0);
+    assert.deepEqual(porStatus(id), { pendente: 3 }, 'ninguem vira sem_whatsapp por falha da consulta');
+    assert.ok(campanhaDe(id).proximo_envio_em, 'a pausa entre lotes vale tambem aqui');
+  }
 });
 
 test('vaga SEM reuniao futura: sem_reuniao, e nenhuma mensagem sai', async () => {

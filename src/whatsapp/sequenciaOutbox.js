@@ -482,6 +482,7 @@ module.exports = {
   ativo,
   modoMock,
   mascarar,
+  varianteSemNono,
   CHAVE_ATIVO,
   WA2_ATRASO_MINUTOS,
   POR_CICLO,

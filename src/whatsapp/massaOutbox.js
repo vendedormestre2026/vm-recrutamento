@@ -28,9 +28,23 @@
 // lib/publicoMassaWhatsapp NAO fala com o socket, de proposito: consultar a existencia de milhares
 // de numeros de uma vez e, ela mesma, um sinal de conta suspeita — seria pagar com risco de
 // bloqueio por uma informacao que o envio descobre de graca. Aqui a consulta e do LOTE que esta
-// prestes a sair (5 a 8 numeros, uma USyncQuery so), e quem o Baileys confirma NAO existir vira o
-// status terminal 'sem_whatsapp'. "Nao verificado" (sem socket, erro, instabilidade) NAO exclui
-// ninguem — mesmo criterio de tolerancia do motor transacional.
+// prestes a sair (5 a 8 numeros, uma USyncQuery so).
+//
+// ── SO SAI PARA NUMERO CONFIRMADO, COM OU SEM O NONO DIGITO ──
+// Primeira campanha real (2026-09-29): 50 "enviados", 4 entregues. Em DDDs como 47 e 31 a conta
+// de WhatsApp esta registrada SEM o 9, e o Baileys aceita o envio para o numero com 9 sem erro
+// nenhum — a mensagem simplesmente nao tem destino (no log: "USync fetch yielded no results").
+// O transacional ja tratava isso desde 2026-08-20 (ver varianteSemNono em sequenciaOutbox); a
+// massa nasceu sem, e com a regra "nao verificado nao exclui", mandou para o vazio.
+//
+// Agora: a consulta leva as DUAS variantes de cada numero; sai para a que o WhatsApp CONFIRMAR
+// (com 9 primeiro). Nenhuma confirmada -> terminal 'sem_whatsapp', e NUNCA 'enviado'. Mais rigido
+// que o transacional de proposito: la a mensagem e esperada pela pessoa; aqui, tentativa para
+// numero inexistente em volume e sinal de conta suspeita.
+//
+// A excecao e a consulta que nao confirmou NINGUEM do lote: ai o mais provavel e a consulta ter
+// falhado (socket instavel), nao 5 a 8 candidatos reais sem WhatsApp. O lote inteiro fica para o
+// proximo ciclo, sem enviar e sem queimar ninguem.
 //
 // ── 2. A INSTANCIA DO SOCKET E PARAMETRO, NUNCA CRAVADA ──
 // Hoje ha uma sessao so (ver whatsapp/authState). A decisao de usar um NUMERO DEDICADO para
@@ -53,7 +67,7 @@ const { proximaEntrevistaGrupo } = require('../lib/entrevistaGrupo');
 const { inicioDoDiaBrasiliaUtc, paraTextoSqlUtc } = require('../lib/fusoBrasilia');
 const cadencia = require('../lib/cadenciaMassaWa');
 const variacoes = require('../lib/variacoesMassaWa');
-const { mascarar } = require('./sequenciaOutbox');
+const { mascarar, varianteSemNono } = require('./sequenciaOutbox');
 
 // Interruptor de DISPARO, no store `configuracoes` — mesmo padrao de promocao_ativa,
 // whatsapp_sequencia_ativa e campanha_whatsapp_ativa. Config de BANCO, com checkbox no painel.
@@ -306,15 +320,34 @@ async function processarCampanha(campanha, ctx) {
     return resumo;
   }
 
-  // ── 7. EXISTENCIA REAL, UMA CHAMADA PARA O LOTE ──
+  // ── 7. EXISTENCIA REAL, COM E SEM O NONO DIGITO, UMA CHAMADA PARA O LOTE ──
   // Ver a decisao 1 no cabecalho. Em mock nao consulta nada.
   let existencia = new Map();
   if (!mock) {
+    const consulta = [];
+    for (const p of pendentes) {
+      const t = normalizarTelefoneRecebido(p.telefone);
+      if (!t) continue;
+      consulta.push(t);
+      const semNono = varianteSemNono(t);
+      if (semNono) consulta.push(semNono);
+    }
     try {
-      existencia = await onWhatsAppLote(pendentes.map((p) => p.telefone));
+      existencia = await onWhatsAppLote(consulta);
     } catch (err) {
-      // Best-effort: falha aqui NAO exclui ninguem (mapa vazio = "nao verificado" para todos).
-      console.warn(`[massa-wa] onWhatsApp falhou (nao bloqueia envio): ${err.message}`);
+      console.warn(`[massa-wa] onWhatsApp falhou: ${err.message}`);
+      existencia = new Map();
+    }
+    if (![...existencia.values()].some((v) => v === true)) {
+      console.warn(
+        `[massa-wa] campanha ${campanha.id}: o WhatsApp nao confirmou nenhum numero do lote ` +
+          '(consulta sem resposta?); nada enviado, o lote volta no proximo ciclo.',
+      );
+      db.definirProximoEnvioMassaWa(
+        campanha.id,
+        paraTextoSqlUtc(new Date(agora.getTime() + cadencia.pausaLoteMs(cad, aleatorio))),
+      );
+      return resumo;
     }
   }
 
@@ -361,12 +394,26 @@ async function processarCampanha(campanha, ctx) {
       continue;
     }
 
-    // ── NUMERO SEM WHATSAPP ──
-    // So exclui quando o Baileys respondeu explicitamente `false`.
-    if (existencia.get(linha.telefone) === false) {
-      db.marcarEnvioMassaWaTerminal(linha.id, 'sem_whatsapp', 'numero nao possui WhatsApp ativo');
-      resumo.pulados += 1;
-      continue;
+    // ── DESTINO CONFIRMADO: COM O 9, OU SEM ELE ──
+    // Ver a decisao 1 no cabecalho. Em mock nao ha consulta, e o destino e o numero como esta.
+    let destino = telefone;
+    if (!mock) {
+      const semNono = varianteSemNono(telefone);
+      if (existencia.get(telefone) === true) {
+        destino = telefone;
+      } else if (semNono && existencia.get(semNono) === true) {
+        destino = semNono;
+        console.log(`[massa-wa] ${mascarar(telefone)}: WhatsApp registrado sem o nono digito; usando ${mascarar(semNono)}.`);
+      } else {
+        db.marcarEnvioMassaWaTerminal(
+          linha.id,
+          'sem_whatsapp',
+          'WhatsApp nao confirmou o numero (testado com e sem o nono digito)',
+        );
+        resumo.pulados += 1;
+        console.log(`[massa-wa] ${mascarar(telefone)}: numero nao confirmado no WhatsApp; nao enviado.`);
+        continue;
+      }
     }
 
     // ── A REUNIAO, RESOLVIDA AGORA E POR CANDIDATO ──
@@ -429,7 +476,7 @@ async function processarCampanha(campanha, ctx) {
     } else {
       try {
         // eslint-disable-next-line no-await-in-loop
-        await enviar(telefone, texto, { instancia: ctx.instancia });
+        await enviar(destino, texto, { instancia: ctx.instancia });
         // `quando` vem do relogio do CICLO, e nao de datetime('now'): e a mesma referencia que o
         // teto diario usa para contar "quantas sairam hoje". Sem isso as duas leituras usam
         // relogios diferentes e o teto para de limitar — foi o que um teste pegou.
@@ -443,7 +490,7 @@ async function processarCampanha(campanha, ctx) {
         db.definirUltimaVariacaoMassaWa(campanha.id, escolhida.indice);
         db.zerarErrosConsecutivosMassaWa(campanha.id);
         resumo.enviados += 1;
-        console.log(`[massa-wa] enviado para ${mascarar(telefone)} (variacao ${escolhida.indice}).`);
+        console.log(`[massa-wa] enviado para ${mascarar(destino)} (variacao ${escolhida.indice}).`);
       } catch (err) {
         falhasNoLote += 1;
         resumo.falhas += 1;
