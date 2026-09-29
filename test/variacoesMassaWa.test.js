@@ -22,6 +22,7 @@ const {
   validarVariacoes,
   sortearVariacao,
   montarContexto,
+  linkDescadastroPara,
   resolverTexto,
   PROBLEMA_VAZIA,
   PROBLEMA_TOKEN_FALTANDO,
@@ -44,7 +45,8 @@ const codigos = (r) => r.problemas.map((p) => p.codigo);
 const problema = (r, codigo) => r.problemas.find((p) => p.codigo === codigo);
 
 // Variacao minima valida, para os testes falarem de UMA regra por vez.
-const OK = 'Oi! Vaga de {vaga} na {empresa}, entrevista em {data} às {horario}: {link_meet}. Responda SAIR para sair.';
+const OK = 'Oi! Vaga de {vaga} na {empresa}, entrevista em {data} às {horario}: {link_meet}. Para sair: {link_descadastro}';
+const LINK = 'https://entrevista.vendedormestre.com.br/descadastro-whatsapp/abc.123';
 
 // ══════════════════ SEED ══════════════════
 
@@ -63,19 +65,19 @@ test('o seed tem exatamente 7 variacoes, todas distintas', () => {
 
 test('os tres trechos corrigidos pelo Rafael estao exatos', () => {
   // Chegaram truncados na primeira passagem e foram corrigidos pelo texto exato dele. Ficam
-  // TRAVADOS aqui porque sao os pontos que uma reescrita distraida reverteria sem ninguem notar —
-  // e o fecho do descadastro em especial: mudar "envie SAIR" para "responda SAIR" apagaria a
-  // variacao de forma entre as sete, que e a razao de elas existirem.
+  // TRAVADOS aqui porque sao os pontos que uma reescrita distraida reverteria sem ninguem notar.
+  // Os fechos de descadastro trocaram "SAIR" pelo {link_descadastro}, mantendo a formulacao
+  // propria de cada variacao.
   assert.ok(
     TEXTO_BASE_PADRAO.includes('Vamos fazer uma entrevista em grupo online:'),
     'o texto base introduz as linhas de data/hora/link com dois-pontos',
   );
   assert.ok(
-    VARIACOES_SEED[1].endsWith('Para deixar de receber nossas mensagens, envie SAIR.'),
-    'variacao 2 fecha com "envie SAIR"',
+    VARIACOES_SEED[1].endsWith('Para deixar de receber nossas mensagens: {link_descadastro}'),
+    'variacao 2 fecha com o link de descadastro',
   );
   assert.ok(
-    VARIACOES_SEED[4].endsWith('Para parar de receber nossas mensagens, responda SAIR.'),
+    VARIACOES_SEED[4].endsWith('Para parar de receber nossas mensagens, acesse {link_descadastro}'),
     'variacao 5 fecha com "Para parar de receber"',
   );
 });
@@ -94,13 +96,13 @@ test('o texto base tambem e valido como mensagem', () => {
   assert.deepEqual(r.problemas, []);
 });
 
-test('toda variacao do seed tem os 5 tokens obrigatorios e a palavra SAIR', () => {
+test('toda variacao do seed tem os tokens obrigatorios, inclusive o link de descadastro', () => {
   for (const [i, texto] of VARIACOES_SEED.entries()) {
     const presentes = new Set(tokensDe(texto));
     for (const tok of TOKENS_OBRIGATORIOS) {
       assert.ok(presentes.has(tok), `variacao ${i + 1} sem {${tok}}`);
     }
-    assert.match(texto, /\bSAIR\b/, `variacao ${i + 1} sem instrucao de descadastro`);
+    assert.doesNotMatch(texto, /\bSAIR\b/, `variacao ${i + 1} ainda pede "SAIR"`);
   }
 });
 
@@ -113,7 +115,8 @@ test('nenhuma variacao do seed usa a sintaxe {{dupla}} da Meta', () => {
 // ══════════════════ VALIDACAO ══════════════════
 
 test('recusa variacao sem cada um dos tokens obrigatorios, um por vez', () => {
-  for (const tok of TOKENS_OBRIGATORIOS) {
+  // {link_descadastro} tem problema proprio (PROBLEMA_SEM_DESCADASTRO), testado abaixo.
+  for (const tok of TOKENS_OBRIGATORIOS.filter((t) => t !== 'link_descadastro')) {
     const texto = OK.replace(`{${tok}}`, 'X');
     const p = problema(validarVariacoes([texto], { exigirTotal: false }), PROBLEMA_TOKEN_FALTANDO);
     assert.ok(p, `deveria acusar falta de {${tok}}`);
@@ -142,27 +145,25 @@ test('recusa a sintaxe {{dupla}} dos templates da Meta', () => {
   assert.ok(codigos(r).includes(PROBLEMA_CHAVE_DUPLA));
 });
 
-test('recusa variacao sem instrucao de descadastro', () => {
-  const r = validarVariacoes([OK.replace('Responda SAIR para sair.', 'Abraço!')], { exigirTotal: false });
+test('recusa variacao sem o link de descadastro', () => {
+  const r = validarVariacoes([OK.replace('Para sair: {link_descadastro}', 'Abraço!')], { exigirTotal: false });
   assert.ok(codigos(r).includes(PROBLEMA_SEM_DESCADASTRO));
+  assert.ok(!codigos(r).includes(PROBLEMA_TOKEN_FALTANDO), 'o link nao deve ser acusado duas vezes');
 });
 
-test('a palavra SAIR precisa estar em MAIUSCULA (e o comando, nao a palavra solta)', () => {
-  // "sair" minusculo no meio de uma frase nao le como comando — e e a maiuscula que a captura do
-  // "SAIR" reconhece de volta quando a pessoa responde.
-  const r = validarVariacoes([OK.replace('SAIR', 'sair')], { exigirTotal: false });
+test('"responda SAIR" NAO substitui o link: sem {link_descadastro} a variacao e recusada', () => {
+  const r = validarVariacoes([OK.replace('Para sair: {link_descadastro}', 'Responda SAIR para sair.')], { exigirTotal: false });
   assert.ok(codigos(r).includes(PROBLEMA_SEM_DESCADASTRO));
 });
 
 test('aceita a frase de descadastro reescrita de varias formas', () => {
   const formas = [
-    'Responda SAIR para não receber mais.',
-    'Se preferir não receber mais mensagens, responda SAIR.',
-    'Não quer mais receber? SAIR.',
-    'É só responder SAIR a qualquer momento.',
+    'Para não receber mais: {link_descadastro}',
+    'Se preferir não receber mais mensagens, acesse {link_descadastro}',
+    'Não quer mais receber? {link_descadastro}',
   ];
   for (const frase of formas) {
-    const texto = OK.replace('Responda SAIR para sair.', frase);
+    const texto = OK.replace('Para sair: {link_descadastro}', frase);
     const r = validarVariacoes([texto], { exigirTotal: false });
     assert.deepEqual(r.problemas, [], `recusou a frase: ${frase}`);
   }
@@ -192,10 +193,9 @@ test('recusa duas variacoes iguais, e aponta a SEGUNDA', () => {
 test('duas variacoes que diferem so por pontuacao/acento/caixa contam como DUPLICADAS', () => {
   // O LLM devolve quase-duplicatas com facilidade, e duas redacoes "diferentes" que o WhatsApp le
   // como o mesmo texto nao cumprem a funcao de existirem sete.
-  const a = 'Olá! Vaga de {vaga} na {empresa} — entrevista em {data}, {horario}: {link_meet}. Responda SAIR.';
-  const b = 'OLA  Vaga de {vaga} na {empresa}, entrevista em {data} {horario}: {link_meet}! responda SAIR';
+  const a = 'Olá! Vaga de {vaga} na {empresa} — entrevista em {data}, {horario}: {link_meet}. Sair: {link_descadastro}';
+  const b = 'OLA  Vaga de {vaga} na {empresa}, entrevista em {data} {horario}: {link_meet}! sair {link_descadastro}';
   const r = validarVariacoes([a, b], { exigirTotal: false });
-  // (a diferenca de caixa no SAIR faria a segunda falhar tambem; o que importa aqui e a duplicata)
   assert.ok(codigos(r).includes(PROBLEMA_DUPLICADA));
 });
 
@@ -314,14 +314,14 @@ test('o mesmo token repetido no texto e resolvido em todas as ocorrencias', () =
 
 test('sem reuniao futura: data, horario e link ficam FALTANDO (o worker nao envia)', () => {
   // E o mesmo criterio do convite do WA2: nunca sai mensagem com data ou link em branco.
-  const ctx = montarContexto({ nome: 'Ana', job: JOB, proxima: null });
+  const ctx = montarContexto({ nome: 'Ana', job: JOB, proxima: null, linkDescadastro: LINK });
   const { faltando } = resolverTexto(OK, ctx);
   assert.deepEqual(faltando.sort(), ['data', 'horario', 'link_meet']);
 });
 
 test('vaga SEM empresa cadastrada: {empresa} entra em faltando (nao sai "na .")', () => {
   // Caso real desta base. Resolver para '' produziria uma frase quebrada no aparelho da pessoa.
-  const ctx = montarContexto({ nome: 'Ana', job: { titulo: 'Closer' }, proxima: PROXIMA });
+  const ctx = montarContexto({ nome: 'Ana', job: { titulo: 'Closer' }, proxima: PROXIMA, linkDescadastro: LINK });
   const { faltando } = resolverTexto(OK, ctx);
   assert.deepEqual(faltando, ['empresa']);
 });
@@ -329,7 +329,7 @@ test('vaga SEM empresa cadastrada: {empresa} entra em faltando (nao sai "na .")'
 test('token obrigatorio que o texto NAO usa nao entra em faltando', () => {
   // `faltando` e sobre o que a mensagem precisa, nao sobre a lista teorica de tokens.
   const ctx = montarContexto({ nome: 'Ana', job: { titulo: 'Closer' }, proxima: PROXIMA });
-  const { faltando } = resolverTexto('Vaga de {vaga} em {data}, {horario}: {link_meet}. SAIR', ctx);
+  const { faltando } = resolverTexto('Vaga de {vaga} em {data}, {horario}: {link_meet}.', ctx);
   assert.deepEqual(faltando, [], 'o texto nao usa {empresa}, entao a falta dela e irrelevante');
 });
 
@@ -350,15 +350,26 @@ test('resolverTexto nao lanca com entrada nula', () => {
 test('as 7 seeds resolvidas nao deixam NENHUM token para tras', () => {
   // A assercao de ponta: depois da resolucao, nada entre chaves pode sobrar no que vai para o
   // aparelho de alguem.
-  const ctx = montarContexto({ nome: 'Maria Souza', job: JOB, proxima: PROXIMA });
+  const ctx = montarContexto({ nome: 'Maria Souza', job: JOB, proxima: PROXIMA, linkDescadastro: LINK });
   for (const [i, seed] of VARIACOES_SEED.entries()) {
     const { texto, faltando } = resolverTexto(seed, ctx);
     assert.deepEqual(faltando, [], `variacao ${i + 1} ficou com token sem valor`);
     assert.doesNotMatch(texto, /[{}]/, `variacao ${i + 1} deixou chave no texto final`);
     assert.doesNotMatch(texto, /undefined|null|NaN/, `variacao ${i + 1} vazou valor nao resolvido`);
-    assert.match(texto, /\bSAIR\b/, `variacao ${i + 1} perdeu a instrucao de descadastro`);
+    assert.ok(texto.includes(LINK), `variacao ${i + 1} perdeu o link de descadastro`);
     assert.match(texto, /meet\.google\.com/, `variacao ${i + 1} perdeu o link`);
   }
+});
+
+test('sem link de descadastro, a mensagem NAO pode sair (link_descadastro em faltando)', () => {
+  const ctx = montarContexto({ nome: 'Ana', job: JOB, proxima: PROXIMA });
+  assert.deepEqual(resolverTexto(OK, ctx).faltando, ['link_descadastro']);
+});
+
+test('linkDescadastroPara: devolve a URL, e vira vazio (sem lancar) quando a montagem falha', () => {
+  assert.equal(linkDescadastroPara('5531999990000', () => LINK), LINK);
+  const falha = () => { throw new Error('OPTOUT_TOKEN_SECRET ausente'); };
+  assert.equal(linkDescadastroPara('5531999990000', falha), '');
 });
 
 test('TOKENS e TOKENS_OBRIGATORIOS sao consistentes entre si', () => {

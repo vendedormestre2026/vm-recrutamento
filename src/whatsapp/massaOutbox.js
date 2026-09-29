@@ -392,15 +392,23 @@ async function processarCampanha(campanha, ctx) {
       db.definirStatusCampanhaMassaWa(campanha.id, 'pausada', { motivo: MOTIVO_VARIACOES_INVALIDAS });
       break;
     }
-    const contexto = variacoes.montarContexto({ nome: linha.nome, job, proxima });
+    const contexto = variacoes.montarContexto({
+      nome: linha.nome,
+      job,
+      proxima,
+      linkDescadastro: variacoes.linkDescadastroPara(telefone),
+    });
     const { texto, faltando } = variacoes.resolverTexto(escolhida.texto, contexto);
     if (faltando.length) {
-      // Dado que falta na VAGA (tipicamente empresa nao cadastrada). Nao e retentavel: o proximo
-      // ciclo encontraria o mesmo buraco. O erro diz exatamente o que preencher.
+      // Dado que falta na VAGA (tipicamente empresa nao cadastrada) ou link de descadastro que nao
+      // pode ser montado. Nao e retentavel: o proximo ciclo encontraria o mesmo buraco. O erro diz
+      // exatamente o que preencher.
       db.marcarEnvioMassaWaTerminal(
         linha.id,
         'falha',
-        `dado da vaga ausente para a mensagem: ${faltando.join(', ')}`,
+        faltando.includes(variacoes.TOKEN_DESCADASTRO)
+          ? 'link de descadastro nao pode ser montado (OPTOUT_TOKEN_SECRET ou telefone invalido)'
+          : `dado da vaga ausente para a mensagem: ${faltando.join(', ')}`,
       );
       resumo.falhas += 1;
       continue;
