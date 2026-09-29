@@ -670,6 +670,9 @@ test('o texto sai com a vaga, a empresa, a data, o horario, o link e o link de d
   assert.match(texto, /01\/10\/2026/);
   assert.match(texto, /19:30/);
   assert.ok(texto.includes(LINK_MEET));
+  // Quem escreve: primeiro nome do recrutador (padrao 'Jean Dentz' sem config) e a Vendedor Mestre.
+  assert.match(texto, /Jean/);
+  assert.match(texto, /Vendedor Mestre/);
   assert.match(texto, /\/descadastro-whatsapp\/[A-Za-z0-9_-]+\.[0-9a-f]{32}/);
   assert.doesNotMatch(texto, /\bSAIR\b/);
   // Nenhum token sem resolver, e nenhum valor vazado.

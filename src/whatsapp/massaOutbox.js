@@ -397,6 +397,7 @@ async function processarCampanha(campanha, ctx) {
       job,
       proxima,
       linkDescadastro: variacoes.linkDescadastroPara(telefone),
+      recrutador: db.obterConfig('recrutador_nome', ''),
     });
     const { texto, faltando } = variacoes.resolverTexto(escolhida.texto, contexto);
     if (faltando.length) {

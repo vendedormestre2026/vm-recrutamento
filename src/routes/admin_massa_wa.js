@@ -455,6 +455,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
         job: vaga,
         proxima,
         linkDescadastro: `${config.baseUrl}/descadastro-whatsapp/(link-de-cada-destinatario)`,
+        recrutador: db.obterConfig('recrutador_nome', ''),
       });
       const { texto } = variacoesLib.resolverTexto(textos[0] || '', ctx);
       return `<pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(texto))}</pre>`;
@@ -774,6 +775,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       job: vaga,
       proxima,
       linkDescadastro: variacoesLib.linkDescadastroPara(telefone),
+      recrutador: db.obterConfig('recrutador_nome', ''),
     });
     const { texto, faltando } = variacoesLib.resolverTexto(escolhida.texto, ctx);
     if (faltando.length) return res.redirect(`/admin/massa-wa/${id}?erro=variacoes_invalidas`);
