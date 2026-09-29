@@ -174,22 +174,45 @@ function agendarSequencia(application, deps = {}) {
 // mensagem. wa1/wa2 nao tocam `db` aqui (o texto delas so usa colunas ja trazidas pelo
 // JOIN de listarPendentesSequenciaWhatsapp) — o parametro fica disponivel pras tres por
 // uniformidade de assinatura, nao porque as outras duas precisem.
-function textoDaEtapa(linha, db) {
+// Devolve { texto, variante }.
+//
+// ── POR QUE { texto, variante } E NAO UMA STRING ──
+// O WA2 tem DOIS textos possiveis (convite com data/link, ou o aviso de que as datas estao sendo
+// definidas), e quem envia precisa GRAVAR qual saiu — ver a coluna `variante` em db/migrate.js.
+// wa1 e reprovacao tem um texto so e devolvem variante `null`, que e o valor correto para elas.
+//
+// ── OS CAMPOS DA ENTREVISTA EM GRUPO PRECISAM ESTAR NO `job` ──
+// Eles vem do SELECT de listarPendentesSequenciaWhatsapp e sao a unica fonte do link e das datas
+// no envio. Um campo esquecido aqui nao da erro: chega `undefined`, proximaEntrevistaGrupo
+// devolve null e TODO candidato recebe o fallback — um defeito silencioso que so apareceria
+// como "por que ninguem esta recebendo o convite?". Ha teste que falha se isso acontecer
+// (test/entrevistaGrupoWa2.test.js).
+//
+// `agora` e parametro para o teste poder mover o relogio; em producao cai no default.
+function textoDaEtapa(linha, db, agora = new Date()) {
   const app = { nome: linha.app_nome };
   const job = {
     titulo: linha.job_titulo, empresa: linha.job_empresa, perfil: linha.job_perfil,
     slug: linha.job_slug, faixa_pagamento: linha.job_faixa_pagamento,
     potencial_ganhos: linha.job_potencial_ganhos, endereco: linha.job_endereco,
     cidade: linha.job_cidade, modalidade: linha.job_modalidade, regime: linha.job_regime,
+    // Entrevista em grupo (WA2): link do Meet + os 3 pares data/hora.
+    link_meet: linha.job_link_meet,
+    entrevista_grupo_1_data: linha.job_entrevista_grupo_1_data,
+    entrevista_grupo_1_hora: linha.job_entrevista_grupo_1_hora,
+    entrevista_grupo_2_data: linha.job_entrevista_grupo_2_data,
+    entrevista_grupo_2_hora: linha.job_entrevista_grupo_2_hora,
+    entrevista_grupo_3_data: linha.job_entrevista_grupo_3_data,
+    entrevista_grupo_3_hora: linha.job_entrevista_grupo_3_hora,
   };
-  if (linha.etapa === 'wa1') return montarTextoWA1(app, job);
-  if (linha.etapa === 'wa2') return montarTextoWA2(app, job);
+  if (linha.etapa === 'wa1') return { texto: montarTextoWA1(app, job), variante: null };
+  if (linha.etapa === 'wa2') return montarTextoWA2(app, job, agora);
 
   // 'reprovacao': vaga remota (job_cidade NULL) e cidade sem link cadastrado caem no MESMO
   // caso aqui — linkGrupo fica null/undefined pros dois, e montarTextoReprovacao ja trata
   // "sem link" como "manda so o corpo base" sem distinguir o motivo (ver o comentario dela).
   const linkGrupo = job.cidade ? db.obterLinkGrupo(job.cidade) : null;
-  return montarTextoReprovacao(job, linkGrupo);
+  return { texto: montarTextoReprovacao(job, linkGrupo), variante: null };
 }
 
 // Contrato de ida-e-volta: um telefone so e aceito se, normalizado e depois re-normalizado
@@ -343,16 +366,17 @@ async function processarCicloSequencia(deps = {}) {
       continue;
     }
 
-    const texto = textoDaEtapa(linha, db);
+    const { texto, variante } = textoDaEtapa(linha, db, deps.agoraData || new Date());
 
     if (mock) {
       // MOCK: registra o que SAIRIA e marca como enviado, sem tocar o socket. E o default —
       // a ausencia da variavel nao pode significar "pode enviar de verdade".
       console.log(
         `[wa-seq] (mock) ${linha.etapa} -> ${mascarar(telefone)} ` +
-          `(application ${linha.application_id}, ${texto.length} chars). NAO enviado.`,
+          `(application ${linha.application_id}, ${texto.length} chars` +
+          `${variante ? `, variante ${variante}` : ''}). NAO enviado.`,
       );
-      db.marcarSequenciaWhatsappEnviada(linha.id, deps.agora || null);
+      db.marcarSequenciaWhatsappEnviada(linha.id, deps.agora || null, variante);
       resumo.enviados += 1;
     } else {
       // Checagem BEST-EFFORT de existencia real (Incremento 4): so BLOQUEIA quando o
@@ -394,7 +418,7 @@ async function processarCicloSequencia(deps = {}) {
       } else {
         try {
           await enviar(telefoneEnvio, texto);
-          db.marcarSequenciaWhatsappEnviada(linha.id, deps.agora || null);
+          db.marcarSequenciaWhatsappEnviada(linha.id, deps.agora || null, variante);
           resumo.enviados += 1;
           console.log(`[wa-seq] ${linha.etapa} enviado para ${mascarar(telefoneEnvio)} (application ${linha.application_id}).`);
         } catch (err) {

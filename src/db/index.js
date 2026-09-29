@@ -185,6 +185,7 @@ module.exports = {
   marcarSequenciaWhatsappOptout: driver.marcarSequenciaWhatsappOptout,
   contarSequenciaWhatsapp: driver.contarSequenciaWhatsapp,
   listarSequenciaWhatsappDaApplication: driver.listarSequenciaWhatsappDaApplication,
+  listarFallbackEntrevistaGrupo: driver.listarFallbackEntrevistaGrupo,
   confirmarVideoWa2: driver.confirmarVideoWa2,
 
   // Campanha por WhatsApp (Meta Cloud API)

@@ -350,8 +350,11 @@ test('a ficha mostra os tres status', async () => {
     await autenticar(base);
     const html = await (await fetch(`${base}/admin/candidato/${id}`, { headers: comAuth() })).text();
     assert.match(html, /WA1 \(imediato\)/);
-    assert.match(html, /WA2 \(\+15min, pede vídeo\)/);
-    assert.match(html, /Vídeo de apresentação/);
+    // O rotulo acompanhou a troca da mensagem: o WA2 nao pede mais video.
+    assert.match(html, /WA2 \(\+15min, convite da entrevista em grupo\)/);
+    assert.doesNotMatch(html, /pede vídeo/);
+    // WA2 em FALHA nunca pediu video nenhum (nao saiu), entao o bloco de video nao aparece.
+    assert.doesNotMatch(html, /Vídeo de apresentação/);
     assert.match(html, /socket caiu/, 'o erro do WA2 precisa aparecer na ficha');
   });
 });
@@ -368,6 +371,193 @@ test('ficha com video confirmado mostra quem e quando', async () => {
     assert.match(html, /recebido, dentro do prazo/);
     assert.match(html, /por Jean/);
     assert.match(html, /Revisar confirmação do vídeo/);
+  });
+});
+
+// ══════════════════ 7D — variante do WA2 (convite / fallback) ══════════════════
+//
+// O WA2 pedia video e hoje convida para a entrevista em grupo. A ficha precisa distinguir, POR
+// CANDIDATURA, qual mensagem chegou — e o discriminador e a coluna `variante`:
+//   NULL + enviado    era do pedido de video (a coluna nasceu junto com a troca da mensagem)
+//   'convite_grupo'   convite com data e link
+//   'sem_reuniao'     aviso de "datas em breve", sem link
+
+function definirVariante(appId, variante) {
+  exec("UPDATE whatsapp_sequencia_envios SET variante = ? WHERE application_id = ? AND etapa = 'wa2'", variante, appId);
+}
+
+test('pediuVideo: so quando o WA2 saiu SEM variante (era do video)', () => {
+  const linhasVideo = [{ etapa: 'wa2', status: 'enviado', enviado_em: '2026-08-14 10:00:00', variante: null }];
+  const linhasConvite = [{ etapa: 'wa2', status: 'enviado', enviado_em: '2026-08-14 10:00:00', variante: 'convite_grupo' }];
+  const linhasPendente = [{ etapa: 'wa2', status: 'pendente', variante: null }];
+
+  assert.equal(ficha.pediuVideo(linhasVideo), true);
+  assert.equal(ficha.pediuVideo(linhasConvite), false);
+  // Pendente tem variante NULL tambem, mas ainda VAI sair — e vai sair como convite. Tratar
+  // como "pediu video" abriria a confirmacao de video para toda candidatura nova.
+  assert.equal(ficha.pediuVideo(linhasPendente), false);
+  assert.equal(ficha.pediuVideo([]), false);
+});
+
+test('podeConfirmarVideo agora exige que o WA2 tenha PEDIDO video', () => {
+  assert.equal(ficha.podeConfirmarVideo([{ etapa: 'wa2', status: 'enviado', variante: null }]), true);
+  assert.equal(ficha.podeConfirmarVideo([{ etapa: 'wa2', status: 'enviado', variante: 'convite_grupo' }]), false);
+  assert.equal(ficha.podeConfirmarVideo([{ etapa: 'wa2', status: 'enviado', variante: 'sem_reuniao' }]), false);
+});
+
+test('mostrarVideo: confirmacao registrada mantem o historico visivel, mesmo no fluxo novo', () => {
+  // Nada foi apagado: se alguem confirmou um video, a ficha continua mostrando — ainda que o
+  // envio tenha sido um convite (caso de borda: video recebido fora do fluxo).
+  const convite = [{ etapa: 'wa2', status: 'enviado', variante: 'convite_grupo' }];
+  assert.equal(ficha.mostrarVideo({}, convite), false);
+  assert.equal(ficha.mostrarVideo({ wa2_video_recebido_em: '2026-08-14 12:00:00' }, convite), true);
+});
+
+test('recebeuFallbackEntrevistaGrupo: so para quem recebeu o aviso de datas em breve', () => {
+  assert.equal(ficha.recebeuFallbackEntrevistaGrupo([{ etapa: 'wa2', status: 'enviado', variante: 'sem_reuniao' }]), true);
+  assert.equal(ficha.recebeuFallbackEntrevistaGrupo([{ etapa: 'wa2', status: 'enviado', variante: 'convite_grupo' }]), false);
+  assert.equal(ficha.recebeuFallbackEntrevistaGrupo([{ etapa: 'wa2', status: 'pendente', variante: 'sem_reuniao' }]), false);
+});
+
+test('ficha do fluxo ANTIGO (variante NULL): bloco e botao de video continuam la', async () => {
+  zerar();
+  const id = criarCandidato();
+  inserirEtapa(id, 'wa2', 'enviado', '2026-08-14 10:00:00'); // variante NULL = era do video
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/candidato/${id}`, { headers: comAuth() })).text();
+    assert.match(html, /Vídeo de apresentação/);
+    assert.match(html, /Marcar vídeo recebido/);
+    assert.match(html, /Prazo do vídeo/);
+  });
+});
+
+test('ficha do CONVITE: sem bloco de video, e diz qual mensagem saiu', async () => {
+  zerar();
+  const id = criarCandidato();
+  inserirEtapa(id, 'wa2', 'enviado', '2026-08-14 10:00:00');
+  definirVariante(id, 'convite_grupo');
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/candidato/${id}`, { headers: comAuth() })).text();
+    assert.doesNotMatch(html, /Vídeo de apresentação/);
+    assert.doesNotMatch(html, /Marcar vídeo recebido/);
+    assert.doesNotMatch(html, /Prazo do vídeo/);
+    assert.match(html, /Mensagem enviada no WA2/);
+    assert.match(html, /convite da entrevista em grupo/);
+  });
+});
+
+test('ficha do FALLBACK: avisa que a pessoa precisa ser reconvidada a mao', async () => {
+  zerar();
+  const id = criarCandidato();
+  inserirEtapa(id, 'wa2', 'enviado', '2026-08-14 10:00:00');
+  definirVariante(id, 'sem_reuniao');
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/candidato/${id}`, { headers: comAuth() })).text();
+    assert.match(html, /datas estão sendo definidas/);
+    assert.match(html, /não recebeu link de reunião/);
+    assert.match(html, /não é\s+reenviado automaticamente|não é reenviado automaticamente/);
+    assert.match(html, /\/admin\/convites-sem-data/);
+  });
+});
+
+test('a rota de confirmacao RECUSA quando o WA2 nao pediu video', async () => {
+  // Sem isso, a URL continuaria permitindo confirmar um video que nunca foi pedido.
+  zerar();
+  const id = criarCandidato();
+  inserirEtapa(id, 'wa2', 'enviado', '2026-08-14 10:00:00');
+  definirVariante(id, 'convite_grupo');
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const get = await fetch(`${base}/admin/candidato/${id}/video-wa2`, { headers: comAuth() });
+    assert.equal(get.status, 400);
+    assert.match(await get.text(), /não houve pedido de vídeo|Não houve pedido de vídeo/i);
+
+    const post = await fetch(`${base}/admin/candidato/${id}/video-wa2`, {
+      method: 'POST',
+      headers: comAuth({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+      body: new URLSearchParams({ dentro_prazo: 'sim', confirmado_por: 'Jean' }),
+      redirect: 'manual',
+    });
+    assert.equal(post.status, 400);
+    assert.equal(db.obterAplicacao(id).wa2_video_recebido_em, null, 'nada pode ter sido gravado');
+  });
+});
+
+// ══════════════════ 7E — /admin/convites-sem-data ══════════════════
+
+test('a tela lista quem recebeu o fallback, agrupado por vaga', async () => {
+  zerar();
+  const id = criarCandidato();
+  inserirEtapa(id, 'wa2', 'enviado', '2026-08-14 10:00:00');
+  definirVariante(id, 'sem_reuniao');
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/convites-sem-data`, { headers: comAuth() })).text();
+    assert.match(html, /Convites sem data/);
+    assert.match(html, /Vendedor Externo/);
+    assert.match(html, /Ana Silva/);
+    assert.match(html, /ainda sem data/, 'a vaga nao tem reuniao futura cadastrada');
+    assert.match(html, /não é reenviado/i);
+  });
+});
+
+test('quando a vaga JA tem data, a tela diz que pode chamar as pessoas', async () => {
+  zerar();
+  const id = criarCandidato();
+  inserirEtapa(id, 'wa2', 'enviado', '2026-08-14 10:00:00');
+  definirVariante(id, 'sem_reuniao');
+  // Cadastra a reuniao DEPOIS do envio — exatamente o cenario que a tela existe para resolver.
+  const jobId = db.obterAplicacao(id).job_id;
+  const daqui = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
+  const data = `${daqui.getUTCFullYear()}-${String(daqui.getUTCMonth() + 1).padStart(2, '0')}-${String(daqui.getUTCDate()).padStart(2, '0')}`;
+  db.atualizarVaga(jobId, {
+    titulo: 'Vendedor Externo',
+    link_meet: 'https://meet.google.com/abc-defg-hij',
+    entrevista_grupo_1_data: data,
+    entrevista_grupo_1_hora: '19:30',
+  });
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/convites-sem-data`, { headers: comAuth() })).text();
+    assert.match(html, /já tem data/);
+    assert.match(html, /pode chamar estas pessoas/);
+    // A pessoa CONTINUA na lista: ela nunca recebeu link, e cadastrar a data nao a avisa.
+    assert.match(html, /Ana Silva/);
+  });
+});
+
+test('sem ninguem no fallback, a tela diz isso em vez de mostrar tabela vazia', async () => {
+  zerar();
+  const id = criarCandidato();
+  inserirEtapa(id, 'wa2', 'enviado', '2026-08-14 10:00:00');
+  definirVariante(id, 'convite_grupo');
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/convites-sem-data`, { headers: comAuth() })).text();
+    assert.match(html, /Ninguém recebeu o aviso/);
+  });
+});
+
+test('a listagem de vagas marca a vaga ATIVA sem entrevista em grupo futura', async () => {
+  zerar();
+  criarCandidato(); // cria a vaga ativa, sem link nem datas
+
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/vagas`, { headers: comAuth() })).text();
+    assert.match(html, /sem entrevista em grupo/);
+    assert.match(html, /vaga\(s\) ativa\(s\) sem entrevista em grupo/);
+    assert.match(html, /\/admin\/convites-sem-data/);
   });
 });
 

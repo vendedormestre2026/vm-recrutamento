@@ -449,7 +449,11 @@ test('o texto enviado e o da ETAPA certa', async () => {
   // certa; supor que chamadas[0] e o WA1 e que estava errado.
   assert.equal(envio.chamadas.length, 2);
   const wa1 = envio.chamadas.find((c) => /A oportunidade faz sentido pra você/i.test(c.texto));
-  const wa2 = envio.chamadas.find((c) => /COMO PARTICIPAR DO PROCESSO SELETIVO/i.test(c.texto));
+  // A vaga deste teste nao tem link do Meet nem datas de entrevista em grupo, entao o WA2 sai na
+  // variante `sem_reuniao` — que e o comportamento correto (nunca um link vencido, nunca um
+  // convite sem sala). O convite com link/data tem teste proprio, ponta a ponta, em
+  // test/entrevistaGrupoWa2.test.js.
+  const wa2 = envio.chamadas.find((c) => /Estamos definindo as próximas datas/i.test(c.texto));
 
   assert.ok(wa1, 'o texto do WA1 precisa ter saido');
   assert.ok(wa2, 'o texto do WA2 precisa ter saido');
