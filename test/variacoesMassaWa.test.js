@@ -23,6 +23,7 @@ const {
   sortearVariacao,
   montarContexto,
   linkDescadastroPara,
+  recrutadorDe,
   resolverTexto,
   PROBLEMA_VAZIA,
   PROBLEMA_TOKEN_FALTANDO,
@@ -45,7 +46,7 @@ const codigos = (r) => r.problemas.map((p) => p.codigo);
 const problema = (r, codigo) => r.problemas.find((p) => p.codigo === codigo);
 
 // Variacao minima valida, para os testes falarem de UMA regra por vez.
-const OK = 'Oi! Vaga de {vaga} na {empresa}, entrevista em {data} às {horario}: {link_meet}. Para sair: {link_descadastro}';
+const OK = 'Oi! Aqui é o {recrutador}. Vaga de {vaga} na {empresa}, entrevista em {data} às {horario}: {link_meet}. Para sair: {link_descadastro}';
 const LINK = 'https://entrevista.vendedormestre.com.br/descadastro-whatsapp/abc.123';
 
 // ══════════════════ SEED ══════════════════
@@ -367,6 +368,24 @@ test('linkDescadastroPara: devolve a URL, e vira vazio (sem lancar) quando a mon
   assert.equal(linkDescadastroPara('5531999990000', () => LINK), LINK);
   const falha = () => { throw new Error('OPTOUT_TOKEN_SECRET ausente'); };
   assert.equal(linkDescadastroPara('5531999990000', falha), '');
+});
+
+test('toda seed se apresenta (recrutador + Vendedor Mestre) e diz o CARGO', () => {
+  // Pedido do Rafael: a pessoa precisa saber quem escreve e para qual cargo se candidatou.
+  for (const [i, texto] of [TEXTO_BASE_PADRAO, ...VARIACOES_SEED].entries()) {
+    assert.ok(texto.includes('{recrutador}'), `texto ${i} nao diz quem escreve`);
+    assert.ok(texto.includes('*Vendedor Mestre*'), `texto ${i} nao diz de onde`);
+    assert.match(texto, /cargo de \*\{vaga\}\*/, `texto ${i} nao cita o cargo`);
+  }
+});
+
+test('recrutadorDe: primeiro nome da config, com fallback para o padrao', () => {
+  assert.equal(recrutadorDe('Jean Dentz'), 'Jean');
+  assert.equal(recrutadorDe('  Ana  Paula '), 'Ana');
+  assert.equal(recrutadorDe(''), 'Jean', 'config vazia nao pode deixar a mensagem sem assinatura');
+  assert.equal(recrutadorDe(undefined), 'Jean');
+  const ctx = montarContexto({ nome: 'Maria Souza', job: JOB, proxima: PROXIMA, linkDescadastro: LINK, recrutador: 'Carlos Lima' });
+  assert.match(resolverTexto(VARIACOES_SEED[0], ctx).texto, /Aqui é o Carlos, da \*Vendedor Mestre\*/);
 });
 
 test('TOKENS e TOKENS_OBRIGATORIOS sao consistentes entre si', () => {

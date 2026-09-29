@@ -24,7 +24,7 @@
 // ══════════════════════════════════════════════════════════════
 //
 // Chave UNICA entre chaves simples: {saudacao}, {vaga}, {empresa}, {data}, {horario},
-// {link_meet}, {link_descadastro}. NAO usamos {{duplo}} — o duplo e a convencao dos templates da Meta
+// {link_meet}, {link_descadastro}, {recrutador}. NAO usamos {{duplo}} — o duplo e a convencao dos templates da Meta
 // (lib/templatesWhatsapp), e reaproveitar a mesma sintaxe em dois subsistemas que nao se falam
 // convidaria alguem a colar um texto de um no outro.
 //
@@ -37,6 +37,9 @@
 //   {data}        proximaEntrevistaGrupo(vaga, agora).dataTexto   ("quinta-feira, 01/10/2026")
 //   {horario}     proximaEntrevistaGrupo(vaga, agora).horaTexto   ("19:30")
 //   {link_meet}   proximaEntrevistaGrupo(vaga, agora).linkMeet
+//   {recrutador}  primeiro nome do "Nome do recrutador" de /admin/config (chave recrutador_nome,
+//                 fallback lib/whatsapp.RECRUTADOR_PADRAO) — ver recrutadorDe. E quem assina a
+//                 mensagem: "aqui é o Jean, da Vendedor Mestre".
 //   {link_descadastro}  lib/descadastroWhatsapp.montarUrlDescadastroWhatsapp(telefone) — o MESMO
 //                 link /descadastro-whatsapp/<token> que vai no botao das campanhas via API. Um
 //                 por destinatario (o token e funcao do telefone), montado por quem envia.
@@ -46,16 +49,19 @@
 // passou. Ver lib/entrevistaGrupo.
 
 const { saudacao } = require('./whatsappSequencia');
-const { textoEmpresa } = require('./whatsapp');
+const { textoEmpresa, primeiroNomeDe, RECRUTADOR_PADRAO } = require('./whatsapp');
 
 // Tokens reconhecidos. Ordem estavel (usada em mensagem de erro e na tela de ajuda).
-const TOKENS = Object.freeze(['saudacao', 'vaga', 'empresa', 'data', 'horario', 'link_meet', 'link_descadastro']);
+const TOKENS = Object.freeze([
+  'saudacao', 'recrutador', 'vaga', 'empresa', 'data', 'horario', 'link_meet', 'link_descadastro',
+]);
 
 // Tokens que TODA variacao precisa ter.
 //
 // {saudacao} fica de fora de proposito: uma variacao pode legitimamente comecar sem cumprimentar.
-// Os cinco primeiros, nao — sem eles a mensagem deixa de ser um convite (some a data, o horario ou
-// a sala) ou deixa de dizer do que se trata (some a vaga ou a empresa).
+// Os demais, nao — sem eles a mensagem deixa de ser um convite (some a data, o horario ou a sala),
+// deixa de dizer do que se trata (some a vaga ou a empresa) ou deixa de dizer QUEM escreve (some o
+// {recrutador}: mensagem de numero desconhecido sem se apresentar e o que vira denuncia).
 //
 // {link_descadastro} tambem e obrigatorio, e por isso esta aqui: resolverTexto recusa (e o worker
 // NAO envia) quando o link nao pode ser montado. Mensagem de massa sem caminho de saida nao sai.
@@ -66,7 +72,9 @@ const TOKENS = Object.freeze(['saudacao', 'vaga', 'empresa', 'data', 'horario', 
 // A primeira versao pedia a palavra SAIR na mensagem. Nao foi pedido automacao por palavra-chave:
 // o descadastro das campanhas e o link /descadastro-whatsapp, igual ao das campanhas via API.
 const TOKEN_DESCADASTRO = 'link_descadastro';
-const TOKENS_OBRIGATORIOS = Object.freeze(['vaga', 'empresa', 'data', 'horario', 'link_meet', TOKEN_DESCADASTRO]);
+const TOKENS_OBRIGATORIOS = Object.freeze([
+  'recrutador', 'vaga', 'empresa', 'data', 'horario', 'link_meet', TOKEN_DESCADASTRO,
+]);
 
 // Teto de caracteres. O limite do WhatsApp e ~4096; 1200 e uma regra NOSSA, de negocio: uma
 // mensagem de divulgacao que passa disso vira parede de texto e nao e lida. As seeds abaixo tem
@@ -91,10 +99,13 @@ const TOTAL_VARIACOES = 7;
 //
 // As sete mudam a ESTRUTURA, nao so as palavras (lista com emoji, rotulos "Quando/Onde", marcador,
 // frase corrida): sete textos com o mesmo esqueleto e so sinonimos trocados continuam parecendo o
-// mesmo texto. Cada uma fecha o descadastro com uma formulacao propria, sempre com o
+// mesmo texto. Todas abrem com a apresentacao de quem escreve ({recrutador}, da Vendedor Mestre,
+// empresa de recrutamento) e dizem o CARGO com essa palavra. Cada uma fecha o descadastro com uma formulacao propria, sempre com o
 // {link_descadastro} (o fecho original era "responda SAIR" — ver TOKENS_OBRIGATORIOS).
 const TEXTO_BASE_PADRAO = [
-  '{saudacao} Você se candidatou à vaga de *{vaga}* na *{empresa}* e queremos te conhecer melhor! 😊',
+  '{saudacao} Aqui é o {recrutador}, da *Vendedor Mestre*, empresa de recrutamento. 😊',
+  '',
+  'Você se candidatou ao cargo de *{vaga}* na *{empresa}* e queremos te conhecer melhor!',
   '',
   // Dois-pontos: a frase INTRODUZ as tres linhas de dado logo abaixo.
   'Vamos fazer uma *entrevista em grupo online*:',
@@ -112,9 +123,9 @@ const TEXTO_BASE_PADRAO = [
 
 const VARIACOES_SEED = Object.freeze([
   [
-    '{saudacao} 👋',
+    '{saudacao} 👋 Aqui é o {recrutador}, da *Vendedor Mestre*, empresa de recrutamento.',
     '',
-    'Sua candidatura para *{vaga}* na *{empresa}* avançou, e queremos conversar com você! 🎉',
+    'Sua candidatura para o cargo de *{vaga}* na *{empresa}* avançou, e queremos conversar com você! 🎉',
     '',
     'Te convidamos para uma *entrevista em grupo online*:',
     '',
@@ -130,9 +141,9 @@ const VARIACOES_SEED = Object.freeze([
   ].join('\n'),
 
   [
-    '{saudacao} Tudo bem?',
+    '{saudacao} Tudo bem? Quem fala é o {recrutador}, da *Vendedor Mestre* (recrutamento e seleção).',
     '',
-    'Sobre a sua candidatura à vaga de *{vaga}* na *{empresa}*: chegou a hora da próxima etapa! 🚀',
+    'Sobre a sua candidatura ao cargo de *{vaga}* na *{empresa}*: chegou a hora da próxima etapa! 🚀',
     '',
     'É uma *entrevista em grupo pelo Google Meet*:',
     '🗓️ *{data}*',
@@ -149,7 +160,7 @@ const VARIACOES_SEED = Object.freeze([
   [
     '{saudacao}',
     '',
-    'Você se inscreveu para *{vaga}* na *{empresa}*, e o próximo passo é uma *entrevista em grupo online*. Anote aí:',
+    'Aqui é o {recrutador}, da *Vendedor Mestre*, empresa de recrutamento. Você se inscreveu para o cargo de *{vaga}* na *{empresa}*, e o próximo passo é uma *entrevista em grupo online*. Anote aí:',
     '',
     '*Data:* {data}',
     '*Horário:* {horario} (Brasília)',
@@ -163,9 +174,9 @@ const VARIACOES_SEED = Object.freeze([
   ].join('\n'),
 
   [
-    '{saudacao} Temos novidade! ✨',
+    '{saudacao} Aqui é o {recrutador}, da *Vendedor Mestre*, empresa de recrutamento. Temos novidade! ✨',
     '',
-    'Queremos te ver na *entrevista em grupo* da vaga de *{vaga}* na *{empresa}*.',
+    'Queremos te ver na *entrevista em grupo* para o cargo de *{vaga}* na *{empresa}*.',
     '',
     '📌 *{data}, às {horario}* (horário de Brasília)',
     '📌 Pelo Google Meet: {link_meet}',
@@ -178,9 +189,9 @@ const VARIACOES_SEED = Object.freeze([
   ].join('\n'),
 
   [
-    '{saudacao}',
+    '{saudacao} Sou o {recrutador}, da *Vendedor Mestre*, empresa de recrutamento que conduz a seleção da *{empresa}*.',
     '',
-    '*Convite:* etapa seguinte do processo seletivo de *{vaga}* na *{empresa}* — uma entrevista em grupo online.',
+    '*Convite:* etapa seguinte do processo seletivo para o cargo de *{vaga}* — uma entrevista em grupo online.',
     '',
     '➡️ *Quando:* {data}, {horario} (Brasília)',
     '➡️ *Onde:* {link_meet}',
@@ -193,7 +204,9 @@ const VARIACOES_SEED = Object.freeze([
   ].join('\n'),
 
   [
-    '{saudacao} Estamos avançando com quem se candidatou à vaga de *{vaga}* na *{empresa}*, e *você está na lista* para a entrevista em grupo! 🙌',
+    '{saudacao} Aqui é o {recrutador}, da *Vendedor Mestre* (empresa de recrutamento).',
+    '',
+    'Estamos avançando com quem se candidatou ao cargo de *{vaga}* na *{empresa}*, e *você está na lista* para a entrevista em grupo! 🙌',
     '',
     '📅 *{data}*, às *{horario}* (horário de Brasília)',
     '🔗 Acesso pelo Google Meet: {link_meet}',
@@ -208,7 +221,7 @@ const VARIACOES_SEED = Object.freeze([
   [
     '{saudacao}',
     '',
-    'Sobre a vaga de *{vaga}* na *{empresa}*, para a qual você se candidatou: agora é a *entrevista em grupo, online*. Fica assim:',
+    'Quem escreve é o {recrutador}, da *Vendedor Mestre*, empresa de recrutamento. Sobre o cargo de *{vaga}* na *{empresa}*, para o qual você se candidatou: agora é a *entrevista em grupo, online*. Fica assim:',
     '',
     '• *{data}*',
     '• *{horario}* (Brasília)',
@@ -377,9 +390,10 @@ function sortearVariacao(variacoes, ultimaIndice = null, aleatorio = Math.random
 //
 // `linkDescadastro` vem pronto de quem chama (ver linkDescadastroPara): esta funcao continua pura.
 // Ausente, o token fica vazio e o envio e recusado pelo mesmo `faltando`.
-function montarContexto({ nome, job, proxima, linkDescadastro } = {}) {
+function montarContexto({ nome, job, proxima, linkDescadastro, recrutador } = {}) {
   return {
     saudacao: saudacao(nome),
+    recrutador: recrutadorDe(recrutador),
     vaga: String((job && job.titulo) || '').trim(),
     empresa: textoEmpresa(job && job.empresa),
     data: (proxima && proxima.dataTexto) || '',
@@ -387,6 +401,13 @@ function montarContexto({ nome, job, proxima, linkDescadastro } = {}) {
     link_meet: (proxima && proxima.linkMeet) || '',
     link_descadastro: String(linkDescadastro || '').trim(),
   };
+}
+
+// Primeiro nome de quem assina a mensagem, a partir do valor CRU da config recrutador_nome
+// ("Jean Dentz" -> "Jean"). Vazio ou ausente cai no RECRUTADOR_PADRAO — o mesmo fallback do
+// botao de WhatsApp da ficha — e nunca devolve '': a mensagem sempre diz quem fala.
+function recrutadorDe(valorConfig) {
+  return primeiroNomeDe(valorConfig) || primeiroNomeDe(RECRUTADOR_PADRAO);
 }
 
 // Link de descadastro de UM telefone, ou '' se nao der para montar (OPTOUT_TOKEN_SECRET ausente,
@@ -449,6 +470,7 @@ module.exports = {
   sortearVariacao,
   montarContexto,
   linkDescadastroPara,
+  recrutadorDe,
   resolverTexto,
   PROBLEMA_VAZIA,
   PROBLEMA_TOKEN_FALTANDO,
