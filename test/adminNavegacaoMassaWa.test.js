@@ -85,3 +85,46 @@ test('telas de pagina do massa exigem login de admin', async () => {
     assert.match(r.location || '', /\/admin\/login/);
   }
 });
+
+// ── O INTERRUPTOR massa_wa_ativa EM /admin/config ──
+// A tela do massa manda o operador ligar o disparo "em Configurações". Sem esta caixa, nao havia
+// como ligar pelo painel.
+
+async function postForm(caminho, campos) {
+  const app = criarApp();
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}${caminho}`, {
+      method: 'POST',
+      headers: { Cookie: cookieAdmin(), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(campos),
+      redirect: 'manual',
+    });
+    return res.status;
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test('/admin/config tem a caixa do disparo em massa, desligada por padrao e avisando o MOCK', async () => {
+  const { status, html } = await get('/admin/config');
+  assert.equal(status, 200);
+  assert.match(html, /name="massa_wa_ativa" value="1">/, 'a caixa existe e nasce desmarcada');
+  assert.match(html, /Disparo em massa \(Baileys\)/);
+  assert.match(html, /Servidor em MOCK/);
+});
+
+test('salvar Configuracoes liga e desliga massa_wa_ativa', async () => {
+  const db = require('../src/db');
+  const { CHAVE_ATIVO } = require('../src/whatsapp/massaOutbox');
+
+  assert.equal(await postForm('/admin/config/notificacoes', { massa_wa_ativa: '1' }), 302);
+  assert.equal(db.obterConfigBool(CHAVE_ATIVO, false), true);
+  const { html } = await get('/admin/config');
+  assert.match(html, /name="massa_wa_ativa" value="1" checked>/);
+
+  // Checkbox desmarcado = campo ausente = desligar.
+  assert.equal(await postForm('/admin/config/notificacoes', {}), 302);
+  assert.equal(db.obterConfigBool(CHAVE_ATIVO, false), false);
+});

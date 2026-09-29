@@ -73,6 +73,7 @@ const optoutWhatsapp = require('../lib/optoutWhatsapp');
 const { criarRouterOptout, seloOptout, botaoMarcarOptout } = require('./admin_optout');
 const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const { criarRouterMassaWa } = require('./admin_massa_wa');
+const massaWhatsapp = require('../whatsapp/massaOutbox');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
 
@@ -5539,6 +5540,8 @@ router.get('/config', (req, res) => {
   const promocaoAtiva = db.obterConfigBool(CHAVE_PROMOCAO_ATIVA, false);
   const whatsappSeqAtiva = db.obterConfigBool(CHAVE_WHATSAPP_SEQ, false);
   const campanhaWaAtiva = db.obterConfigBool(CHAVE_CAMPANHA_WA, false);
+  const massaWaAtiva = massaWhatsapp.ativo({ db });
+  const massaWaMock = massaWhatsapp.modoMock();
   // Default TRUE, ao contrario de todos os outros desta tela.
   const optoutWaAtivo = optoutWhatsapp.ativo();
   const optoutLinkAtivo = optoutWhatsapp.linkAtivo();
@@ -5687,6 +5690,17 @@ router.get('/config', (req, res) => {
             <span style="color:var(--preto);text-transform:none;">
               <b style="text-transform:uppercase;letter-spacing:.03em;">Campanha em massa</b> —
               enviar as <b>campanhas por WhatsApp</b> (Meta Cloud API)
+            </span>
+          </label>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="massa_wa_ativa" value="1"${massaWaAtiva ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Disparo em massa (Baileys)</b> —
+              enviar as campanhas de <a href="/admin/massa-wa">Disparo em massa</a> pelo WhatsApp
+              conectado. Desligado, nenhuma campanha envia, nem as ativas.
+              ${massaWaMock
+                ? '<br><b>Servidor em MOCK</b> (<code>MASSA_WA_MOCK</code>): mesmo ligado, nada sai de verdade — o texto vai para o log. Para envio real, defina <code>MASSA_WA_MOCK=false</code> no Railway.'
+                : '<br><b>Servidor em ENVIO REAL</b>: ligado, as mensagens saem de verdade.'}
             </span>
           </label>
           <h3 style="margin:1.5rem 0 .5rem;">Opt-out (quem pediu para não receber)</h3>
@@ -5907,6 +5921,7 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
   db.definirConfigBool(CHAVE_WHATSAPP_SEQ, marcado('whatsapp_sequencia_ativa'));
   db.definirConfigBool(CHAVE_CAMPANHA_WA, marcado('campanha_whatsapp_ativa'));
+  db.definirConfigBool(massaWhatsapp.CHAVE_ATIVO, marcado('massa_wa_ativa'));
   // Default TRUE no LEITOR (optoutWhatsapp.ativo), mas gravado SEMPRE explicito aqui, como
   // as duas linhas de formulario abaixo: checkbox desmarcado nao e 'chave ausente', e sem
   // este definirConfigBool nao haveria como desligar a supressao pela tela.
