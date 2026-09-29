@@ -115,6 +115,8 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
 
   const ERROS = {
     nome: 'O nome da campanha não pode ficar vazio.',
+    cadencia_piso: `Cadência abaixo do mínimo seguro: no mínimo ${cadencia.PISO.gapMinS} segundos entre mensagens, `
+      + `${cadencia.PISO.pausaLoteMinS / 60} minutos entre lotes e no máximo ${cadencia.PISO.loteMax} mensagens por lote. Nada foi salvo.`,
     status: 'Selecione ao menos um status do recrutador para o público.',
     variacoes_invalidas: 'As variações não passaram na validação — corrija os pontos listados.',
     sem_variacoes: 'Escreva e salve as 7 variações antes de materializar o público.',
@@ -215,6 +217,31 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     return lista.length ? lista : [...publico.STATUS_PADRAO];
   };
 
+  const minutosEmSegundos = (m) => (m == null ? null : m * 60);
+
+  // Algum valor DIGITADO abaixo do piso? Campo vazio (null) nao conta: e "usar o default", que ja
+  // respeita o piso. Recusar (e nao subir em silencio) e o que faz o operador ver o limite.
+  function cadenciaAbaixoDoPiso(c) {
+    const abaixo = (v, piso) => v != null && v < piso;
+    return abaixo(c.gapMinS, cadencia.PISO.gapMinS)
+      || abaixo(c.gapMaxS, cadencia.PISO.gapMinS)
+      || abaixo(c.pausaLoteMinS, cadencia.PISO.pausaLoteMinS)
+      || abaixo(c.pausaLoteMaxS, cadencia.PISO.pausaLoteMinS)
+      || (c.loteMax != null && c.loteMax > cadencia.PISO.loteMax)
+      || (c.loteMin != null && c.loteMin > cadencia.PISO.loteMax);
+  }
+
+  // O ritmo em portugues, para o operador ver o efeito dos numeros antes de ativar.
+  function textoRitmo(c) {
+    const lote = (c.loteMin + c.loteMax) / 2;
+    const gap = (c.gapMinS + c.gapMaxS) / 2;
+    const pausa = (c.pausaLoteMinS + c.pausaLoteMaxS) / 2;
+    const porHora = Math.round((lote * 3600) / ((lote - 1) * gap + pausa));
+    const horasTeto = porHora ? (c.tetoDiario / porHora) : 0;
+    return `Nesse ritmo: cerca de <b>${porHora} mensagens por hora</b>; o teto de ${c.tetoDiario}/dia `
+      + `é atingido em cerca de <b>${horasTeto.toFixed(1).replace('.', ',')} h</b>.`;
+  }
+
   // Le nome/vaga/status/texto base/cadencia do corpo do POST. Compartilhado por criar e salvar.
   function lerCampanhaDoCorpo(b) {
     // Campo AUSENTE ou vazio -> null, que significa "usar o default do codigo". Um `Number('')`
@@ -237,8 +264,11 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
         loteMax: num(b.lote_max),
         gapMinS: num(b.gap_min_s),
         gapMaxS: num(b.gap_max_s),
-        pausaLoteMinS: num(b.pausa_lote_min_s),
-        pausaLoteMaxS: num(b.pausa_lote_max_s),
+        // A tela pede a pausa entre lotes em MINUTOS (pedir em segundos foi o que levou a
+        // pausa de "5 a 10" virar 5 a 10 segundos na primeira campanha real). Os campos em
+        // segundos continuam aceitos para POST antigo.
+        pausaLoteMinS: minutosEmSegundos(num(b.pausa_lote_min_min)) ?? num(b.pausa_lote_min_s),
+        pausaLoteMaxS: minutosEmSegundos(num(b.pausa_lote_max_min)) ?? num(b.pausa_lote_max_s),
         tetoDiario: num(b.teto_diario),
         horaInicio: String(b.hora_inicio || '').trim() || null,
         horaFim: String(b.hora_fim || '').trim() || null,
@@ -325,18 +355,18 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
         <details style="margin:0 0 1.2rem;">
           <summary style="cursor:pointer;color:var(--cinza);font-size:.85rem;">Cadência (anti-bloqueio) — mexer só com motivo</summary>
           <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.7rem;">
-            <label class="campo" style="margin:0;max-width:9rem;"><span>Lote mín.</span>
-              <input type="number" min="1" name="lote_min" value="${n(c.loteMin)}"></label>
-            <label class="campo" style="margin:0;max-width:9rem;"><span>Lote máx.</span>
-              <input type="number" min="1" name="lote_max" value="${n(c.loteMax)}"></label>
-            <label class="campo" style="margin:0;max-width:10rem;"><span>Gap mín. (s)</span>
-              <input type="number" min="0" name="gap_min_s" value="${n(c.gapMinS)}"></label>
-            <label class="campo" style="margin:0;max-width:10rem;"><span>Gap máx. (s)</span>
-              <input type="number" min="0" name="gap_max_s" value="${n(c.gapMaxS)}"></label>
-            <label class="campo" style="margin:0;max-width:11rem;"><span>Pausa mín. (s)</span>
-              <input type="number" min="0" name="pausa_lote_min_s" value="${n(c.pausaLoteMinS)}"></label>
-            <label class="campo" style="margin:0;max-width:11rem;"><span>Pausa máx. (s)</span>
-              <input type="number" min="0" name="pausa_lote_max_s" value="${n(c.pausaLoteMaxS)}"></label>
+            <label class="campo" style="margin:0;max-width:11rem;"><span>Mensagens por lote (mín.)</span>
+              <input type="number" min="1" max="${cadencia.PISO.loteMax}" name="lote_min" value="${n(c.loteMin)}"></label>
+            <label class="campo" style="margin:0;max-width:11rem;"><span>Mensagens por lote (máx.)</span>
+              <input type="number" min="1" max="${cadencia.PISO.loteMax}" name="lote_max" value="${n(c.loteMax)}"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Entre mensagens, mín. (segundos)</span>
+              <input type="number" min="${cadencia.PISO.gapMinS}" name="gap_min_s" value="${n(c.gapMinS)}"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Entre mensagens, máx. (segundos)</span>
+              <input type="number" min="${cadencia.PISO.gapMinS}" name="gap_max_s" value="${n(c.gapMaxS)}"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Entre lotes, mín. (MINUTOS)</span>
+              <input type="number" min="${cadencia.PISO.pausaLoteMinS / 60}" name="pausa_lote_min_min" value="${n(Math.round(c.pausaLoteMinS / 60))}"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Entre lotes, máx. (MINUTOS)</span>
+              <input type="number" min="${cadencia.PISO.pausaLoteMinS / 60}" name="pausa_lote_max_min" value="${n(Math.round(c.pausaLoteMaxS / 60))}"></label>
             <label class="campo" style="margin:0;max-width:10rem;"><span>Teto/dia</span>
               <input type="number" min="1" name="teto_diario" value="${n(c.tetoDiario)}"></label>
             <label class="campo" style="margin:0;max-width:9rem;"><span>Início</span>
@@ -346,7 +376,10 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
             <label class="campo" style="margin:0;max-width:12rem;"><span>Dias (1=seg … 7=dom)</span>
               <input type="text" name="dias_semana" value="${n(c.diasSemana)}"></label>
           </div>
-          <p style="color:var(--cinza);font-size:.8rem;margin:.5rem 0 0;">
+          <p style="font-size:.85rem;margin:.6rem 0 0;">${textoRitmo(c)}</p>
+          <p style="color:var(--cinza);font-size:.8rem;margin:.4rem 0 0;">
+            Mínimos que o sistema não deixa furar: ${cadencia.PISO.gapMinS} s entre mensagens,
+            ${cadencia.PISO.pausaLoteMinS / 60} min entre lotes, ${cadencia.PISO.loteMax} por lote.
             Rampa recomendada do teto diário: ${cadencia.RAMPA_TETO_DIARIO.join(' → ')}. Subir é
             decisão sua, depois de dias sem incidente — o sistema nunca sobe sozinho.</p>
         </details>
@@ -368,6 +401,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     const d = lerCampanhaDoCorpo(req.body || {});
     if (!d.nome) return res.redirect('/admin/massa-wa/nova?erro=nome');
     if (!d.statusList.length) return res.redirect('/admin/massa-wa/nova?erro=status');
+    if (cadenciaAbaixoDoPiso(d.cadencia)) return res.redirect('/admin/massa-wa/nova?erro=cadencia_piso');
 
     const id = db.criarCampanhaMassaWa({
       nome: d.nome,
@@ -632,6 +666,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     const d = lerCampanhaDoCorpo(req.body || {});
     if (!d.nome) return res.redirect(`/admin/massa-wa/${id}?erro=nome`);
     if (!d.statusList.length) return res.redirect(`/admin/massa-wa/${id}?erro=status`);
+    if (cadenciaAbaixoDoPiso(d.cadencia)) return res.redirect(`/admin/massa-wa/${id}?erro=cadencia_piso`);
 
     db.atualizarCampanhaMassaWa(id, {
       nome: d.nome,

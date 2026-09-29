@@ -314,6 +314,12 @@ async function processarCampanha(campanha, ctx) {
   if (tamanho <= 0) return resumo;
 
   const pendentes = db.listarPendentesCampanhaMassaWa(campanha.id, { limite: tamanho });
+  // Uma linha por lote com a cadencia que esta VALENDO (depois dos pisos): e o que permite auditar
+  // pelo log do Railway, sem abrir o banco, se o ritmo foi o combinado.
+  console.log(
+    `[massa-wa] campanha ${campanha.id}: lote de ${tamanho} · ${cad.gapMinS}-${cad.gapMaxS}s entre mensagens · `
+      + `${Math.round(cad.pausaLoteMinS / 60)}-${Math.round(cad.pausaLoteMaxS / 60)}min entre lotes · teto ${cad.tetoDiario}/dia.`,
+  );
   if (!pendentes.length) {
     db.definirStatusCampanhaMassaWa(campanha.id, 'concluida');
     console.log(`[massa-wa] campanha ${campanha.id}: fila vazia; concluida.`);
@@ -537,7 +543,10 @@ async function processarCampanha(campanha, ctx) {
   }
 
   // ── PAUSA ATE O PROXIMO LOTE, gravada no BANCO ──
-  const proximo = new Date(agora.getTime() + cadencia.pausaLoteMs(cad, aleatorio));
+  // Contada do FIM do lote (agora do ciclo + o tempo que o lote levou), e nao do comeco: um lote de
+  // 8 com gaps de 60 s leva ~7 min, e contar do comeco comeria a pausa quase inteira.
+  const fimDoLote = agora.getTime() + (Date.now() - comecouEm);
+  const proximo = new Date(fimDoLote + cadencia.pausaLoteMs(cad, aleatorio));
   db.definirProximoEnvioMassaWa(campanha.id, paraTextoSqlUtc(proximo));
 
   return resumo;

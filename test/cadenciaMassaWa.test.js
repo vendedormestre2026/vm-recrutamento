@@ -45,14 +45,39 @@ test('a campanha sobrepoe o default campo a campo', () => {
   assert.equal(c.horaFimMin, 20 * 60);
 });
 
-test('ZERO na campanha e respeitado (nao vira default)', () => {
-  // O teste do worker injeta gap 0 para nao esperar. Com `|| default`, um teste de 200 ms levaria
-  // 10 minutos.
-  const c = cad.resolverCadencia({ gap_min_s: 0, gap_max_s: 0, pausa_lote_min_s: 0, pausa_lote_max_s: 0 });
-  assert.equal(c.gapMinS, 0);
-  assert.equal(c.gapMaxS, 0);
-  assert.equal(cad.gapMs(c, () => 0.5), 0);
-  assert.equal(cad.pausaLoteMs(c, () => 0.5), 0);
+test('PISOS: nenhuma campanha fura 20 s entre mensagens, 5 min entre lotes e 8 por lote', () => {
+  // Primeira campanha real (2026-09-29): pausa gravada em SEGUNDOS pensando em minutos, lote de 9,
+  // 50 mensagens em 8 minutos, numero restringido. Esta e a configuracao daquele dia, aproximada.
+  const c = cad.resolverCadencia({
+    lote_min: 5, lote_max: 9, gap_min_s: 1, gap_max_s: 3, pausa_lote_min_s: 5, pausa_lote_max_s: 10,
+  });
+  assert.equal(c.loteMax, 8);
+  assert.equal(c.gapMinS, 20);
+  assert.equal(c.gapMaxS, 20, 'maximo abaixo do piso sobe junto');
+  assert.equal(c.pausaLoteMinS, 300);
+  assert.equal(c.pausaLoteMaxS, 300);
+  assert.ok(cad.gapMs(c, () => 0) >= 20 * 1000);
+  assert.ok(cad.pausaLoteMs(c, () => 0) >= 5 * 60 * 1000);
+});
+
+test('PISOS: ZERO gravado sobe para o piso, e acima do piso vale o que a campanha pediu', () => {
+  const zero = cad.resolverCadencia({ gap_min_s: 0, gap_max_s: 0, pausa_lote_min_s: 0, pausa_lote_max_s: 0, lote_min: 0, lote_max: 0 });
+  assert.equal(zero.gapMinS, 20);
+  assert.equal(zero.pausaLoteMinS, 300);
+  assert.equal(zero.loteMin, 1);
+  assert.equal(zero.loteMax, 1);
+
+  const folgada = cad.resolverCadencia({ gap_min_s: 45, gap_max_s: 90, pausa_lote_min_s: 900, pausa_lote_max_s: 1200, lote_min: 3, lote_max: 6 });
+  assert.deepEqual(
+    [folgada.gapMinS, folgada.gapMaxS, folgada.pausaLoteMinS, folgada.pausaLoteMaxS, folgada.loteMin, folgada.loteMax],
+    [45, 90, 900, 1200, 3, 6],
+  );
+});
+
+test('os DEFAULTS respeitam os proprios pisos', () => {
+  assert.ok(cad.PADRAO.gapMinS >= cad.PISO.gapMinS);
+  assert.ok(cad.PADRAO.pausaLoteMinS >= cad.PISO.pausaLoteMinS);
+  assert.ok(cad.PADRAO.loteMax <= cad.PISO.loteMax);
 });
 
 test('hora e dias invalidos caem no default em vez de travar a campanha', () => {

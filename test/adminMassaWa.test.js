@@ -628,3 +628,48 @@ test('campanha inexistente devolve 404', async () => {
     assert.equal(res.status, 404);
   });
 });
+
+// ══════════════════ PISOS DE CADENCIA NA TELA ══════════════════
+// Primeira campanha real (2026-09-29): a tela pedia a pausa em SEGUNDOS, o operador digitou
+// pensando em minutos, e 50 mensagens sairam em 8 minutos.
+
+test('cadencia abaixo do piso e RECUSADA, com mensagem, e nada e salvo', async () => {
+  limpar();
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const antes = ultimaCampanha();
+    const r = await post(base, '/admin/massa-wa', {
+      nome: 'Rapida demais', job_id: String(jobId), status: ['sem_decisao'],
+      lote_min: '5', lote_max: '9', gap_min_s: '1', gap_max_s: '3',
+      pausa_lote_min_min: '1', pausa_lote_max_min: '2',
+    });
+    assert.equal(r.status, 302);
+    assert.match(r.headers.get('location'), /erro=cadencia_piso/);
+    const depois = ultimaCampanha();
+    assert.equal(depois && depois.id, antes && antes.id, 'nenhuma campanha criada');
+
+    const html = await get(base, '/admin/massa-wa/nova?erro=cadencia_piso');
+    assert.match(html, /Cadência abaixo do mínimo seguro/);
+  });
+});
+
+test('a pausa entre lotes e digitada em MINUTOS e gravada em segundos', async () => {
+  limpar();
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await post(base, '/admin/massa-wa', {
+      nome: 'Ok', job_id: String(jobId), status: ['sem_decisao'],
+      gap_min_s: '30', gap_max_s: '60', pausa_lote_min_min: '7', pausa_lote_max_min: '12',
+    });
+    const c = ultimaCampanha();
+    assert.equal(c.pausa_lote_min_s, 420);
+    assert.equal(c.pausa_lote_max_s, 720);
+
+    const html = await get(base, `/admin/massa-wa/${c.id}`);
+    assert.match(html, /Entre lotes, mín\. \(MINUTOS\)/);
+    assert.match(html, /name="pausa_lote_min_min" value="7"/);
+    assert.match(html, /mensagens por hora/);
+  });
+});

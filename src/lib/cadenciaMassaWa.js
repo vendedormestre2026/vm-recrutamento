@@ -46,6 +46,22 @@ const PADRAO = Object.freeze({
   diasSemana: '1,2,3,4,5,6', // ISO: 1=segunda ... 7=domingo. Domingo de fora.
 });
 
+// ── PISOS: O QUE NENHUMA CAMPANHA CONSEGUE FURAR ──
+// Os defaults acima sao sugestao; estes sao LIMITE. Primeira campanha real (2026-09-29): a cadencia
+// gravada na campanha tinha pausa entre lotes de segundos (a tela pedia segundos, e o operador
+// pensou em minutos), e 50 mensagens sairam em 8 minutos. O numero foi restringido.
+//
+// Aplicados em DOIS lugares: o formulario recusa valor abaixo (ver PROBLEMAS em validarCadencia) e
+// resolverCadencia sobe para o piso o que ja estiver gravado abaixo — campanha antiga, POST a mao,
+// coluna editada no banco. O worker so enxerga a cadencia depois do piso.
+//
+// O teto diario NAO tem piso aqui: subir a rampa e decisao humana (RAMPA_TETO_DIARIO).
+const PISO = Object.freeze({
+  gapMinS: 20,
+  pausaLoteMinS: 5 * 60,
+  loteMax: 8,
+});
+
 // Degraus da rampa, so para a tela sugerir o proximo. Nao ha automatismo: quem sobe e o operador.
 const RAMPA_TETO_DIARIO = Object.freeze([30, 60, 100, 150]);
 
@@ -90,20 +106,26 @@ function diasDaLista(texto) {
 // Junta o que a campanha definiu com os defaults. Todo consumidor usa ISTO, nunca a linha crua —
 // assim "qual e a cadencia desta campanha?" tem uma resposta so.
 //
-// `?? PADRAO.x` e nao `|| PADRAO.x`: 0 e valor legitimo em gap e pausa (os testes injetam 0 para
-// nao esperar), e `||` o transformaria no default, fazendo um teste de 200 ms levar 10 minutos.
+// `?? PADRAO.x` e nao `|| PADRAO.x`: 0 gravado nao e "usar o default" — e um valor, que o PISO
+// abaixo sobe para o minimo.
 function resolverCadencia(campanha = {}) {
   const c = campanha || {};
   const inicio = minutosDaHora(c.hora_inicio);
   const fim = minutosDaHora(c.hora_fim);
   const dias = diasDaLista(c.dias_semana);
+  const loteMax = Math.max(1, Math.min(Number(c.lote_max ?? PADRAO.loteMax), PISO.loteMax));
+  const loteMin = Math.max(1, Math.min(Number(c.lote_min ?? PADRAO.loteMin), loteMax));
+  const gapMinS = Math.max(Number(c.gap_min_s ?? PADRAO.gapMinS), PISO.gapMinS);
+  const gapMaxS = Math.max(Number(c.gap_max_s ?? PADRAO.gapMaxS), gapMinS);
+  const pausaLoteMinS = Math.max(Number(c.pausa_lote_min_s ?? PADRAO.pausaLoteMinS), PISO.pausaLoteMinS);
+  const pausaLoteMaxS = Math.max(Number(c.pausa_lote_max_s ?? PADRAO.pausaLoteMaxS), pausaLoteMinS);
   return {
-    loteMin: c.lote_min ?? PADRAO.loteMin,
-    loteMax: c.lote_max ?? PADRAO.loteMax,
-    gapMinS: c.gap_min_s ?? PADRAO.gapMinS,
-    gapMaxS: c.gap_max_s ?? PADRAO.gapMaxS,
-    pausaLoteMinS: c.pausa_lote_min_s ?? PADRAO.pausaLoteMinS,
-    pausaLoteMaxS: c.pausa_lote_max_s ?? PADRAO.pausaLoteMaxS,
+    loteMin,
+    loteMax,
+    gapMinS,
+    gapMaxS,
+    pausaLoteMinS,
+    pausaLoteMaxS,
     tetoDiario: c.teto_diario ?? PADRAO.tetoDiario,
     horaInicioMin: inicio == null ? minutosDaHora(PADRAO.horaInicio) : inicio,
     horaFimMin: fim == null ? minutosDaHora(PADRAO.horaFim) : fim,
@@ -175,6 +197,7 @@ function taxaDeFalhaEstourou(tentativas, falhas) {
 
 module.exports = {
   PADRAO,
+  PISO,
   RAMPA_TETO_DIARIO,
   ESPACAMENTO_GLOBAL_MS,
   ERROS_CONSECUTIVOS_LIMITE,
