@@ -150,6 +150,11 @@ test("aplicarDecisaoRecrutador(id, 'aprovado') NAO agenda reprovacao nenhuma", (
 });
 
 // ══════════════════ textoDaEtapa('reprovacao') — corpo base + convite condicional ══════════════════
+//
+// textoDaEtapa devolve { texto, variante } desde o convite da entrevista em grupo (o WA2 tem
+// dois textos possiveis e precisa registrar qual saiu). A reprovacao tem UM texto, entao a
+// variante dela e sempre null — travado no teste logo abaixo, para a coluna `variante` nunca
+// passar a significar duas coisas.
 
 // Monta a `linha` no mesmo formato que listarPendentesSequenciaWhatsapp devolveria (so os
 // campos que textoDaEtapa realmente le).
@@ -161,18 +166,24 @@ test('cidade COM link cadastrado: texto inclui corpo base + paragrafo de convite
   zerar();
   db.criarRegiaoGrupo('Joinville', 'https://chat.whatsapp.com/exemplo-joinville');
 
-  const texto = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: 'Joinville' }), db);
+  const { texto } = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: 'Joinville' }), db);
 
   assert.match(texto, new RegExp(TEXTO_REPROVACAO_BASE_PLACEHOLDER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(texto, /https:\/\/chat\.whatsapp\.com\/exemplo-joinville/);
   assert.doesNotMatch(texto, /\{\{link_grupo\}\}/, 'o placeholder {{link_grupo}} nao pode sobrar literal no texto');
 });
 
+test('reprovacao nao tem variante (a coluna `variante` e do WA2)', () => {
+  const r = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: 'Joinville' }), db);
+  assert.equal(r.variante, null);
+  assert.equal(typeof r.texto, 'string');
+});
+
 test('cidade SEM link cadastrado (praca existe, link ainda NULL): so o corpo base, sem convite', () => {
   zerar();
   db.criarRegiaoGrupo('Curitiba', null); // praca cadastrada, sem link ainda — estado normal de toda praca nova
 
-  const texto = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: 'Curitiba' }), db);
+  const { texto } = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: 'Curitiba' }), db);
 
   assert.match(texto, new RegExp(TEXTO_REPROVACAO_BASE_PLACEHOLDER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(texto, /grupo de alertas/i, 'sem link, o paragrafo de convite nao pode aparecer');
@@ -181,7 +192,7 @@ test('cidade SEM link cadastrado (praca existe, link ainda NULL): so o corpo bas
 test('vaga remota (job_cidade NULL): mesmo comportamento — so o corpo base', () => {
   zerar();
 
-  const texto = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: null }), db);
+  const { texto } = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: null }), db);
 
   assert.match(texto, new RegExp(TEXTO_REPROVACAO_BASE_PLACEHOLDER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(texto, /grupo de alertas/i);
@@ -194,7 +205,7 @@ test('cidade sem NENHUMA linha em regioes_grupos_whatsapp: mesmo comportamento �
   // (mesmo contrato de praca inativa/sem link), entao o comportamento e IDENTICO aos dois
   // casos acima — nunca lanca, nunca inclui o convite.
   assert.doesNotThrow(() => outbox.textoDaEtapa(linhaReprovacao({ jobCidade: 'Tijucas' }), db));
-  const texto = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: 'Tijucas' }), db);
+  const { texto } = outbox.textoDaEtapa(linhaReprovacao({ jobCidade: 'Tijucas' }), db);
   assert.doesNotMatch(texto, /grupo de alertas/i);
 });
 

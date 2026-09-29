@@ -72,7 +72,9 @@ const ROTULO_STATUS = {
 // anteriores a esta feature, e a tela precisa dizer "não se aplica" em vez de quebrar.
 function estadoEtapa(linhas, etapa) {
   const l = (linhas || []).find((x) => x.etapa === etapa);
-  if (!l) return { existe: false, status: null, rotulo: 'não se aplica', enviadoEm: null, erro: null };
+  if (!l) {
+    return { existe: false, status: null, rotulo: 'não se aplica', enviadoEm: null, erro: null, variante: null };
+  }
   return {
     existe: true,
     status: l.status,
@@ -81,6 +83,11 @@ function estadoEtapa(linhas, etapa) {
     agendadoPara: l.agendado_para || null,
     erro: l.erro || null,
     tentativas: l.tentativas || 0,
+    // QUAL texto saiu (so o WA2 tem duas variantes). Precisa vir para ca porque este objeto e a
+    // unica leitura da linha que o resto do modulo e a ficha usam — sem esta linha, pediuVideo
+    // veria `undefined` em TODA candidatura e concluiria que todas pediram video, reabrindo a
+    // confirmacao de video para quem recebeu convite. Foi exatamente o que um teste pegou.
+    variante: l.variante || null,
   };
 }
 
@@ -96,12 +103,75 @@ function limiteDoVideo(linhas) {
   return calcularPrazoAmanhaMeioDia(base);
 }
 
-// O botao de confirmacao so faz sentido depois de o WA2 ter SAIDO.
+// O WA2 desta candidatura PEDIU um video?
 //
-// Confirmar recebimento de algo que o sistema nao registra ter enviado seria gravar um dado
-// que nao se sustenta — e o painel passaria a afirmar que houve prazo onde nao houve pedido.
+// ══════════════════════════════════════════════════════════════
+// COMO A VARIANTE RESPONDE UMA PERGUNTA SOBRE O PASSADO
+// ══════════════════════════════════════════════════════════════
+//
+// O WA2 pedia video; hoje ele convida para uma entrevista em grupo. As duas mensagens existem
+// na mesma tabela, e a ficha precisa saber qual chegou no aparelho DAQUELA pessoa — senao o
+// painel oferece "confirmar video recebido" para quem nunca foi convidado a mandar video, e
+// deixa de oferecer para quem mandou.
+//
+// O discriminador e `variante`:
+//   NULL              envio ANTERIOR a coluna existir, ou seja, a era do pedido de video.
+//   'convite_grupo'   convite com data e link.
+//   'sem_reuniao'     aviso de que as datas estao sendo definidas.
+//
+// Exige status 'enviado': uma linha 'pendente' tem variante NULL tambem, mas ela ainda VAI sair
+// — e vai sair como convite. Tratar pendente como "pediu video" faria o painel abrir a
+// confirmacao de video para toda candidatura nova.
+//
+// ── POR QUE ISSO NAO E "ADIVINHAR" ──
+// A coluna nasceu junto com a troca da mensagem, no mesmo deploy. Entao NULL + enviado
+// significa, sem ambiguidade, "saiu antes da troca". Nao ha janela em que uma mensagem nova
+// tenha sido enviada sem variante.
+function pediuVideo(linhas) {
+  const wa2 = estadoEtapa(linhas, 'wa2');
+  return wa2.status === 'enviado' && !wa2.variante;
+}
+
+// O bloco/botao de video aparece na ficha?
+//
+// So para quem REALMENTE foi convidado a mandar video (pediuVideo) ou para quem ja tem
+// confirmacao registrada (historico que nao se apaga). Para as candidaturas novas — que
+// receberam o convite da entrevista em grupo — o assunto "video" nao existe, e um painel que
+// mostra campos que nao valem mais ensina a ignorar o painel.
+function mostrarVideo(application, linhas) {
+  return Boolean((application && application.wa2_video_recebido_em) || pediuVideo(linhas));
+}
+
+// O botao de confirmacao so faz sentido depois de o WA2 ter SAIDO, e SO quando ele pediu video.
+//
+// Confirmar recebimento de algo que o sistema nao registra ter pedido seria gravar um dado que
+// nao se sustenta — e o painel passaria a afirmar que houve prazo onde nao houve pedido. Antes
+// da troca da mensagem bastava "o WA2 saiu"; agora sair nao basta, porque o WA2 que sai hoje
+// nao pede video nenhum.
 function podeConfirmarVideo(linhas) {
-  return estadoEtapa(linhas, 'wa2').status === 'enviado';
+  return pediuVideo(linhas);
+}
+
+// A pessoa recebeu o FALLBACK (aviso de "datas em breve") em vez do convite?
+//
+// E a lista de quem precisa ser reconvidado A MAO: nada no sistema reenvia o convite quando a
+// data nova e cadastrada, porque o WA2 daquela candidatura ja saiu (UNIQUE por etapa). Sem esta
+// leitura, essas pessoas ficariam invisiveis — receberam "te aviso por aqui" e ninguem sabe
+// quem sao.
+function recebeuFallbackEntrevistaGrupo(linhas) {
+  const wa2 = estadoEtapa(linhas, 'wa2');
+  return wa2.status === 'enviado' && wa2.variante === 'sem_reuniao';
+}
+
+// Rotulo da variante para a ficha. Texto curto; a explicacao fica na tela.
+const ROTULO_VARIANTE = {
+  convite_grupo: 'convite da entrevista em grupo (com data e link)',
+  sem_reuniao: 'aviso de que as datas estão sendo definidas',
+};
+
+function rotuloVariante(variante) {
+  if (!variante) return null;
+  return ROTULO_VARIANTE[variante] || variante;
 }
 
 // Situacao do video para exibicao. Le das colunas de `applications`.
@@ -149,6 +219,11 @@ module.exports = {
   estadoEtapa,
   limiteDoVideo,
   podeConfirmarVideo,
+  pediuVideo,
+  mostrarVideo,
+  recebeuFallbackEntrevistaGrupo,
+  rotuloVariante,
+  ROTULO_VARIANTE,
   situacaoVideo,
   sugestaoDentroPrazo,
   paraDataUtc,

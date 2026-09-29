@@ -3345,6 +3345,42 @@ function listarSequenciaWhatsappDaApplication(applicationId) {
     .all(applicationId);
 }
 
+// Candidatos que receberam o FALLBACK do WA2 ("estamos definindo as próximas datas") em vez do
+// convite com link e data.
+//
+// ── POR QUE ESTA LISTA EXISTE ──
+// Nada reenvia o convite quando a data e finalmente cadastrada: o WA2 daquela candidatura JA
+// saiu, e ha um por candidatura (UNIQUE(application_id, etapa)). Sem esta consulta essas pessoas
+// ficam invisiveis — receberam "te aviso por aqui" e ninguem sabe quem sao nem de que vaga.
+//
+// `tem_reuniao_agora` NAO e resolvido aqui: as colunas da vaga saem cruas e quem decide se ha
+// reuniao futura e lib/entrevistaGrupo, com o "agora" de quem chama. Fazer essa comparacao em
+// SQL exigiria aritmetica de fuso no banco — uma segunda fonte de verdade sobre "que dia e hoje",
+// que divergiria da primeira todos os dias entre 21h e meia-noite.
+//
+// Ordenado pela vaga e pelo envio mais recente: o operador trabalha essa lista vaga por vaga,
+// porque a acao (cadastrar a data, depois chamar as pessoas) e por vaga.
+function listarFallbackEntrevistaGrupo() {
+  return getDb()
+    .prepare(
+      `SELECT a.id AS application_id, a.nome, a.sobrenome, a.telefone, a.job_id,
+              s.enviado_em, s.telefone_e164,
+              j.titulo AS job_titulo, j.ativo AS job_ativo, j.link_meet,
+              j.entrevista_grupo_1_data, j.entrevista_grupo_1_hora,
+              j.entrevista_grupo_2_data, j.entrevista_grupo_2_hora,
+              j.entrevista_grupo_3_data, j.entrevista_grupo_3_hora
+         FROM whatsapp_sequencia_envios s
+         JOIN applications a ON a.id = s.application_id
+         LEFT JOIN jobs j ON j.id = a.job_id
+        WHERE s.etapa = 'wa2'
+          AND s.status = 'enviado'
+          AND s.variante = 'sem_reuniao'
+          AND a.deleted_at IS NULL
+        ORDER BY j.titulo, s.enviado_em DESC, a.id DESC`,
+    )
+    .all();
+}
+
 // Grava a confirmacao MANUAL do video do WA2.
 //
 // UPDATE simples em `applications` — sao tres colunas, nao uma tabela a parte, entao
@@ -5039,6 +5075,7 @@ module.exports = {
   marcarSequenciaWhatsappOptout,
   contarSequenciaWhatsapp,
   listarSequenciaWhatsappDaApplication,
+  listarFallbackEntrevistaGrupo,
   confirmarVideoWa2,
   listarCandidatosPorCidadeVaga,
   listarLegadoPorCidade,
