@@ -361,3 +361,37 @@ test('onWhatsAppLote: erro do socket deixa TODOS os numeros da leva como "nao ve
     assert.equal(mapa.get('5547999582500'), null);
   });
 });
+
+// ══════════════════ QR EXPIRADO SEM LEITURA (2026-09-30) ══════════════════
+// Na noite de 2026-09-29 foram mais de 360 janelas de QR seguidas: o 408 do QR expirado era
+// tratado como queda e reabria o pareamento para sempre.
+
+test('408 durante o pareamento (QR expirou) NAO reconecta', () => {
+  conn._resetar();
+  semRuido(() => conn.tratarUpdate({ qr: 'QR-CRU' }));
+  let reconectou = false;
+  const r = semRuido(() =>
+    conn.tratarUpdate(
+      { connection: 'close', lastDisconnect: desconexao(408) },
+      { reconectar: () => { reconectou = true; } },
+    ),
+  );
+  assert.equal(r.acao, 'aguardando_pareamento');
+  assert.equal(reconectou, false);
+  assert.equal(conn.status().status, 'desconectado');
+  assert.equal(conn.qrAtual(), null);
+});
+
+test('408 de sessao JA conectada continua sendo queda (reconecta)', () => {
+  conn._resetar();
+  semRuido(() => conn.tratarUpdate({ connection: 'open' }));
+  let atraso = null;
+  const r = semRuido(() =>
+    conn.tratarUpdate(
+      { connection: 'close', lastDisconnect: desconexao(408) },
+      { reconectar: (ms) => { atraso = ms; } },
+    ),
+  );
+  assert.equal(r.acao, 'reconectar');
+  assert.notEqual(atraso, null);
+});
