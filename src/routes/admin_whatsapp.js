@@ -4,7 +4,10 @@
 // herdando o `router.use(adminAuth)` — nao ha auth propria aqui, pelo mesmo motivo das
 // demais telas do painel.
 //
-// ── ESTA TELA NAO CONECTA NADA ──
+// ── ESTA TELA SO CONECTA POR BOTAO (POST /parear) ──
+// Excecao acrescentada em 2026-09-30: depois de um QR expirar sem leitura, a conexao nao reabre
+// sozinha, e o botao "Gerar QR" e quem abre a proxima janela. Continua valendo o resto abaixo:
+// nenhum GET abre socket.
 // Ela EXIBE o estado do socket e serve o QR quando ele existe. Quem abre a conexao e o boot
 // do server.js (conectarWhatsappNoBoot), e so quando WHATSAPP_BAILEYS_CONECTAR_NO_BOOT=true.
 // Abrir socket a partir de um GET de painel seria dar a um clique de navegador o poder de
@@ -66,7 +69,20 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
 
   // ── GET /admin/whatsapp/status ──
   router.get('/status', (req, res) => {
+    res.set('Cache-Control', 'no-store, max-age=0');
     res.json(estadoAtual());
+  });
+
+  // ── POST /admin/whatsapp/parear ── botao "Gerar QR" ──
+  // Depois de um QR expirar sem leitura, a conexao NAO reabre sozinha (ver o 408 em
+  // whatsapp/connection). Este botao e o unico jeito de abrir uma nova janela de pareamento.
+  router.post('/parear', async (req, res) => {
+    try {
+      await conexao.iniciarPareamento();
+    } catch (err) {
+      console.error(`[wa-admin] falha ao iniciar pareamento: ${err.message}`);
+    }
+    res.redirect('/admin/whatsapp');
   });
 
   // ── GET /admin/whatsapp/qr.svg ──
@@ -74,7 +90,15 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
   // 404 quando nao ha QR. E o comportamento certo para um recurso que so existe durante a
   // janela de pareamento — devolver 200 com um SVG vazio faria o polling do cliente achar
   // que ha algo para mostrar.
-  router.get('/qr.svg', async (req, res) => {
+  //
+  // ── CLOUDFLARE ──
+  // O caminho terminava em .svg, extensao que o Cloudflare trata como arquivo estatico e guarda em
+  // cache — inclusive o 404 "sem QR". Em 2026-09-30 a tela ficou mostrando "Nenhum QR pendente"
+  // com o servidor gerando QR normalmente; so pareou pelo dominio direto do Railway. Agora a tela
+  // usa /qr (sem extensao) com parametro que muda a cada pedido, e o 404 tambem sai com no-store.
+  // /qr.svg continua respondendo, para nao quebrar quem tiver a tela antiga aberta.
+  router.get(['/qr', '/qr.svg'], async (req, res) => {
+    res.set('Cache-Control', 'no-store, max-age=0');
     const qr = conexao.qrAtual();
     if (!qr) {
       return res.status(404).json({ erro: 'Nenhum QR pendente. A instância não está em pareamento.' });
@@ -169,6 +193,11 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
         <p id="wa-qr-vazio" style="color:var(--cinza)">
           Nenhum QR pendente. Ele aparece aqui quando a instância entra em pareamento.
         </p>
+        <form id="wa-parear" method="POST" action="/admin/whatsapp/parear"${e.connection_status === 'desconectado' && e.baileys_ativo ? '' : ' hidden'}>
+          <p style="color:var(--cinza);font-size:.85rem;margin:.2rem 0 .6rem;">
+            Desconectado. Um QR que expira sem leitura encerra o pareamento; para tentar de novo:</p>
+          <button type="submit" class="btn">Gerar QR</button>
+        </form>
         <div id="wa-qr" style="max-width:320px;margin:0 auto"></div>
       </div>
       <p class="admin-rodape" style="font-size:.85rem">
@@ -192,13 +221,14 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
           document.getElementById('wa-desde').textContent = 'desde ' + e.updated_at;
           document.getElementById('wa-sessao').textContent = e.sessao_gravada ? 'sim' : 'não';
           document.getElementById('wa-tent').textContent = e.tentativas;
+          document.getElementById('wa-parear').hidden = !(e.connection_status === 'desconectado' && e.baileys_ativo);
         }
 
         // O QR vem por FETCH, e nao por <img src>. Um <img> nao manda o cookie de sessao em
         // toda configuracao de SameSite, e a rota e protegida pelo adminAuth — o src direto
         // renderizaria a tela de login dentro do <img>, ou nada, sem dizer por que.
         function buscarQr() {
-          return fetch('/admin/whatsapp/qr.svg', { credentials: 'same-origin' })
+          return fetch('/admin/whatsapp/qr?t=' + Date.now(), { credentials: 'same-origin', cache: 'no-store' })
             .then(function (r) {
               if (r.status === 404) return null;
               if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -217,7 +247,7 @@ function criarRouterWhatsapp({ paginaAdmin, escapeHtml }) {
         }
 
         function ciclo() {
-          fetch('/admin/whatsapp/status', { credentials: 'same-origin' })
+          fetch('/admin/whatsapp/status?t=' + Date.now(), { credentials: 'same-origin', cache: 'no-store' })
             .then(function (r) { return r.json(); })
             .then(function (e) {
               pintar(e);

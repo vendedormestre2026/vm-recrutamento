@@ -181,6 +181,21 @@ function tratarUpdate(update, deps = {}) {
     return { acao: 'restart', atraso: 0 };
   }
 
+  // ── QR EXPIRADO SEM LEITURA: ENCERRA O PAREAMENTO, NAO INSISTE ──
+  // 408 durante 'pareando' e o Baileys desistindo depois de ~3 min de QR sem ninguem escanear. A
+  // versao anterior tratava isso como queda e reabria o pareamento para sempre: na noite de
+  // 2026-09-29 foram mais de 360 janelas de QR seguidas, logo depois de uma restricao do numero.
+  // Agora o pareamento para aqui, e so recomeca quando alguem pede pela tela (/admin/whatsapp,
+  // botao "Gerar QR") — ver iniciarPareamento. Queda de sessao JA pareada nao passa por aqui: ela
+  // nunca esta em 'pareando'.
+  if (code === 408 && estado.status === 'pareando') {
+    definirStatus('desconectado');
+    estado.tentativas = 0;
+    estado.ultimoErro = 'QR expirou sem leitura';
+    console.log('[wa-conn] QR expirou sem leitura; pareamento encerrado. Para tentar de novo: /admin/whatsapp -> "Gerar QR".');
+    return { acao: 'aguardando_pareamento' };
+  }
+
   // Queda real.
   definirStatus('desconectado');
   estado.tentativas += 1;
@@ -188,6 +203,20 @@ function tratarUpdate(update, deps = {}) {
   console.warn(`[wa-conn] queda (${estado.ultimoErro}); reconectando em ${atraso} ms (tentativa ${estado.tentativas}).`);
   reconectar(atraso);
   return { acao: 'reconectar', atraso };
+}
+
+// Abre o socket a pedido do operador (botao "Gerar QR" em /admin/whatsapp). So age quando nao ha
+// socket: com sessao conectada ou pareamento em andamento, nao faz nada. POST, nunca GET — um
+// refresh de navegador nao pode iniciar pareamento.
+async function iniciarPareamento() {
+  if (estado.socket) return { iniciado: false, motivo: 'ja_ha_socket' };
+  if (!ligado()) return { iniciado: false, motivo: 'baileys_desligado' };
+  if (estado.timerReconexao) {
+    clearTimeout(estado.timerReconexao);
+    estado.timerReconexao = null;
+  }
+  await conectar();
+  return { iniciado: true };
 }
 
 function agendarReconexao(atrasoMs) {
@@ -345,6 +374,7 @@ module.exports = {
   qrAtual,
   limparQr,
   tratarUpdate,
+  iniciarPareamento,
   shouldReconnect,
   isRestartRequired,
   atrasoBackoff,

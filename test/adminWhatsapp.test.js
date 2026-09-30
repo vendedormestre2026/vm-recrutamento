@@ -230,7 +230,10 @@ test('a tela renderiza e NAO usa <img src> para o QR', async () => {
     // SameSite, e a rota e protegida — renderizaria a tela de login dentro do <img>, ou nada,
     // sem dizer por que. O QR vem por fetch e e injetado no DOM.
     assert.doesNotMatch(html, /<img[^>]+qr\.svg/);
-    assert.match(html, /fetch\('\/admin\/whatsapp\/qr\.svg'/);
+    // Sem extensao e com parametro que muda a cada pedido: o Cloudflare guardava o /qr.svg em
+    // cache (inclusive o 404) e a tela ficava sem QR com o servidor gerando normalmente.
+    assert.match(html, /fetch\('\/admin\/whatsapp\/qr\?t=' \+ Date\.now\(\)/);
+    assert.doesNotMatch(html, /fetch\('\/admin\/whatsapp\/qr\.svg'/);
     assert.match(html, /credentials: 'same-origin'/);
     // Polling de ~3s, como pedido.
     assert.match(html, /setInterval\(ciclo, 3000\)/);
@@ -258,5 +261,35 @@ test('a tela NAO abre conexao — nenhum socket e criado ao visita-la', async ()
     await fetch(`${base}/admin/whatsapp/status`, { headers: comAuth() });
     assert.equal(conn.status().status, 'desconectado');
     assert.equal(conn.status().tentativas, 0);
+  });
+});
+
+// ══════════════════ CACHE E BOTAO "GERAR QR" (2026-09-30) ══════════════════
+
+test('/qr, /qr.svg e /status saem com no-store, inclusive o 404', async () => {
+  comEstado(null);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    for (const caminho of ['/admin/whatsapp/qr', '/admin/whatsapp/qr.svg', '/admin/whatsapp/status']) {
+      const res = await fetch(`${base}${caminho}`, { headers: comAuth() });
+      assert.match(res.headers.get('cache-control') || '', /no-store/, `${caminho} sem no-store`);
+    }
+  });
+  comEstado('QR-DE-TESTE');
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const res = await fetch(`${base}/admin/whatsapp/qr`, { headers: comAuth() });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') || '', /svg/);
+  });
+});
+
+test('a tela tem o botao "Gerar QR" (POST /admin/whatsapp/parear)', async () => {
+  comEstado(null);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const html = await (await fetch(`${base}/admin/whatsapp`, { headers: comAuth() })).text();
+    assert.match(html, /<form id="wa-parear" method="POST" action="\/admin\/whatsapp\/parear"/);
+    assert.match(html, />Gerar QR</);
   });
 });
