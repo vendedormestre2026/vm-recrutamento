@@ -229,6 +229,7 @@ module.exports = {
   listarCandidaturasVagasAbertas: driver.listarCandidaturasVagasAbertas,
   criarCampanhaMassaWa: driver.criarCampanhaMassaWa,
   listarCampanhasMassaWa: driver.listarCampanhasMassaWa,
+  excluirCampanhaMassaWa: driver.excluirCampanhaMassaWa,
   obterCampanhaMassaWa: driver.obterCampanhaMassaWa,
   listarCampanhasMassaWaAtivas: driver.listarCampanhasMassaWaAtivas,
   atualizarCampanhaMassaWa: driver.atualizarCampanhaMassaWa,
