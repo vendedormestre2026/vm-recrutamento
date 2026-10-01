@@ -938,3 +938,21 @@ test('o painel mostra o cronograma previsto, e a soma dos dias e o total pendent
     assert.ok(porDia.every((n) => n <= 3), 'nenhum dia passa do teto');
   });
 });
+
+test('o painel mostra a linha de cada reconciliacao da fila', async () => {
+  limpar();
+  const jobId = criarVaga();
+  criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await post(base, '/admin/massa-wa', { nome: 'C', job_id: String(jobId), status: ['sem_decisao'] });
+    const id = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${id}/materializar`, { excluir_ja_receberam: '1' });
+    const c = JSON.parse(db.obterCampanhaMassaWa(id).criterios_json);
+    c.reconciliacoes = [{ em: '2026-10-01 22:10:00', origem: 'reconciliacao', motivo: '47 sem destino', adicionados: 47 }];
+    db.getDb().prepare('UPDATE campanhas_massa_wa SET criterios_json = ? WHERE id = ?').run(JSON.stringify(c), id);
+    const html = (await get(base, `/admin/massa-wa/${id}`)).replace(/\s+/g, ' ');
+    assert.match(html, /Criada em/);
+    assert.match(html, /\+ <b>47<\/b> adicionado\(s\) em 01\/10 19:10 por reconciliação: 47 sem destino\./);
+  });
+});

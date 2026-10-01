@@ -4834,6 +4834,65 @@ function telefonesComDisparoMassaWaEnviado() {
   return new Set(recebedoresDisparoMassaWa().keys());
 }
 
+// Chaves canonicas que JA estao na fila desta campanha, em qualquer status. E o que o script de
+// completar fila usa para nao tentar inserir de novo quem ja esta la (o ON CONFLICT seguraria, mas
+// o dry-run precisa saber a lista antes de gravar).
+function telefonesNaFilaMassaWa(campanhaId) {
+  return new Set(
+    getDb()
+      .prepare('SELECT telefone_canonico t FROM campanhas_massa_wa_envios WHERE campanha_id = ?')
+      .all(campanhaId)
+      .map((r) => r.t),
+  );
+}
+
+// Completa a fila de uma campanha JA materializada, numa transacao: insere os itens novos e anota
+// a reconciliacao no criterios_json, ou nada.
+//
+// Os itens entram com id MAIOR que os ja existentes (AUTOINCREMENT), e o worker le a fila por
+// `ORDER BY e.id` — entao quem ja estava pendente continua saindo primeiro, sem reordenar nada.
+// O ON CONFLICT e a mesma ultima defesa de materializarCampanhaMassaWa.
+//
+// `registro` vai para criterios.reconciliacoes[] com os ids criados: a fila nao tem coluna de
+// origem, e este e o rastro que diz, depois, quais linhas vieram de reconciliacao.
+function completarFilaCampanhaMassaWa(campanhaId, itens = [], registro = {}) {
+  const db = getDb();
+  const inserir = db.prepare(
+    `INSERT INTO campanhas_massa_wa_envios
+       (campanha_id, telefone, telefone_canonico, nome, application_id, job_id)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(campanha_id, telefone_canonico) DO NOTHING`,
+  );
+  return db.transaction(() => {
+    const ids = [];
+    const applicationIds = [];
+    for (const i of itens) {
+      const r = inserir.run(campanhaId, i.telefone, i.telefoneCanonico, i.nome || null, i.applicationId || null, i.jobId || null);
+      if (r.changes) {
+        ids.push(Number(r.lastInsertRowid));
+        applicationIds.push(i.applicationId || null);
+      }
+    }
+    const c = db.prepare('SELECT criterios_json FROM campanhas_massa_wa WHERE id = ?').get(campanhaId);
+    let criterios = {};
+    try {
+      criterios = JSON.parse((c && c.criterios_json) || '{}');
+    } catch {
+      criterios = {};
+    }
+    if (ids.length) {
+      criterios.reconciliacoes = [
+        ...(criterios.reconciliacoes || []),
+        { ...registro, adicionados: ids.length, envioIds: ids, applicationIds },
+      ];
+    }
+    const total = db.prepare('SELECT COUNT(*) n FROM campanhas_massa_wa_envios WHERE campanha_id = ?').get(campanhaId).n;
+    db.prepare('UPDATE campanhas_massa_wa SET criterios_json = ?, total_estimado = ? WHERE id = ?')
+      .run(JSON.stringify(criterios), total, campanhaId);
+    return { adicionados: ids.length, ids, total };
+  })();
+}
+
 // Status terminal do envio que SAIU do nosso lado mas nao tinha destino (ver schema.sql).
 const STATUS_SEM_DESTINO = 'sem_destino';
 
@@ -5140,6 +5199,8 @@ module.exports = {
   materializarCampanhaMassaWa,
   recebedoresDisparoMassaWa,
   telefonesComDisparoMassaWaEnviado,
+  telefonesNaFilaMassaWa,
+  completarFilaCampanhaMassaWa,
   STATUS_SEM_DESTINO,
   reclassificarEnviosMassaWaSemDestino,
   listarEnviosCampanhaMassaWa,

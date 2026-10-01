@@ -243,6 +243,8 @@ module.exports = {
   materializarCampanhaMassaWa: driver.materializarCampanhaMassaWa,
   recebedoresDisparoMassaWa: driver.recebedoresDisparoMassaWa,
   telefonesComDisparoMassaWaEnviado: driver.telefonesComDisparoMassaWaEnviado,
+  telefonesNaFilaMassaWa: driver.telefonesNaFilaMassaWa,
+  completarFilaCampanhaMassaWa: driver.completarFilaCampanhaMassaWa,
   STATUS_SEM_DESTINO: driver.STATUS_SEM_DESTINO,
   reclassificarEnviosMassaWaSemDestino: driver.reclassificarEnviosMassaWaSemDestino,
   listarEnviosCampanhaMassaWa: driver.listarEnviosCampanhaMassaWa,
