@@ -56,6 +56,9 @@ const ROTULO_ENVIO = {
   sem_whatsapp: 'Sem WhatsApp',
   sem_reuniao: 'Vaga sem data',
   cancelado: 'Cancelado (campanha excluída)',
+  // Saiu do nosso lado e nao tinha aparelho do outro (campanha 3, antes da correcao do nono
+  // digito). NAO conta como enviada em lugar nenhum, e a pessoa volta ao publico.
+  sem_destino: 'Sem destino',
 };
 
 // Rotulos dos status do recrutador, para os checkboxes do publico.

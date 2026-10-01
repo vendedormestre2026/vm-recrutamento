@@ -928,8 +928,13 @@ CREATE TABLE IF NOT EXISTS campanhas_massa_wa_envios (
   variacao_indice   INTEGER,
   status            TEXT NOT NULL DEFAULT 'pendente',
                     -- 'pendente' | 'enviado' | 'falha' | 'opt_out' | 'sem_whatsapp'
-                    --            | 'sem_reuniao'
-                    -- Os quatro ultimos sao TERMINAIS e NAO retornam a fila. Distinguir e o
+                    --            | 'sem_reuniao' | 'cancelado' | 'sem_destino'
+                    -- 'sem_destino' (2026-10-01): o envio SAIU do nosso lado mas nao tinha
+                    -- aparelho do outro ("USync fetch yielded no results" no log). Hoje so existe
+                    -- por reclassificacao da campanha 3, enviada antes da correcao do nono digito
+                    -- (commit 91196f4); o worker atual vira 'sem_whatsapp' antes de enviar. NAO
+                    -- conta como recebido: quem esta nele volta ao publico.
+                    -- Todos menos 'pendente' sao TERMINAIS e NAO retornam a fila. Distinguir e o
                     -- ponto: 'falha' e problema tecnico (pode merecer retentativa manual),
                     -- 'opt_out' e vontade da pessoa, 'sem_whatsapp' e numero que nao existe,
                     -- e 'sem_reuniao' e falta de dado NOSSO (a vaga do candidato nao tem

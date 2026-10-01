@@ -4797,19 +4797,32 @@ function materializarCampanhaMassaWa(campanhaId, itens = []) {
   return gravar();
 }
 
-// Telefones (chave canonica) que ja tem envio 'enviado' em QUALQUER campanha de disparo em massa.
-// Usado para tirar da fila nova quem ja recebeu (opcao "Excluir quem ja recebeu" ao materializar).
+// Quem JA RECEBEU disparo em massa: chave canonica -> campanha (a primeira) em que recebeu.
 //
-// ⚠️ 'enviado' nao e garantia de entrega: na campanha 3 (2026-09-29) 46 dos 50 'enviados' nunca
-// chegaram (nono digito). Excluir por aqui pega quem recebeu E esses 46 — o lado seguro.
+// E a UNICA definicao de "ja recebeu" do subsistema: a previa (lib/publicoMassaWhatsapp), a
+// materializacao e o script de completar fila passam todos por aqui. Duas leituras dessa regra
+// divergiriam no primeiro ajuste, e o sintoma seria a previa prometer um numero que a fila nao tem
+// (foi exatamente o que aconteceu na campanha 6, quando so a materializacao aplicava o corte).
+//
+// So conta status = 'enviado'. 'sem_destino' NAO conta: e o envio que o Baileys aceitou mas que
+// nao tinha aparelho do outro lado (ver a nota de 'sem_destino' no schema) — a pessoa nunca
+// recebeu, e deve voltar ao publico.
+function recebedoresDisparoMassaWa() {
+  const mapa = new Map();
+  for (const r of getDb()
+    .prepare(
+      `SELECT telefone_canonico t, MIN(campanha_id) c FROM campanhas_massa_wa_envios
+        WHERE status = 'enviado' GROUP BY telefone_canonico`,
+    )
+    .all()) {
+    if (r.t) mapa.set(r.t, r.c);
+  }
+  return mapa;
+}
+
+// O mesmo conjunto, so as chaves. Mantido porque e a forma que os testes e a tela de excluir ja usam.
 function telefonesComDisparoMassaWaEnviado() {
-  return new Set(
-    getDb()
-      .prepare(`SELECT DISTINCT telefone_canonico t FROM campanhas_massa_wa_envios WHERE status = 'enviado'`)
-      .all()
-      .map((r) => r.t)
-      .filter(Boolean),
-  );
+  return new Set(recebedoresDisparoMassaWa().keys());
 }
 
 // Pendentes de UMA campanha, com o que a mensagem precisa.
@@ -5048,6 +5061,7 @@ module.exports = {
   salvarVariacoesMassaWa,
   listarVariacoesMassaWa,
   materializarCampanhaMassaWa,
+  recebedoresDisparoMassaWa,
   telefonesComDisparoMassaWaEnviado,
   listarPendentesCampanhaMassaWa,
   marcarEnvioMassaWaEnviado,
