@@ -47,6 +47,15 @@ let _db = null;
 function getDb() {
   if (_db) return _db;
 
+  // DATABASE_READONLY=1: conexao SOMENTE LEITURA, para o dry-run de scripts que rodam contra o
+  // banco de producao (railway ssh). E o SQLite que recusa a escrita, e nao a disciplina do
+  // script — um UPDATE esquecido num caminho de dry-run estoura em vez de gravar.
+  if (process.env.DATABASE_READONLY === '1') {
+    _db = new Database(config.caminhoBanco, { readonly: true, fileMustExist: true });
+    _db.pragma('foreign_keys = ON');
+    return _db;
+  }
+
   // Garante que a pasta do arquivo exista (ex.: ./data ou /data).
   const dir = path.dirname(config.caminhoBanco);
   fs.mkdirSync(dir, { recursive: true });
@@ -4825,6 +4834,74 @@ function telefonesComDisparoMassaWaEnviado() {
   return new Set(recebedoresDisparoMassaWa().keys());
 }
 
+// Status terminal do envio que SAIU do nosso lado mas nao tinha destino (ver schema.sql).
+const STATUS_SEM_DESTINO = 'sem_destino';
+
+// Reclassifica envios 'enviado' de UMA campanha como 'sem_destino', por application_id.
+//
+// Tudo-ou-nada e conferido NA MESMA transacao da escrita: cada application tem que ter exatamente
+// uma linha na campanha, em 'enviado' (vai mudar) ou ja em 'sem_destino' (rodada anterior — e o que
+// faz a segunda execucao ser 0 alteracoes). Qualquer outro estado e problema, e com problema nada e
+// gravado: a lista foi montada a partir de evidencia de log, e uma linha fora do estado esperado
+// significa que o banco mudou desde a analise.
+//
+// `enviado_em` e preservado (a mensagem SAIU naquele instante; so nao chegou). `erro` guarda a
+// evidencia. Com `commit: false` so devolve o plano.
+function reclassificarEnviosMassaWaSemDestino(campanhaId, applicationIds = [], erro, { commit = false } = {}) {
+  const db = getDb();
+  return db.transaction(() => {
+    const linhas = db
+      .prepare(
+        `SELECT id, application_id, status, enviado_em, erro FROM campanhas_massa_wa_envios
+          WHERE campanha_id = ? ORDER BY id`,
+      )
+      .all(campanhaId);
+    const porApp = new Map();
+    for (const l of linhas) {
+      if (!porApp.has(l.application_id)) porApp.set(l.application_id, []);
+      porApp.get(l.application_id).push(l);
+    }
+    const plano = [];
+    const jaReclassificados = [];
+    const problemas = [];
+    for (const appId of applicationIds) {
+      const achadas = porApp.get(appId) || [];
+      if (achadas.length !== 1) {
+        problemas.push({ applicationId: appId, motivo: `${achadas.length} linhas na campanha ${campanhaId}` });
+      } else if (achadas[0].status === 'enviado') {
+        plano.push(achadas[0]);
+      } else if (achadas[0].status === STATUS_SEM_DESTINO) {
+        jaReclassificados.push(achadas[0]);
+      } else {
+        problemas.push({ applicationId: appId, motivo: `status '${achadas[0].status}'` });
+      }
+    }
+    if (problemas.length || !commit) return { plano, jaReclassificados, problemas, alterados: 0 };
+
+    const stmt = db.prepare(
+      `UPDATE campanhas_massa_wa_envios SET status = ?, erro = ?
+        WHERE id = ? AND campanha_id = ? AND status = 'enviado'`,
+    );
+    let alterados = 0;
+    for (const l of plano) {
+      // changes != 1 aqui e corrida (alguem mexeu na linha entre o SELECT e o UPDATE): lancar
+      // desfaz a transacao inteira, que e o "aborta sem gravar nada" pedido.
+      if (stmt.run(STATUS_SEM_DESTINO, erro == null ? null : String(erro).slice(0, 300), l.id, campanhaId).changes !== 1) {
+        throw new Error(`envio ${l.id} mudou durante a reclassificacao; nada foi gravado.`);
+      }
+      alterados += 1;
+    }
+    return { plano, jaReclassificados, problemas, alterados };
+  })();
+}
+
+// Linhas cruas de uma campanha, para BACKUP antes de reclassificar.
+function listarEnviosCampanhaMassaWa(campanhaId) {
+  return getDb()
+    .prepare('SELECT * FROM campanhas_massa_wa_envios WHERE campanha_id = ? ORDER BY id')
+    .all(campanhaId);
+}
+
 // Pendentes de UMA campanha, com o que a mensagem precisa.
 //
 // ── POR QUE A VAGA VEM POR JOIN, E COM OS CAMPOS DA ENTREVISTA EM GRUPO ──
@@ -5063,6 +5140,9 @@ module.exports = {
   materializarCampanhaMassaWa,
   recebedoresDisparoMassaWa,
   telefonesComDisparoMassaWaEnviado,
+  STATUS_SEM_DESTINO,
+  reclassificarEnviosMassaWaSemDestino,
+  listarEnviosCampanhaMassaWa,
   listarPendentesCampanhaMassaWa,
   marcarEnvioMassaWaEnviado,
   registrarTentativaEnvioMassaWa,
