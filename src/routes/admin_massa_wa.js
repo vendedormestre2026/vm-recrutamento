@@ -34,7 +34,7 @@ const publico = require('../lib/publicoMassaWhatsapp');
 const { normalizarTelefoneWhatsapp } = require('../lib/whatsapp');
 const { proximaEntrevistaGrupo, temEntrevistaGrupoFutura } = require('../lib/entrevistaGrupo');
 const { config } = require('../config');
-const { partesBrasilia, paraTextoSqlUtc } = require('../lib/fusoBrasilia');
+const { partesBrasilia, paraTextoSqlUtc, inicioDoDiaBrasiliaUtc } = require('../lib/fusoBrasilia');
 
 // Rotulos dos status da campanha. Aqui (apresentacao), nao na lib.
 const ROTULO_STATUS = {
@@ -613,9 +613,36 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           <div><dt>Total na fila</dt><dd>${fmtInt(total)}</dd></div>
           ${campanha.proximo_envio_em ? `<div><dt>Próximo lote a partir de</dt><dd>${escapeHtml(formatarDataHora(campanha.proximo_envio_em))} (UTC)</dd></div>` : ''}
         </dl>
+        ${blocoCronograma(campanha, resumo.pendente || 0)}
         ${distHtml}
         ${enviadas && !dist.length ? '<p class="aviso-alerta">Há mensagens enviadas sem variação registrada — verifique o log.</p>' : ''}
       </section>`;
+  }
+
+  const NOME_DIA = { 1: 'segunda', 2: 'terça', 3: 'quarta', 4: 'quinta', 5: 'sexta', 6: 'sábado', 7: 'domingo' };
+
+  // Cronograma PREVISTO dos pendentes: quantos saem hoje e em cada dia seguinte, pela mesma regra do
+  // worker (teto diario, fim da janela, dias da semana, dia civil de Brasilia). So leitura — ver
+  // projetarCronograma em lib/cadenciaMassaWa.
+  function blocoCronograma(campanha, pendentes) {
+    if (!pendentes || ['concluida', 'cancelada', 'excluida'].includes(campanha.status)) return '';
+    const agora = new Date();
+    const enviadosHoje = db.contarEnviosMassaWaDesde(campanha.id, paraTextoSqlUtc(inicioDoDiaBrasiliaUtc(agora)));
+    const prev = cadencia.projetarCronograma({ pendentes, enviadosHoje, agora, cadencia: cadencia.resolverCadencia(campanha) });
+    const dd = (n) => String(n).padStart(2, '0');
+    const itens = prev.dias.map((d) => {
+      const [, m, dia] = d.data.split('-');
+      return `<li>${NOME_DIA[d.diaSemanaIso]}, ${dd(dia)}/${dd(m)} → <b>${fmtInt(d.quantidade)}</b></li>`;
+    }).join('');
+    return `
+        <p style="font-size:.88rem;margin:.8rem 0 .3rem;">
+          Hoje na fila: <b>${fmtInt(prev.hoje)}</b> · Restante agendado para os próximos dias: <b>${fmtInt(prev.restante)}</b></p>
+        <ul style="font-size:.85rem;margin:0 0 .3rem;padding-left:1.2rem;">${itens}</ul>
+        ${prev.completo ? '' : '<p class="aviso-alerta">Com este teto e estes dias, a fila não termina — revise a cadência.</p>'}
+        <p style="color:var(--cinza);font-size:.8rem;margin:0;">
+          Previsão pelo teto de ${fmtInt(cadencia.resolverCadencia(campanha).tetoDiario)}/dia, a janela e os dias
+          da campanha (horário de Brasília). Não muda o envio${campanha.status === 'ativa' ? '' : ', e só vale com a campanha ativa'};
+          pausas, falhas e números sem WhatsApp mudam a conta.</p>`;
   }
 
   // "Criada em 01/10 11:20: 74 do público − 62 já receberam − 0 pelo limite = 12 na fila", mais uma

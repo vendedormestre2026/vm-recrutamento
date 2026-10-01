@@ -193,3 +193,51 @@ test('lote sem falha nenhuma nunca estoura', () => {
   assert.equal(cad.taxaDeFalhaEstourou(8, 0), false);
   assert.equal(cad.taxaDeFalhaEstourou(0, 0), false);
 });
+
+// ══════════════════ CRONOGRAMA PREVISTO (2026-10-01) ══════════════════
+
+// Campanha 6: sexta e sabado, 08h-20h, 42/dia. Fila completa = 12 + 47 = 59.
+const CAMPANHA_6 = cad.resolverCadencia({ teto_diario: 42, hora_inicio: '08:00', hora_fim: '20:00', dias_semana: '5,6' });
+
+test('cronograma: 59 na fila, 42/dia, sexta e sabado -> 42 na sexta e 17 no sabado', () => {
+  // Quinta-feira 01/10/2026 14h em Brasilia: hoje nao e dia permitido.
+  const r = cad.projetarCronograma({ pendentes: 59, agora: brt(2026, 10, 1, 14), cadencia: CAMPANHA_6 });
+  assert.deepEqual(r.dias, [
+    { data: '2026-10-02', diaSemanaIso: 5, quantidade: 42 },
+    { data: '2026-10-03', diaSemanaIso: 6, quantidade: 17 },
+  ]);
+  assert.equal(r.hoje, 0);
+  assert.equal(r.restante, 59);
+  assert.equal(r.completo, true);
+});
+
+test('cronograma: hoje desconta o que ja saiu e respeita o fim da janela', () => {
+  // Sexta 10h, 10 ja enviadas hoje: sobram 32 hoje, o resto no sabado.
+  const sexta = cad.projetarCronograma({ pendentes: 59, enviadosHoje: 10, agora: brt(2026, 10, 2, 10), cadencia: CAMPANHA_6 });
+  assert.equal(sexta.hoje, 32);
+  assert.equal(sexta.restante, 27);
+  assert.deepEqual(sexta.dias.map((d) => d.quantidade), [32, 27]);
+
+  // Sexta 20h: a janela (fim exclusivo) fechou; nada hoje. Sabado 42, e a sobra pula para a
+  // sexta seguinte — domingo a quinta nao sao dias da campanha.
+  const noite = cad.projetarCronograma({ pendentes: 59, agora: brt(2026, 10, 2, 20), cadencia: CAMPANHA_6 });
+  assert.equal(noite.hoje, 0);
+  assert.deepEqual(noite.dias, [
+    { data: '2026-10-03', diaSemanaIso: 6, quantidade: 42 },
+    { data: '2026-10-09', diaSemanaIso: 5, quantidade: 17 },
+  ]);
+});
+
+test('cronograma: o dia civil e o de Brasilia, nao o de UTC', () => {
+  // Quinta 22h em Brasilia = sexta 01h UTC. Em UTC "hoje" seria sexta e sairiam 42 hoje.
+  const r = cad.projetarCronograma({ pendentes: 10, agora: brt(2026, 10, 1, 22), cadencia: CAMPANHA_6 });
+  assert.equal(r.hoje, 0);
+  assert.equal(r.dias[0].data, '2026-10-02');
+});
+
+test('cronograma: teto zero nao trava em laco e avisa que nao completa', () => {
+  const zero = cad.resolverCadencia({ teto_diario: 0, dias_semana: '5,6' });
+  const r = cad.projetarCronograma({ pendentes: 5, agora: brt(2026, 10, 1, 14), cadencia: zero });
+  assert.equal(r.completo, false);
+  assert.deepEqual(r.dias, []);
+});

@@ -195,6 +195,47 @@ function taxaDeFalhaEstourou(tentativas, falhas) {
   return falhas / tentativas > TAXA_FALHA_LOTE_LIMITE;
 }
 
+// ── CRONOGRAMA PREVISTO (so leitura; o worker nao usa) ──
+//
+// "Quantos saem em cada dia?" para a tela. A fila nao tem data por item: o worker so decide, a
+// cada tick, se esta na janela e quanto falta do teto do DIA (ver massaOutbox). Esta funcao refaz
+// essa conta para frente, dia a dia, pelos mesmos tres parametros: dias da semana, fim da janela
+// e teto diario — sempre no dia civil de BRASILIA, como o worker.
+//
+// HOJE so conta se hoje e dia permitido e a janela ainda nao fechou; o que ja saiu hoje
+// (`enviadosHoje`) sai do teto de hoje. Os dias seguintes valem o teto cheio.
+//
+// E PROJECAO, e a tela diz isso: pausa, disjuntor, numero sem WhatsApp e socket caido mudam a
+// conta. Ela assume que a janela comporta o teto (a tela ja mostra o ritmo em textoRitmo).
+//
+// Os dias sao datas CIVIS ('YYYY-MM-DD'), e o dia da semana sai da propria data — aritmetica de
+// calendario, sem fuso no meio. `maxDias` impede laco infinito quando teto ou dias nao deixam a
+// fila andar; nesse caso `completo` vem false.
+function projetarCronograma({ pendentes, enviadosHoje = 0, agora, cadencia, maxDias = 366 } = {}) {
+  let restante = Math.max(0, Number(pendentes) || 0);
+  const teto = Math.max(0, Number(cadencia.tetoDiario) || 0);
+  const p = partesBrasilia(agora);
+  const dias = [];
+  let hoje = 0;
+  if (!p) return { hoje, restante, dias, completo: restante === 0 };
+
+  for (let k = 0; restante > 0 && k <= maxDias; k += 1) {
+    const d = new Date(Date.UTC(p.ano, p.mes - 1, p.dia + k));
+    const diaSemanaIso = ((d.getUTCDay() + 6) % 7) + 1;
+    if (!cadencia.dias.has(diaSemanaIso)) continue;
+    let capacidade = teto;
+    if (k === 0) {
+      capacidade = p.minutosDoDia < cadencia.horaFimMin ? Math.max(0, teto - (Number(enviadosHoje) || 0)) : 0;
+    }
+    const quantidade = Math.min(capacidade, restante);
+    if (!quantidade) continue;
+    restante -= quantidade;
+    if (k === 0) hoje = quantidade;
+    dias.push({ data: d.toISOString().slice(0, 10), diaSemanaIso, quantidade });
+  }
+  return { hoje, restante: Math.max(0, (Number(pendentes) || 0) - hoje), dias, completo: restante === 0 };
+}
+
 module.exports = {
   PADRAO,
   PISO,
@@ -215,4 +256,5 @@ module.exports = {
   gapMs,
   pausaLoteMs,
   taxaDeFalhaEstourou,
+  projetarCronograma,
 };

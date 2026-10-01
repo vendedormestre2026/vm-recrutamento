@@ -914,3 +914,27 @@ test('campanha antiga, sem registro de materializacao, mostra a fila sem a linha
     assert.doesNotMatch(html, /Criada em/);
   });
 });
+
+// ══════════════════ CRONOGRAMA NO PAINEL (2026-10-01) ══════════════════
+
+test('o painel mostra o cronograma previsto, e a soma dos dias e o total pendente', async () => {
+  limpar();
+  const jobId = criarVaga();
+  for (let i = 0; i < 7; i += 1) criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    // Todos os dias, teto 3: 7 pendentes viram 3 + 3 + 1 (ou comecam hoje, se a janela deixar).
+    await post(base, '/admin/massa-wa', {
+      nome: 'C', job_id: String(jobId), status: ['sem_decisao'], teto_diario: '3', dias_semana: '1,2,3,4,5,6,7',
+    });
+    const id = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${id}/materializar`, {});
+    const html = (await get(base, `/admin/massa-wa/${id}`)).replace(/\s+/g, ' ');
+    const m = /Hoje na fila: <b>(\d+)<\/b> · Restante agendado para os próximos dias: <b>(\d+)<\/b>/.exec(html);
+    assert.ok(m, 'linha de hoje/restante');
+    assert.equal(Number(m[1]) + Number(m[2]), 7);
+    const porDia = [...html.matchAll(/→ <b>(\d+)<\/b>/g)].map((x) => Number(x[1]));
+    assert.equal(porDia.reduce((a, b) => a + b, 0), 7);
+    assert.ok(porDia.every((n) => n <= 3), 'nenhum dia passa do teto');
+  });
+});
