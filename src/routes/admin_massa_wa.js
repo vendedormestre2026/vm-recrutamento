@@ -42,6 +42,7 @@ const ROTULO_STATUS = {
   pausada: 'Pausada',
   concluida: 'Concluída',
   cancelada: 'Cancelada',
+  excluida: 'Excluída',
 };
 
 // Rotulos dos status de cada ENVIO. Os quatro terminais tem nomes distintos de proposito: e a
@@ -54,6 +55,7 @@ const ROTULO_ENVIO = {
   opt_out: 'Pediu para sair',
   sem_whatsapp: 'Sem WhatsApp',
   sem_reuniao: 'Vaga sem data',
+  cancelado: 'Cancelado (campanha excluída)',
 };
 
 // Rotulos dos status do recrutador, para os checkboxes do publico.
@@ -109,6 +111,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     ativada: ['ok', 'Campanha ATIVA. O envio respeita a cadência, a janela de horário e o teto diário.'],
     pausada: ['ok', 'Campanha pausada. Ela não volta sozinha.'],
     cancelada: ['ok', 'Campanha cancelada. Este status é definitivo.'],
+    excluida: ['ok', 'Campanha excluída. A fila que ainda não tinha saído foi cancelada.'],
     teste_enviado: ['ok', 'Mensagem de teste enviada para o número informado.'],
     teste_mock: ['alerta', 'MODO MOCK: a mensagem NÃO saiu. O texto que sairia está no log do servidor.'],
   };
@@ -293,6 +296,13 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
               ${c.pausada_motivo ? `<br><small style="color:var(--cinza)">${escapeHtml(c.pausada_motivo)}</small>` : ''}</td>
             <td>${fmtInt(r.enviado || 0)} / ${fmtInt(total)}</td>
             <td>${formatarDataHora(c.criado_em)}</td>
+            <td>
+              <form method="POST" action="/admin/massa-wa/${c.id}/excluir"
+                data-confirm="A campanha “${escapeHtml(c.nome)}” sai da lista e ${fmtInt(r.pendente || 0)} mensagem(ns) ainda na fila são canceladas. Quem já recebeu continua registrado (não volta para o público de campanhas futuras)."
+                data-confirm-titulo="Excluir campanha?" data-confirm-texto="Excluir" data-confirm-destrutivo="1">
+                <button type="submit" class="btn btn--ghost" style="color:var(--vermelho, #b3261e);">Excluir</button>
+              </form>
+            </td>
           </tr>`;
       })
       .join('');
@@ -313,8 +323,8 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
         <h2>Campanhas</h2>
         <div class="admin-tab-scroll">
           <table class="admin-tab">
-            <thead><tr><th>Nome</th><th>Vaga</th><th>Status</th><th>Enviadas</th><th>Criada em</th></tr></thead>
-            <tbody>${linhas || '<tr><td colspan="5">Nenhuma campanha ainda.</td></tr>'}</tbody>
+            <thead><tr><th>Nome</th><th>Vaga</th><th>Status</th><th>Enviadas</th><th>Criada em</th><th></th></tr></thead>
+            <tbody>${linhas || '<tr><td colspan="6">Nenhuma campanha ainda.</td></tr>'}</tbody>
           </table>
         </div>
       </section>`;
@@ -796,6 +806,18 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     console.log(`[massa-wa] campanha ${id}: status -> ${destino} (painel).`);
     const okPor = { ativa: 'ativada', pausada: 'pausada', cancelada: 'cancelada' };
     return res.redirect(`/admin/massa-wa/${id}?ok=${okPor[destino]}`);
+  });
+
+  // ══════════════════ EXCLUIR ══════════════════
+  //
+  // Soft delete: ver excluirCampanhaMassaWa em db/sqlite.js para por que nada e apagado.
+  router.post('/:id/excluir', (req, res) => {
+    const id = Number(req.params.id);
+    const campanha = db.obterCampanhaMassaWa(id);
+    if (!campanha) return res.status(404).send(paginaAdmin({ titulo: 'Campanha', conteudo: '<h1>Campanha não encontrada.</h1>' }));
+    const canceladas = db.excluirCampanhaMassaWa(id);
+    console.log(`[massa-wa] campanha ${id} excluida no painel (era ${campanha.status}); ${canceladas} envio(s) pendente(s) cancelado(s).`);
+    return res.redirect('/admin/massa-wa?ok=excluida');
   });
 
   // ══════════════════ TESTE PARA 1 NUMERO ══════════════════

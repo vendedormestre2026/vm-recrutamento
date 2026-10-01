@@ -731,3 +731,55 @@ test('a tela de fila oferece os dois recortes, com "excluir" marcado por padrao'
     assert.match(html, /name="excluir_ja_receberam" value="1" checked/);
   });
 });
+
+// ══════════════════ EXCLUIR CAMPANHA (2026-10-01) ══════════════════
+
+test('excluir: some da lista, cancela a fila pendente e GUARDA quem ja recebeu', async () => {
+  limpar();
+  const jobId = criarVaga();
+  for (let i = 0; i < 3; i += 1) criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await post(base, '/admin/massa-wa', { nome: 'Teste velho', job_id: String(jobId), status: ['sem_decisao'] });
+    const id = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${id}/materializar`, {});
+    const linhas = db.getDb().prepare('SELECT id FROM campanhas_massa_wa_envios WHERE campanha_id = ? ORDER BY id').all(id);
+    db.marcarEnvioMassaWaEnviado(linhas[0].id, {});
+
+    let html = await get(base, '/admin/massa-wa');
+    assert.match(html, new RegExp(`action="/admin/massa-wa/${id}/excluir"`));
+    assert.match(html, /data-confirm-titulo="Excluir campanha\?"/);
+
+    const r = await post(base, `/admin/massa-wa/${id}/excluir`, {});
+    assert.equal(r.status, 302);
+    assert.match(r.headers.get('location'), /ok=excluida/);
+
+    html = await get(base, '/admin/massa-wa');
+    assert.doesNotMatch(html, /Teste velho/, 'a campanha sai da lista');
+    const porStatus = Object.fromEntries(db.resumoCampanhaMassaWa(id).map((l) => [l.status, l.n]));
+    assert.deepEqual(porStatus, { enviado: 1, cancelado: 2 }, 'pendentes cancelados, enviado preservado');
+    assert.equal(db.obterCampanhaMassaWa(id).status, 'excluida');
+    assert.ok(!db.listarCampanhasMassaWaAtivas().some((c) => c.id === id), 'o worker nunca a ve');
+
+    // Quem ja recebeu continua fora do publico de uma campanha nova.
+    const quemRecebeu = db.getDb().prepare('SELECT telefone_canonico t FROM campanhas_massa_wa_envios WHERE id = ?').get(linhas[0].id).t;
+    assert.ok(db.telefonesComDisparoMassaWaEnviado().has(quemRecebeu));
+  });
+});
+
+test('excluir campanha ATIVA para o envio na hora', async () => {
+  limpar();
+  const jobId = criarVaga();
+  criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await post(base, '/admin/massa-wa', { nome: 'Ativa', job_id: String(jobId), status: ['sem_decisao'] });
+    const id = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${id}/materializar`, {});
+    await post(base, `/admin/massa-wa/${id}/status`, { status: 'ativa' });
+    assert.ok(db.listarCampanhasMassaWaAtivas().some((c) => c.id === id));
+    await post(base, `/admin/massa-wa/${id}/excluir`, {});
+    assert.ok(!db.listarCampanhasMassaWaAtivas().some((c) => c.id === id));
+    assert.equal(db.listarPendentesCampanhaMassaWa(id, { limite: 10 }).length, 0);
+  });
+});

@@ -4576,15 +4576,37 @@ function criarCampanhaMassaWa({ nome, jobId, textoBase, criterios, totalEstimado
 
 // `vaga_titulo` vem por LEFT JOIN porque job_id e NULLABLE aqui (campanha de TODAS as vagas
 // abertas) — mesmo padrao de listarCampanhasWhatsapp.
+// Campanhas EXCLUIDAS (status 'excluida') ficam de fora da lista — ver excluirCampanhaMassaWa.
 function listarCampanhasMassaWa() {
   return getDb()
     .prepare(
       `SELECT c.*, j.titulo AS vaga_titulo
          FROM campanhas_massa_wa c
          LEFT JOIN jobs j ON j.id = c.job_id
+        WHERE c.status <> 'excluida'
         ORDER BY c.id DESC`,
     )
     .all();
+}
+
+// "Excluir" campanha pelo painel (2026-10-01): some da lista e a fila que ainda nao saiu e
+// cancelada. NAO apaga linha nenhuma, de proposito: o historico de 'enviado' e o que a opcao
+// "Excluir quem ja recebeu disparo em massa" consulta (telefonesComDisparoMassaWaEnviado). Apagar
+// de verdade devolveria quem ja recebeu para o publico da proxima campanha.
+//
+// Uma transacao: campanha excluida com fila 'pendente' viva seria uma fila que ninguem ve.
+function excluirCampanhaMassaWa(id) {
+  const db = getDb();
+  return db.transaction(() => {
+    const canceladas = db
+      .prepare(
+        `UPDATE campanhas_massa_wa_envios SET status = 'cancelado', erro = 'campanha excluida no painel'
+          WHERE campanha_id = ? AND status = 'pendente'`,
+      )
+      .run(id).changes;
+    db.prepare(`UPDATE campanhas_massa_wa SET status = 'excluida' WHERE id = ?`).run(id);
+    return canceladas;
+  })();
 }
 
 function obterCampanhaMassaWa(id) {
@@ -5014,6 +5036,7 @@ module.exports = {
   listarCandidaturasVagasAbertas,
   criarCampanhaMassaWa,
   listarCampanhasMassaWa,
+  excluirCampanhaMassaWa,
   obterCampanhaMassaWa,
   listarCampanhasMassaWaAtivas,
   atualizarCampanhaMassaWa,
