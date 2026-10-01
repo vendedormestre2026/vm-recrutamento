@@ -34,6 +34,7 @@ const publico = require('../lib/publicoMassaWhatsapp');
 const { normalizarTelefoneWhatsapp } = require('../lib/whatsapp');
 const { proximaEntrevistaGrupo, temEntrevistaGrupoFutura } = require('../lib/entrevistaGrupo');
 const { config } = require('../config');
+const { partesBrasilia, paraTextoSqlUtc } = require('../lib/fusoBrasilia');
 
 // Rotulos dos status da campanha. Aqui (apresentacao), nao na lib.
 const ROTULO_STATUS = {
@@ -213,14 +214,29 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     ).join('');
   }
 
-  const statusDaCampanha = (campanha) => {
-    let lista = [];
+  // criterios_json inteiro, tolerante a JSON quebrado. Alem de statusList, guarda o registro da
+  // materializacao e das reconciliacoes (ver blocoFila) — por isso quem grava criterios tem que
+  // partir DAQUI e trocar so a sua chave, e nunca reescrever o objeto do zero.
+  const criteriosDaCampanha = (campanha) => {
     try {
-      lista = JSON.parse(campanha.criterios_json || '{}').statusList || [];
+      const c = JSON.parse(campanha.criterios_json || '{}');
+      return c && typeof c === 'object' ? c : {};
     } catch {
-      lista = [];
+      return {};
     }
+  };
+
+  const statusDaCampanha = (campanha) => {
+    const lista = criteriosDaCampanha(campanha).statusList || [];
     return lista.length ? lista : [...publico.STATUS_PADRAO];
+  };
+
+  // Texto SQL UTC ('2026-10-01 14:20:49') -> '01/10 11:20' no relogio de Brasilia.
+  const diaHoraBrasilia = (textoUtc) => {
+    const p = textoUtc ? partesBrasilia(new Date(`${String(textoUtc).replace(' ', 'T')}Z`)) : null;
+    if (!p) return '';
+    const dd = (n) => String(n).padStart(2, '0');
+    return `${dd(p.dia)}/${dd(p.mes)} ${dd(p.hora)}:${dd(p.minuto)}`;
   };
 
   const minutosEmSegundos = (m) => (m == null ? null : m * 60);
@@ -591,6 +607,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     return `
       <section class="rel-sec">
         <h2>Fila e acompanhamento</h2>
+        ${linhaOrigemDaFila(campanha)}
         <dl class="rel-id">
           ${linhas}
           <div><dt>Total na fila</dt><dd>${fmtInt(total)}</dd></div>
@@ -599,6 +616,30 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
         ${distHtml}
         ${enviadas && !dist.length ? '<p class="aviso-alerta">Há mensagens enviadas sem variação registrada — verifique o log.</p>' : ''}
       </section>`;
+  }
+
+  // "Criada em 01/10 11:20: 74 do público − 62 já receberam − 0 pelo limite = 12 na fila", mais uma
+  // linha por reconciliacao. Campanha materializada antes deste registro existir nao tem o dado, e
+  // a linha simplesmente nao aparece — inventar a conta a partir do publico de HOJE seria pior.
+  function linhaOrigemDaFila(campanha) {
+    const c = criteriosDaCampanha(campanha);
+    const m = c.materializacao;
+    const partes = [];
+    if (m && Number.isFinite(m.publico) && Number.isFinite(m.naFila)) {
+      const porCampanha = textoPorCampanha(m.jaReceberamPorCampanha);
+      partes.push(`Criada em ${escapeHtml(diaHoraBrasilia(m.em))}: <b>${fmtInt(m.publico)}</b> do público`
+        + ` − <b>${fmtInt(m.jaReceberam || 0)}</b> já receberam${porCampanha ? ` (${escapeHtml(porCampanha)})` : ''}`
+        + ` − <b>${fmtInt(m.foraPorLimite || 0)}</b> pelo limite`
+        + ` = <b>${fmtInt(m.naFila)}</b> na fila.`
+        + (m.duplicadas ? ` <small>(${fmtInt(m.duplicadas)} candidatura(s) duplicada(s) já contadas como uma pessoa só.)</small>` : '')
+        + (m.excluirJaReceberam === false ? ' <small>(“Excluir quem já recebeu” estava desmarcado.)</small>' : ''));
+    }
+    for (const rc of Array.isArray(c.reconciliacoes) ? c.reconciliacoes : []) {
+      partes.push(`+ <b>${fmtInt(rc.adicionados || 0)}</b> adicionado(s) em ${escapeHtml(diaHoraBrasilia(rc.em))}`
+        + ` por reconciliação${rc.motivo ? `: ${escapeHtml(rc.motivo)}` : ''}.`);
+    }
+    if (!partes.length) return '';
+    return `<p style="font-size:.88rem;margin:0 0 .8rem;">${partes.join('<br>')}</p>`;
   }
 
   function blocoAcoes(campanha) {
@@ -706,7 +747,8 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       nome: d.nome,
       jobId: d.jobId,
       textoBase: d.textoBase,
-      criterios: { statusList: d.statusList },
+      // Mescla, e nao substitui: o registro da materializacao mora no mesmo JSON.
+      criterios: { ...criteriosDaCampanha(campanha), statusList: d.statusList },
       totalEstimado: campanha.total_estimado,
       cadencia: d.cadencia,
     });
@@ -789,7 +831,23 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       nome: campanha.nome,
       jobId: campanha.job_id,
       textoBase: campanha.texto_base,
-      criterios: { statusList: statusDaCampanha(campanha) },
+      criterios: {
+        ...criteriosDaCampanha(campanha),
+        statusList: statusDaCampanha(campanha),
+        // O porque do tamanho da fila, congelado junto com ela. Sem isto, "por que a fila tem 12
+        // se a previa diz 74?" so se responde abrindo o banco (campanha 6, 2026-10-01).
+        materializacao: {
+          em: paraTextoSqlUtc(new Date()),
+          publico: r.funil.pessoas - r.funil.pessoasOptoutCampanha - r.funil.pessoasOptoutAntigo,
+          excluirJaReceberam,
+          jaReceberam: excluirJaReceberam ? r.funil.pessoasJaReceberam : 0,
+          jaReceberamPorCampanha: excluirJaReceberam ? r.funil.jaReceberamPorCampanha : {},
+          limite: maxDestinatarios,
+          foraPorLimite: r.funil.pessoasForaPorLimite,
+          duplicadas: r.funil.candidaturasDuplicadas,
+          naFila: n,
+        },
+      },
       totalEstimado: n,
       cadencia: cadencia.resolverCadencia(campanha),
     });

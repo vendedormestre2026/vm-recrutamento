@@ -852,3 +852,65 @@ test('previa e fila usam o MESMO "ja recebeu": o tamanho da fila e o PUBLICO FIN
     assert.ok(naFila.has(semDestino), "quem ficou 'sem_destino' volta");
   });
 });
+
+// ══════════════════ FILA EXPLICADA (2026-10-01) ══════════════════
+
+test('materializar registra o porque do tamanho da fila, e o painel mostra a conta', async () => {
+  limpar();
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const { anterior, nova } = await cenarioJaReceberam(base);
+    // Publico 4 (depois do opt-out) - 1 ja recebeu = 3; limite 2 corta mais 1.
+    await post(base, `/admin/massa-wa/${nova}/materializar`, { excluir_ja_receberam: '1', max_destinatarios: '2' });
+    const m = JSON.parse(db.obterCampanhaMassaWa(nova).criterios_json).materializacao;
+    assert.equal(m.publico, 4);
+    assert.equal(m.jaReceberam, 1);
+    assert.deepEqual(m.jaReceberamPorCampanha, { [anterior]: 1 });
+    assert.equal(m.limite, 2);
+    assert.equal(m.foraPorLimite, 1);
+    assert.equal(m.naFila, 2);
+    assert.equal(m.publico - m.jaReceberam - m.foraPorLimite, m.naFila);
+    assert.match(m.em, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+
+    const html = (await get(base, `/admin/massa-wa/${nova}`)).replace(/\s+/g, ' ');
+    assert.match(html, new RegExp(
+      `Criada em \\d{2}/\\d{2} \\d{2}:\\d{2}: <b>4</b> do público − <b>1</b> já receberam \\(camp\\. ${anterior}: 1\\) − <b>1</b> pelo limite = <b>2</b> na fila\\.`,
+    ));
+  });
+});
+
+test('salvar a configuracao depois de materializar NAO apaga o registro da materializacao', async () => {
+  limpar();
+  const jobId = criarVaga();
+  criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await post(base, '/admin/massa-wa', { nome: 'C', job_id: String(jobId), status: ['sem_decisao'] });
+    const id = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${id}/materializar`, { excluir_ja_receberam: '1' });
+    await post(base, `/admin/massa-wa/${id}`, { nome: 'C renomeada', job_id: String(jobId), status: ['sem_decisao', 'em_analise'] });
+    const c = JSON.parse(db.obterCampanhaMassaWa(id).criterios_json);
+    assert.deepEqual(c.statusList.sort(), ['em_analise', 'sem_decisao']);
+    assert.equal(c.materializacao.naFila, 1, 'o registro sobrevive a edicao');
+  });
+});
+
+test('campanha antiga, sem registro de materializacao, mostra a fila sem a linha de origem', async () => {
+  limpar();
+  const jobId = criarVaga();
+  criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await post(base, '/admin/massa-wa', { nome: 'Velha', job_id: String(jobId), status: ['sem_decisao'] });
+    const id = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${id}/materializar`, {});
+    // Como uma campanha materializada antes de 2026-10-01: so statusList no JSON.
+    db.getDb().prepare('UPDATE campanhas_massa_wa SET criterios_json = ? WHERE id = ?')
+      .run(JSON.stringify({ statusList: ['sem_decisao'] }), id);
+    const res = await fetch(`${base}/admin/massa-wa/${id}`, { headers: comAuth() });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /Fila e acompanhamento/);
+    assert.doesNotMatch(html, /Criada em/);
+  });
+});
