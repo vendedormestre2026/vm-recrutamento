@@ -109,11 +109,28 @@ function funilVazio() {
     candidaturasDuplicadas: 0,
     pessoasOptoutCampanha: 0,
     pessoasOptoutAntigo: 0,
+    // Quem ja recebeu disparo em massa (status 'enviado' em qualquer campanha), e de QUAL campanha.
+    // So e descontado com excluirJaReceberam ligado; o numero vem preenchido de qualquer jeito,
+    // para a tela dizer quantos voltariam se a opcao fosse desmarcada.
+    pessoasJaReceberam: 0,
+    jaReceberamPorCampanha: {},
+    excluiuJaReceberam: false,
+    // Corte pelo "maximo de destinatarios" da materializacao. A previa nao tem limite: fica 0.
+    pessoasForaPorLimite: 0,
     total: 0,
   };
 }
 
 // Monta o publico.
+//
+// ── "JA RECEBEU" E LIMITE MORAM AQUI, E NAO NA ROTA ──
+// Ate 2026-10-01 os dois cortes eram aplicados so na rota de materializar, e a previa nao sabia
+// deles: a campanha 6 mostrou PUBLICO FINAL 74 e materializou 12 (62 ja tinham recebido). Agora a
+// previa e a materializacao chamam esta mesma funcao com os mesmos parametros, e o "ja recebeu" vem
+// de UMA consulta (db.recebedoresDisparoMassaWa) — divergir passa a exigir mudar um lugar so.
+//
+// `excluirJaReceberam` default TRUE: e o mesmo default do checkbox da materializacao, entao a
+// previa mostra o numero que o botao vai produzir se ninguem mexer em nada.
 //
 // Devolve { itens, funil, statusList }. `itens` esta pronto para materializarCampanhaMassaWa:
 // { telefone, telefoneCanonico, nome, applicationId, jobId } — mais jobTitulo, que so a previa
@@ -122,7 +139,10 @@ function funilVazio() {
 // NUNCA LANCA por dado ruim: telefone impossivel, status corrompido e candidatura sem vaga sao
 // o caso NORMAL de uma base de anos, e cada um tem uma linha no funil. Lanca so por parametro
 // invalido (statusList vazia), que e erro de programacao ou de rota — e la o barulho e o certo.
-function montarPublicoMassaWa({ jobId = null, statusList = STATUS_PADRAO } = {}, deps = {}) {
+function montarPublicoMassaWa(
+  { jobId = null, statusList = STATUS_PADRAO, excluirJaReceberam = true, maxDestinatarios = null } = {},
+  deps = {},
+) {
   const db = deps.db || dbPadrao;
   const status = sanearStatusList(statusList);
   if (!status.length) {
@@ -208,7 +228,10 @@ function montarPublicoMassaWa({ jobId = null, statusList = STATUS_PADRAO } = {},
   const mapaOptout = optout.mapaOptoutAtivo({ db });
   const optoutAntigo = db.listarTelefonesOptOutWhatsapp();
 
-  const itens = [];
+  const recebedores = db.recebedoresDisparoMassaWa();
+  funil.excluiuJaReceberam = Boolean(excluirJaReceberam);
+
+  let itens = [];
   for (const pessoa of porChave.values()) {
     if (optout.optoutAtivoNoMapa(mapaOptout, pessoa.telefone, optout.CONSULTA_CAMPANHA)) {
       funil.pessoasOptoutCampanha += 1;
@@ -220,7 +243,23 @@ function montarPublicoMassaWa({ jobId = null, statusList = STATUS_PADRAO } = {},
       funil.pessoasOptoutAntigo += 1;
       continue;
     }
+    // ── 6. JA RECEBEU DISPARO EM MASSA ──
+    // Contado sempre (depois do opt-out, para os numeros da tela se subtrairem em sequencia);
+    // descontado so com a opcao ligada.
+    const campanhaOrigem = recebedores.get(pessoa.telefoneCanonico);
+    if (campanhaOrigem != null) {
+      funil.pessoasJaReceberam += 1;
+      funil.jaReceberamPorCampanha[campanhaOrigem] = (funil.jaReceberamPorCampanha[campanhaOrigem] || 0) + 1;
+      if (excluirJaReceberam) continue;
+    }
     itens.push(pessoa);
+  }
+
+  // ── 7. LIMITE DE DESTINATARIOS: os primeiros N na ordem do publico (mais recente primeiro) ──
+  const max = Number(maxDestinatarios);
+  if (Number.isInteger(max) && max > 0 && itens.length > max) {
+    funil.pessoasForaPorLimite = itens.length - max;
+    itens = itens.slice(0, max);
   }
 
   funil.total = itens.length;

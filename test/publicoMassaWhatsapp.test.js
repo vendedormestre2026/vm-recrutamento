@@ -529,3 +529,40 @@ test('o statusList saneado volta no resultado (a campanha grava o que foi realme
   const r = montarPublicoMassaWa({ statusList: ['aprovado', 'lixo', 'aprovado'] });
   assert.deepEqual(r.statusList, ['aprovado']);
 });
+
+// ══════════════════ JA RECEBEU E LIMITE (2026-10-01) ══════════════════
+
+test('"ja recebeu" e contado sempre, descontado so com a opcao, e sem_destino nao conta', () => {
+  limpar();
+  const vaga = novaVaga();
+  const tels = [telefone(), telefone(), telefone()];
+  for (const t of tels) novaCandidatura({ jobId: vaga, telefone: t });
+  const campanha = db.criarCampanhaMassaWa({ nome: 'anterior' });
+  const anterior = montarPublicoMassaWa({ excluirJaReceberam: false });
+  db.materializarCampanhaMassaWa(campanha, anterior.itens);
+  const linhas = db.getDb().prepare('SELECT id, telefone FROM campanhas_massa_wa_envios WHERE campanha_id = ?').all(campanha);
+  db.marcarEnvioMassaWaEnviado(linhas[0].id, {});
+  db.marcarEnvioMassaWaEnviado(linhas[1].id, {});
+  db.getDb().prepare("UPDATE campanhas_massa_wa_envios SET status = 'sem_destino' WHERE id = ?").run(linhas[1].id);
+
+  const com = montarPublicoMassaWa({});
+  assert.equal(com.funil.pessoasJaReceberam, 1);
+  assert.deepEqual(com.funil.jaReceberamPorCampanha, { [campanha]: 1 });
+  assert.equal(com.funil.total, 2);
+  assert.ok(!com.itens.some((i) => i.telefone === linhas[0].telefone));
+  assert.ok(com.itens.some((i) => i.telefone === linhas[1].telefone), 'sem_destino volta');
+
+  const sem = montarPublicoMassaWa({ excluirJaReceberam: false });
+  assert.equal(sem.funil.pessoasJaReceberam, 1, 'contado mesmo sem descontar');
+  assert.equal(sem.funil.total, 3);
+});
+
+test('limite de destinatarios corta os primeiros N e o funil diz quantos ficaram fora', () => {
+  limpar();
+  const vaga = novaVaga();
+  for (let i = 0; i < 5; i += 1) novaCandidatura({ jobId: vaga, telefone: telefone() });
+  const r = montarPublicoMassaWa({ maxDestinatarios: 3 });
+  assert.equal(r.funil.total, 3);
+  assert.equal(r.funil.pessoasForaPorLimite, 2);
+  assert.equal(montarPublicoMassaWa({ maxDestinatarios: null }).funil.pessoasForaPorLimite, 0);
+});

@@ -783,3 +783,72 @@ test('excluir campanha ATIVA para o envio na hora', async () => {
     assert.equal(db.listarPendentesCampanhaMassaWa(id, { limite: 10 }).length, 0);
   });
 });
+
+// ══════════════════ PREVIA HONESTA (2026-10-01) ══════════════════
+//
+// Campanha 6: a previa dizia 74 e a fila nasceu com 12, porque so a materializacao aplicava o
+// "ja recebeu". Os testes abaixo quebram se as duas voltarem a divergir.
+
+// Cenario: 6 candidaturas. Uma reprovada, uma com opt-out, e de uma campanha anterior uma pessoa
+// 'enviado' (recebeu) e outra 'sem_destino' (nunca recebeu). Publico esperado: 6 - 1 reprovado = 5
+// pessoas; - 1 opt-out = 4; - 1 ja recebeu = 3.
+async function cenarioJaReceberam(base) {
+  const jobId = criarVaga();
+  const apps = [];
+  for (let i = 0; i < 5; i += 1) apps.push(criarCandidatura(jobId));
+  criarCandidatura(jobId, { status: 'reprovado' });
+  const tel = (appId) => db.getDb().prepare('SELECT telefone FROM applications WHERE id = ?').get(appId).telefone;
+  db.registrarWhatsappOptout({ telefone: tel(apps[4]), escopo: 'campanha', origem: 'manual' });
+
+  await post(base, '/admin/massa-wa', { nome: 'Anterior', job_id: String(jobId), status: ['sem_decisao'] });
+  const anterior = ultimaCampanha().id;
+  await post(base, `/admin/massa-wa/${anterior}/materializar`, {});
+  const linha = (appId) => db.getDb()
+    .prepare('SELECT id, telefone_canonico FROM campanhas_massa_wa_envios WHERE campanha_id = ? AND application_id = ?')
+    .get(anterior, appId);
+  db.marcarEnvioMassaWaEnviado(linha(apps[0]).id, {});
+  db.marcarEnvioMassaWaEnviado(linha(apps[1]).id, {});
+  db.getDb().prepare("UPDATE campanhas_massa_wa_envios SET status = 'sem_destino' WHERE id = ?").run(linha(apps[1]).id);
+
+  await post(base, '/admin/massa-wa', { nome: 'Nova', job_id: String(jobId), status: ['sem_decisao'] });
+  return { jobId, anterior, nova: ultimaCampanha().id, recebeu: linha(apps[0]).telefone_canonico, semDestino: linha(apps[1]).telefone_canonico };
+}
+
+test('previa mostra "ja receberam" por campanha, e a conta fecha', async () => {
+  limpar();
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const { anterior, nova } = await cenarioJaReceberam(base);
+    const html = await get(base, `/admin/massa-wa/${nova}`);
+    const valor = (rotulo) => {
+      const m = new RegExp(`<dt>${rotulo}</dt><dd>(\\d+)`).exec(html.replace(/\s+</g, '<'));
+      assert.ok(m, `linha "${rotulo}" na previa`);
+      return Number(m[1]);
+    };
+    const pessoas = valor('Pessoas');
+    const optout = valor('— fora por opt-out');
+    const ja = valor('— já receberam disparo em massa');
+    const final = valor('PÚBLICO FINAL');
+    assert.deepEqual([pessoas, optout, ja, final], [5, 1, 1, 3]);
+    assert.equal(pessoas - optout - ja, final, 'a aritmetica exibida fecha');
+    assert.match(html, new RegExp(`camp\\. ${anterior}: 1`));
+    assert.equal(valor('— fora por status do recrutador'), 1, 'reprovado fora');
+  });
+});
+
+test('previa e fila usam o MESMO "ja recebeu": o tamanho da fila e o PUBLICO FINAL da previa', async () => {
+  limpar();
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const { nova, recebeu, semDestino } = await cenarioJaReceberam(base);
+    const html = (await get(base, `/admin/massa-wa/${nova}`)).replace(/\s+</g, '<');
+    const final = Number(/<dt>PÚBLICO FINAL<\/dt><dd>(\d+)/.exec(html)[1]);
+
+    await post(base, `/admin/massa-wa/${nova}/materializar`, { excluir_ja_receberam: '1' });
+    assert.equal(totalNaFila(nova), final);
+    const naFila = new Set(db.getDb()
+      .prepare('SELECT telefone_canonico t FROM campanhas_massa_wa_envios WHERE campanha_id = ?').all(nova).map((r) => r.t));
+    assert.ok(!naFila.has(recebeu), 'quem recebeu de verdade fica fora');
+    assert.ok(naFila.has(semDestino), "quem ficou 'sem_destino' volta");
+  });
+});

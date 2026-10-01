@@ -450,8 +450,8 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       <section class="rel-sec">
         <h2>Público (prévia)</h2>
         <p style="color:var(--cinza);font-size:.85rem;margin:0 0 .8rem;">
-          Recalculado agora. As duas primeiras linhas contam <b>candidaturas</b>; as demais contam
-          <b>pessoas</b> — por isso os números não se subtraem em sequência.</p>
+          Recalculado agora. As quatro primeiras linhas contam <b>candidaturas</b> e chegam em
+          <b>Pessoas</b>; dali para baixo os números são pessoas e se subtraem em sequência.</p>
         <dl class="rel-id">
           ${linha('Candidaturas em vagas abertas', f.candidaturas)}
           ${linha('— fora por status do recrutador', f.candidaturasExcluidasStatus,
@@ -460,13 +460,27 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           ${linha('— duplicadas (mesma pessoa)', f.candidaturasDuplicadas, 'colapsadas pela chave canônica: mesmo número com e sem o 9')}
           ${linha('Pessoas', f.pessoas)}
           ${linha('— fora por opt-out', f.pessoasOptoutCampanha + f.pessoasOptoutAntigo)}
+          ${linha('— já receberam disparo em massa', f.pessoasJaReceberam, textoPorCampanha(f.jaReceberamPorCampanha))}
           ${linha('PÚBLICO FINAL', f.total)}
         </dl>
+        <p style="color:var(--cinza);font-size:.8rem;margin:.6rem 0 0;">
+          “Já receberam” é quem tem mensagem <b>enviada</b> em qualquer campanha de disparo em massa
+          (“Sem destino” não conta: a mensagem nunca chegou). É o mesmo corte da opção
+          “Excluir quem já recebeu”, marcada por padrão ao materializar; desmarcada, essas
+          ${fmtInt(f.pessoasJaReceberam)} pessoa(s) entram na fila.</p>
         <p style="color:var(--cinza);font-size:.8rem;margin:.6rem 0 0;">
           Quem não tem WhatsApp ativo <b>não é descontado aqui</b>: essa checagem acontece no envio,
           no lote que está saindo — consultar milhares de números de uma vez é, por si, um sinal de
           conta suspeita. Esses casos aparecem na fila como “Sem WhatsApp”.</p>
       </section>`;
+  }
+
+  // { 3: 50, 4: 12 } -> "camp. 3: 50 · camp. 4: 12"
+  function textoPorCampanha(porCampanha) {
+    return Object.entries(porCampanha || {})
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([c, n]) => `camp. ${c}: ${n}`)
+      .join(' · ');
   }
 
   function blocoVariacoes(campanha, req) {
@@ -748,24 +762,26 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       return res.redirect(`/admin/massa-wa/${id}?erro=variacoes_invalidas`);
     }
 
+    // ── RECORTES OPCIONAIS (teste de cadencia com poucas pessoas, 2026-10-01) ──
+    // Excluir quem ja recebeu e limite de destinatarios sao aplicados pelo MESMO motor de publico
+    // que a previa usa (e nao aqui) — ver "JA RECEBEU E LIMITE MORAM AQUI" em
+    // lib/publicoMassaWhatsapp. Os dois antes de gravar: a fila nasce do tamanho certo.
+    const b = req.body || {};
+    const excluirJaReceberam = b.excluir_ja_receberam === '1' || b.excluir_ja_receberam === 'on';
+    const max = Number(String(b.max_destinatarios || '').trim());
+    const maxDestinatarios = Number.isInteger(max) && max > 0 ? max : null;
     let r;
     try {
-      r = publico.montarPublicoMassaWa({ jobId: campanha.job_id, statusList: statusDaCampanha(campanha) });
+      r = publico.montarPublicoMassaWa({
+        jobId: campanha.job_id,
+        statusList: statusDaCampanha(campanha),
+        excluirJaReceberam,
+        maxDestinatarios,
+      });
     } catch {
       return res.redirect(`/admin/massa-wa/${id}?erro=status`);
     }
-    // ── RECORTES OPCIONAIS (teste de cadencia com poucas pessoas, 2026-10-01) ──
-    // Excluir quem ja recebeu: por chave canonica, a mesma identidade do opt-out. Limite: os
-    // primeiros N na ordem do publico. Os dois aplicados ANTES de gravar — a fila nasce do tamanho
-    // certo, sem depender de alguem pausar a campanha no meio.
-    const b = req.body || {};
-    let itens = r.itens;
-    if (b.excluir_ja_receberam === '1' || b.excluir_ja_receberam === 'on') {
-      const jaReceberam = db.telefonesComDisparoMassaWaEnviado();
-      itens = itens.filter((i) => !jaReceberam.has(i.telefoneCanonico));
-    }
-    const max = Number(String(b.max_destinatarios || '').trim());
-    if (Number.isInteger(max) && max > 0) itens = itens.slice(0, max);
+    const itens = r.itens;
     if (!itens.length) return res.redirect(`/admin/massa-wa/${id}?erro=sem_publico`);
 
     const n = db.materializarCampanhaMassaWa(id, itens);
