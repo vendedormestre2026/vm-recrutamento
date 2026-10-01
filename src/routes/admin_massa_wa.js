@@ -536,6 +536,13 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           <h2>Fila</h2>
           <p style="color:var(--cinza);font-size:.85rem;">Público ainda não materializado.</p>
           <form method="POST" action="/admin/massa-wa/${campanha.id}/materializar">
+            <label class="campo" style="max-width:16rem;"><span>Máximo de destinatários (opcional)</span>
+              <input type="number" min="1" name="max_destinatarios" placeholder="todos"></label>
+            <label class="campo-check">
+              <input type="checkbox" name="excluir_ja_receberam" value="1" checked>
+              <span style="color:var(--preto);text-transform:none;">
+                Excluir quem já recebeu disparo em massa (qualquer campanha)</span>
+            </label>
             <button type="submit" class="btn">Materializar público</button>
           </form>
           <p style="color:var(--cinza);font-size:.8rem;margin:.4rem 0 0;">
@@ -734,9 +741,21 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     } catch {
       return res.redirect(`/admin/massa-wa/${id}?erro=status`);
     }
-    if (!r.itens.length) return res.redirect(`/admin/massa-wa/${id}?erro=sem_publico`);
+    // ── RECORTES OPCIONAIS (teste de cadencia com poucas pessoas, 2026-10-01) ──
+    // Excluir quem ja recebeu: por chave canonica, a mesma identidade do opt-out. Limite: os
+    // primeiros N na ordem do publico. Os dois aplicados ANTES de gravar — a fila nasce do tamanho
+    // certo, sem depender de alguem pausar a campanha no meio.
+    const b = req.body || {};
+    let itens = r.itens;
+    if (b.excluir_ja_receberam === '1' || b.excluir_ja_receberam === 'on') {
+      const jaReceberam = db.telefonesComDisparoMassaWaEnviado();
+      itens = itens.filter((i) => !jaReceberam.has(i.telefoneCanonico));
+    }
+    const max = Number(String(b.max_destinatarios || '').trim());
+    if (Number.isInteger(max) && max > 0) itens = itens.slice(0, max);
+    if (!itens.length) return res.redirect(`/admin/massa-wa/${id}?erro=sem_publico`);
 
-    const n = db.materializarCampanhaMassaWa(id, r.itens);
+    const n = db.materializarCampanhaMassaWa(id, itens);
     db.atualizarCampanhaMassaWa(id, {
       nome: campanha.nome,
       jobId: campanha.job_id,
