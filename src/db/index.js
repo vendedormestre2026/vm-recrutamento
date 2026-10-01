@@ -240,6 +240,7 @@ module.exports = {
   salvarVariacoesMassaWa: driver.salvarVariacoesMassaWa,
   listarVariacoesMassaWa: driver.listarVariacoesMassaWa,
   materializarCampanhaMassaWa: driver.materializarCampanhaMassaWa,
+  telefonesComDisparoMassaWaEnviado: driver.telefonesComDisparoMassaWaEnviado,
   listarPendentesCampanhaMassaWa: driver.listarPendentesCampanhaMassaWa,
   marcarEnvioMassaWaEnviado: driver.marcarEnvioMassaWaEnviado,
   registrarTentativaEnvioMassaWa: driver.registrarTentativaEnvioMassaWa,

@@ -673,3 +673,61 @@ test('a pausa entre lotes e digitada em MINUTOS e gravada em segundos', async ()
     assert.match(html, /mensagens por hora/);
   });
 });
+
+// ══════════════════ RECORTES AO MATERIALIZAR (2026-10-01) ══════════════════
+// Teste de cadencia com 12 pessoas de uma vaga existente, sem repetir quem ja recebeu.
+
+test('materializar com maximo de destinatarios corta a fila', async () => {
+  limpar();
+  const jobId = criarVaga();
+  for (let i = 0; i < 5; i += 1) criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await post(base, '/admin/massa-wa', { nome: 'C', job_id: String(jobId), status: ['sem_decisao'] });
+    const id = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${id}/materializar`, { max_destinatarios: '3' });
+    assert.equal(totalNaFila(id), 3);
+  });
+});
+
+test('materializar exclui quem ja tem envio "enviado" em outra campanha de massa', async () => {
+  limpar();
+  const jobId = criarVaga();
+  for (let i = 0; i < 4; i += 1) criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    // Campanha anterior: todos na fila, e 2 marcados como enviados.
+    await post(base, '/admin/massa-wa', { nome: 'Anterior', job_id: String(jobId), status: ['sem_decisao'] });
+    const anterior = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${anterior}/materializar`, { excluir_ja_receberam: '1' });
+    const linhas = db.getDb().prepare('SELECT id FROM campanhas_massa_wa_envios WHERE campanha_id = ? ORDER BY id').all(anterior);
+    db.marcarEnvioMassaWaEnviado(linhas[0].id, {});
+    db.marcarEnvioMassaWaEnviado(linhas[1].id, {});
+
+    await post(base, '/admin/massa-wa', { nome: 'Teste', job_id: String(jobId), status: ['sem_decisao'] });
+    const nova = ultimaCampanha().id;
+    await post(base, `/admin/massa-wa/${nova}/materializar`, { excluir_ja_receberam: '1' });
+    assert.equal(totalNaFila(nova), 2, 'os 2 que ja receberam ficam de fora');
+
+    const jaRecebidos = db.getDb()
+      .prepare(`SELECT telefone_canonico t FROM campanhas_massa_wa_envios WHERE campanha_id = ? AND status = 'enviado'`)
+      .all(anterior).map((r) => r.t);
+    const naNova = db.getDb()
+      .prepare('SELECT telefone_canonico t FROM campanhas_massa_wa_envios WHERE campanha_id = ?')
+      .all(nova).map((r) => r.t);
+    for (const t of jaRecebidos) assert.ok(!naNova.includes(t));
+  });
+});
+
+test('a tela de fila oferece os dois recortes, com "excluir" marcado por padrao', async () => {
+  limpar();
+  const jobId = criarVaga();
+  criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await autenticar(base);
+    await post(base, '/admin/massa-wa', { nome: 'C', job_id: String(jobId), status: ['sem_decisao'] });
+    const html = await get(base, `/admin/massa-wa/${ultimaCampanha().id}`);
+    assert.match(html, /name="max_destinatarios"/);
+    assert.match(html, /name="excluir_ja_receberam" value="1" checked/);
+  });
+});

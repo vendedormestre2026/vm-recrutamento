@@ -4775,6 +4775,21 @@ function materializarCampanhaMassaWa(campanhaId, itens = []) {
   return gravar();
 }
 
+// Telefones (chave canonica) que ja tem envio 'enviado' em QUALQUER campanha de disparo em massa.
+// Usado para tirar da fila nova quem ja recebeu (opcao "Excluir quem ja recebeu" ao materializar).
+//
+// ⚠️ 'enviado' nao e garantia de entrega: na campanha 3 (2026-09-29) 46 dos 50 'enviados' nunca
+// chegaram (nono digito). Excluir por aqui pega quem recebeu E esses 46 — o lado seguro.
+function telefonesComDisparoMassaWaEnviado() {
+  return new Set(
+    getDb()
+      .prepare(`SELECT DISTINCT telefone_canonico t FROM campanhas_massa_wa_envios WHERE status = 'enviado'`)
+      .all()
+      .map((r) => r.t)
+      .filter(Boolean),
+  );
+}
+
 // Pendentes de UMA campanha, com o que a mensagem precisa.
 //
 // ── POR QUE A VAGA VEM POR JOIN, E COM OS CAMPOS DA ENTREVISTA EM GRUPO ──
@@ -5010,6 +5025,7 @@ module.exports = {
   salvarVariacoesMassaWa,
   listarVariacoesMassaWa,
   materializarCampanhaMassaWa,
+  telefonesComDisparoMassaWaEnviado,
   listarPendentesCampanhaMassaWa,
   marcarEnvioMassaWaEnviado,
   registrarTentativaEnvioMassaWa,
