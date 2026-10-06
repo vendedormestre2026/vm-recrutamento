@@ -104,6 +104,25 @@ test('toda variacao do seed tem os tokens obrigatorios, inclusive o link de desc
   }
 });
 
+test('as 8 redacoes apresentam o link como CONFIRMACAO de presenca, com Meet e email', () => {
+  // O campo jobs.link_meet guarda o link do Calendly para confirmar presenca (decisao do Rafael):
+  // nenhuma redacao pode apresentar esse link como a sala da reuniao. Rotulos VARIADOS de
+  // proposito — sete textos com o mesmo rotulo sao o padrao que as variacoes existem para quebrar.
+  for (const [i, texto] of [TEXTO_BASE_PADRAO, ...VARIACOES_SEED].entries()) {
+    const linhaDoLink = texto.split('\n').find((l) => l.includes('{link_meet}'));
+    assert.ok(linhaDoLink, `texto ${i} sem a linha do link`);
+    assert.match(linhaDoLink, /[Cc]onfirm/, `texto ${i}: o link nao e apresentado como confirmacao`);
+    assert.doesNotMatch(linhaDoLink, /\*[^*]*\{link_meet\}[^*]*\*/, `texto ${i}: link em negrito`);
+    assert.match(texto, /Google Meet/, `texto ${i} nao diz que a entrevista e pelo Google Meet`);
+    assert.match(texto, /email/, `texto ${i} nao diz que o convite chega por email`);
+    assert.match(texto, /agenda/, `texto ${i} nao fala do cadastro na agenda`);
+    assert.ok(texto.length <= MAX_CARACTERES, `texto ${i} passou de ${MAX_CARACTERES} caracteres`);
+    // Rotulos antigos, que tratavam o link como a sala.
+    assert.doesNotMatch(texto, /Link da reunião|Pelo Google Meet: \{link_meet\}|Acesso pelo Google Meet|\*Onde:\* \{link_meet\}/,
+      `texto ${i} ainda trata o link como a sala`);
+  }
+});
+
 test('nenhuma variacao do seed usa a sintaxe {{dupla}} da Meta', () => {
   for (const [i, texto] of VARIACOES_SEED.entries()) {
     assert.doesNotMatch(texto, /\{\{|\}\}/, `variacao ${i + 1} usa chave dupla`);
@@ -355,7 +374,8 @@ test('as 7 seeds resolvidas nao deixam NENHUM token para tras', () => {
     assert.doesNotMatch(texto, /[{}]/, `variacao ${i + 1} deixou chave no texto final`);
     assert.doesNotMatch(texto, /undefined|null|NaN/, `variacao ${i + 1} vazou valor nao resolvido`);
     assert.ok(texto.includes(LINK), `variacao ${i + 1} perdeu o link de descadastro`);
-    assert.match(texto, /meet\.google\.com/, `variacao ${i + 1} perdeu o link`);
+    // O link e o de confirmar presenca (Calendly); a fixture ainda usa uma URL do Meet.
+    assert.match(texto, /meet\.google\.com|calendly\.com/, `variacao ${i + 1} perdeu o link`);
   }
 });
 
