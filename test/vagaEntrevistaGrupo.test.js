@@ -287,7 +287,7 @@ test('vaga com reuniao futura: a tela diz QUAL reuniao a mensagem esta anunciand
     // Nenhum aviso de fallback. A frase "datas estão sendo definidas" NAO serve como sonda
     // aqui: ela tambem aparece no texto de ajuda FIXO do campo de link, que esta sempre na
     // pagina. Sondar por ela daria um teste que passa sem testar nada.
-    assert.doesNotMatch(html, /nenhuma reunião foi cadastrada|já passaram|falta o link do Meet/);
+    assert.doesNotMatch(html, /nenhuma reunião foi cadastrada|já passaram|falta o link de confirmação/);
   });
 });
 
@@ -297,7 +297,9 @@ test('vaga ATIVA sem nada cadastrado: alerta de que ninguem recebe convite', asy
     const vaga = await criarPeloForm(base, {});
     const html = await htmlDaVaga(base, vaga.id);
 
-    assert.match(html, /não tem link do Meet nem datas/);
+    assert.match(html, /não tem link de confirmação \(Calendly\) nem datas/);
+    // O link da vaga e o de CONFIRMAR PRESENCA (Calendly): nenhum aviso pode chamar de Meet.
+    assert.doesNotMatch(html, /link do Meet/);
     assert.match(html, /class="aviso-alerta"/);
   });
 });
@@ -314,7 +316,9 @@ test('vaga ENCERRADA sem nada cadastrado: informativo, nao alerta', async () => 
     });
 
     const html = await htmlDaVaga(base, criada.id);
-    const trecho = html.slice(html.indexOf('não tem link do Meet') - 200, html.indexOf('não tem link do Meet'));
+    const pos = html.indexOf('não tem link de confirmação (Calendly)');
+    assert.ok(pos >= 0, 'aviso de vaga sem link nao apareceu');
+    const trecho = html.slice(pos - 200, pos);
     assert.match(trecho, /aviso-ok/, 'em vaga encerrada o aviso nao deve ser alerta');
   });
 });
@@ -328,7 +332,8 @@ test('datas futuras SEM link do Meet: avisa que sem sala nao ha convite', async 
     });
 
     const html = await htmlDaVaga(base, vaga.id);
-    assert.match(html, /falta o link do Meet/);
+    assert.match(html, /falta o link de confirmação \(Calendly\)<\/b> — e sem ele não há convite/);
+    assert.doesNotMatch(html, /link do Meet|sem sala/);
     assert.doesNotMatch(html, /Próxima entrevista em grupo/);
   });
 });
@@ -338,7 +343,7 @@ test('link sem reuniao cadastrada: avisa que a mensagem cai no fallback', async 
     await autenticar(base);
     const vaga = await criarPeloForm(base, { link_meet: LINK });
     const html = await htmlDaVaga(base, vaga.id);
-    assert.match(html, /nenhuma reunião foi cadastrada/);
+    assert.match(html, /O link de confirmação \(Calendly\) está preenchido, mas <b>nenhuma reunião foi cadastrada/);
   });
 });
 

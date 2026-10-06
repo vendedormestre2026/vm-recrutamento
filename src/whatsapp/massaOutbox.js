@@ -432,7 +432,7 @@ async function processarCampanha(campanha, ctx) {
       db.marcarEnvioMassaWaTerminal(
         linha.id,
         'sem_reuniao',
-        'a vaga do candidato nao tem entrevista em grupo futura (ou nao tem link do Meet)',
+        'a vaga do candidato nao tem entrevista em grupo futura (ou nao tem link de confirmacao)',
       );
       resumo.pulados += 1;
       continue;

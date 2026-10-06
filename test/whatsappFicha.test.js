@@ -505,6 +505,8 @@ test('a tela lista quem recebeu o fallback, agrupado por vaga', async () => {
     assert.match(html, /Vendedor Externo/);
     assert.match(html, /Ana Silva/);
     assert.match(html, /ainda sem data/, 'a vaga nao tem reuniao futura cadastrada');
+    assert.match(html, /Cadastre o link de confirmação \(Calendly\) e as datas na vaga antes de chamar/);
+    assert.doesNotMatch(html, /link do Meet/);
     assert.match(html, /não é reenviado/i);
   });
 });
@@ -557,6 +559,8 @@ test('a listagem de vagas marca a vaga ATIVA sem entrevista em grupo futura', as
     const html = await (await fetch(`${base}/admin/vagas`, { headers: comAuth() })).text();
     assert.match(html, /sem entrevista em grupo/);
     assert.match(html, /vaga\(s\) ativa\(s\) sem entrevista em grupo/);
+    assert.match(html, /Cadastre o link de confirmação \(Calendly\) e as\s+datas na vaga\./);
+    assert.doesNotMatch(html, /link do Meet/);
     assert.match(html, /\/admin\/convites-sem-data/);
   });
 });

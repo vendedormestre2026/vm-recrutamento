@@ -3654,15 +3654,15 @@ function blocoAvisosEntrevistaGrupo(vaga) {
 
   const FRASES = {
     [PROBLEMA_NADA_CADASTRADO]:
-      'Esta vaga não tem link do Meet nem datas de entrevista em grupo. A mensagem automática ' +
-      'de WhatsApp vai avisar o candidato de que as datas estão sendo definidas — nenhum ' +
-      'convite será enviado até você preencher os campos abaixo.',
+      'Esta vaga não tem link de confirmação (Calendly) nem datas de entrevista em grupo. A ' +
+      'mensagem automática de WhatsApp vai avisar o candidato de que as datas estão sendo ' +
+      'definidas — nenhum convite será enviado até você preencher os campos abaixo.',
     [PROBLEMA_REUNIAO_SEM_LINK]:
-      'Há datas cadastradas, mas <b>falta o link do Meet</b> — e sem sala não há convite. ' +
-      'A mensagem cai no aviso de “datas em breve” até o link ser preenchido.',
+      'Há datas cadastradas, mas <b>falta o link de confirmação (Calendly)</b> — e sem ele não ' +
+      'há convite. A mensagem cai no aviso de “datas em breve” até o link ser preenchido.',
     [PROBLEMA_LINK_SEM_REUNIAO]:
-      'O link do Meet está preenchido, mas <b>nenhuma reunião foi cadastrada</b>. A mensagem ' +
-      'cai no aviso de “datas em breve”.',
+      'O link de confirmação (Calendly) está preenchido, mas <b>nenhuma reunião foi ' +
+      'cadastrada</b>. A mensagem cai no aviso de “datas em breve”.',
     [PROBLEMA_SEM_REUNIAO_FUTURA]:
       'Todas as reuniões cadastradas <b>já passaram</b>. Nenhum link vencido é enviado: a ' +
       'mensagem cai no aviso de “datas em breve”. Cadastre as próximas datas.',
@@ -3835,7 +3835,8 @@ function avisoVagasSemReuniao(vagas) {
   const quais = semReuniao.map((v) => escapeHtml(v.titulo)).join(', ');
   return `<p class="aviso-alerta">${semReuniao.length} vaga(s) ativa(s) sem entrevista em grupo
     futura: <b>${quais}</b>. Os candidatos dessas vagas recebem o aviso de que as datas estão
-    sendo definidas, e <b>não um convite</b>. Cadastre o link do Meet e as datas na vaga.
+    sendo definidas, e <b>não um convite</b>. Cadastre o link de confirmação (Calendly) e as
+    datas na vaga.
     <a href="/admin/convites-sem-data">Ver quem já recebeu esse aviso</a>.</p>`;
 }
 
@@ -3881,7 +3882,7 @@ router.get('/convites-sem-data', (req, res) => {
           : '<span class="tag-aviso">⚠ ainda sem data</span>';
       const acao = g.temReuniao
         ? 'A vaga já tem reunião futura — pode chamar estas pessoas.'
-        : 'Cadastre o link do Meet e as datas na vaga antes de chamar.';
+        : 'Cadastre o link de confirmação (Calendly) e as datas na vaga antes de chamar.';
       const pessoas = g.pessoas
         .map(
           (p) => `

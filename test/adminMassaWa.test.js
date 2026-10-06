@@ -320,6 +320,8 @@ test('vaga SEM data: a tela avisa que ninguem receberia mensagem', async () => {
     await post(base, '/admin/massa-wa', { nome: 'C', job_id: String(jobId), status: ['sem_decisao'] });
     const html = await get(base, `/admin/massa-wa/${ultimaCampanha().id}`);
     assert.match(html, /não tem entrevista em grupo futura com link/);
+    assert.match(html, /Cadastre o link de confirmação \(Calendly\) e as datas na vaga/);
+    assert.doesNotMatch(html, /link do Meet/);
     assert.match(html, /nenhum destinatário/i);
   });
 });

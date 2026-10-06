@@ -697,6 +697,10 @@ test('vaga sem link do Meet: sem_reuniao mesmo com data futura', async () => {
 
   await rodar({ enviarTexto: envioDuble().fn });
   assert.deepEqual(porStatus(id), { sem_reuniao: 1 });
+  // O motivo aparece no painel: o link da vaga e o de confirmacao (Calendly), nao a sala do Meet.
+  const [linha] = db.listarEnviosCampanhaMassaWa(id);
+  assert.match(linha.erro, /ou nao tem link de confirmacao\)/);
+  assert.doesNotMatch(linha.erro, /Meet/);
 });
 
 test('vaga sem EMPRESA: falha com o motivo escrito (token obrigatorio sem valor)', async () => {

@@ -525,7 +525,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       const proxima = vaga ? proximaEntrevistaGrupo(vaga) : null;
       if (!proxima) {
         return `<p class="aviso-alerta">Sem prévia da mensagem: ${vaga ? 'esta vaga' : 'nenhuma vaga aberta'}
-          não tem entrevista em grupo futura com link. Cadastre o link do Meet e as datas na vaga —
+          não tem entrevista em grupo futura com link. Cadastre o link de confirmação (Calendly) e as datas na vaga —
           sem isso, <b>nenhum destinatário</b> recebe mensagem (cada item vira “Vaga sem data”).</p>`;
       }
       // O link de descadastro e por destinatario; na previa vai um exemplo, nao um token valido.
