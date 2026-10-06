@@ -261,10 +261,58 @@ test('WA2 convite: cabecalho, bloco de data/hora/link e fechamento aprovados', (
   assert.ok(texto.includes('👇 *CONVITE PARA A ENTREVISTA EM GRUPO* 👇'));
   assert.ok(texto.includes('📅 *Data:* quinta-feira, 01/10/2026'));
   assert.ok(texto.includes('⏰ *Horário:* 19:30 (horário de Brasília)'));
-  assert.ok(texto.includes(`🔗 *Link da reunião (Google Meet):* ${LINK_MEET}`));
+  assert.ok(texto.includes(`🔗 *Link para confirmar presença na entrevista:* ${LINK_MEET}`));
   assert.ok(texto.includes('Entre alguns minutos antes, em um lugar tranquilo e com boa internet.'));
   assert.ok(texto.includes('Até lá e boa sorte! 🚀'));
   semArtefatos(texto, 'WA2 convite');
+});
+
+test('WA2 convite: frases do texto aprovado presentes, na ordem aprovada', () => {
+  const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
+  const ordem = [
+    '👇 *CONVITE PARA A ENTREVISTA EM GRUPO* 👇',
+    'Queremos convidar você para avançar no processo e participar de uma entrevista em grupo ' +
+      'online para a vaga de Vendedor Externo na Labor Seg.',
+    '📅 *Data:* quinta-feira, 01/10/2026',
+    '⏰ *Horário:* 19:30 (horário de Brasília)',
+    `🔗 *Link para confirmar presença na entrevista:* ${LINK_MEET}`,
+    'A entrevista será realizada através do Google Meet. Certifique-se que você tenha o app ' +
+      'instalado em seu celular para não ficar de fora.',
+    'Entre alguns minutos antes, em um lugar tranquilo e com boa internet.',
+    'A reunião iniciará pontualmente às 19:30 e não teremos tolerância para atrasos. Candidatos ' +
+      'que não comparecerem à entrevista serão automaticamente desclassificados do processo seletivo.',
+    'Confirme sua presença clicando no link acima e cadastrando seu email na agenda para receber ' +
+      'o convite por email para acessar a entrevista no dia e horário marcados. Se tiver alguma ' +
+      'dúvida pontual sobre a vaga, pode me perguntar. Até lá e boa sorte! 🚀',
+  ];
+  let desde = 0;
+  for (const frase of ordem) {
+    const pos = texto.indexOf(frase, desde);
+    assert.ok(pos >= 0, `frase ausente ou fora de ordem: ${frase}`);
+    desde = pos + frase.length;
+  }
+});
+
+test('WA2 convite: frases do texto ANTIGO nao saem mais', () => {
+  const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
+  assert.doesNotMatch(texto, /Se você tem o perfil que buscamos/);
+  assert.doesNotMatch(texto, /Link da reunião \(Google Meet\)/);
+  assert.doesNotMatch(texto, /respondendo esta mensagem/);
+});
+
+test('WA2 convite: o horario da pontualidade e o MESMO da linha Horario (variavel, nao texto fixo)', () => {
+  // Dois horarios de entrada: se o aviso de pontualidade tivesse um horario escrito a mao, um dos
+  // dois casos falharia.
+  const outroHorario = { ...JOB_COM_REUNIOES, entrevista_grupo_1_hora: '08:05' };
+  for (const [job, hora] of [[JOB_COM_REUNIOES, '19:30'], [outroHorario, '08:05']]) {
+    const { texto } = montarTextoWA2(APP, job, ANTES_DE_TUDO);
+    const daLinhaHorario = texto.match(/⏰ \*Horário:\* (\d{2}:\d{2}) \(horário de Brasília\)/);
+    const daPontualidade = texto.match(/iniciará pontualmente às (\d{2}:\d{2}) e não/);
+    assert.ok(daLinhaHorario && daPontualidade, `${hora}: linha de horario ou de pontualidade ausente`);
+    assert.equal(daLinhaHorario[1], hora);
+    assert.equal(daPontualidade[1], daLinhaHorario[1], 'pontualidade diverge da linha Horário');
+    assert.equal(texto.split(hora).length - 1, 2, `${hora} deveria aparecer exatamente 2x`);
+  }
 });
 
 test('WA2 convite: NUNCA sai sem link, sem data e sem horario', () => {
@@ -273,7 +321,9 @@ test('WA2 convite: NUNCA sai sem link, sem data e sem horario', () => {
   // informacao que e o proprio ponto dele — e sem erro nenhum, porque o campo chega undefined.
   const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
 
-  assert.match(texto, /https:\/\/meet\.google\.com\/\S+/, 'convite sem link do Meet');
+  // O link e o de confirmar presenca (Calendly), cadastrado na coluna jobs.link_meet; a fixture
+  // ainda usa uma URL do Meet, e as duas formas precisam passar.
+  assert.match(texto, /https:\/\/(meet\.google\.com|calendly\.com)\/\S+/, 'convite sem link');
   assert.match(texto, /\*Data:\*\s+\S+.*\d{2}\/\d{2}\/\d{4}/, 'convite sem data');
   assert.match(texto, /\*Horário:\*\s+\d{2}:\d{2}/, 'convite sem horario');
   assert.doesNotMatch(texto, /undefined|null|NaN|Invalid Date/, 'campo nao resolvido vazou');
@@ -281,7 +331,7 @@ test('WA2 convite: NUNCA sai sem link, sem data e sem horario', () => {
 
 test('WA2 convite: a vaga entra pelo MESMO trechoVaga do resto da sequencia', () => {
   const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
-  assert.ok(texto.includes(`do processo seletivo${trechoVaga(JOB_COM_REUNIOES)} é uma entrevista em grupo`));
+  assert.ok(texto.includes(`entrevista em grupo online${trechoVaga(JOB_COM_REUNIOES)}.`));
 });
 
 test('WA2 convite: passada a reuniao 1, o texto anuncia a 2 — e depois a 3', () => {
@@ -309,7 +359,13 @@ test('WA2 NAO promete automacao que nao existe', () => {
   // nao registra presenca em lugar nenhum. Prometer o contrario e como se perde confianca na
   // primeira vez que nao acontece.
   const { texto } = montarTextoWA2(APP, JOB_COM_REUNIOES, ANTES_DE_TUDO);
-  assert.doesNotMatch(texto, /automaticamente|o sistema (vai|ir[áa])|registrad[oa] automatic/i);
+  // EXCECAO UNICA, aprovada pelo Rafael: "serão automaticamente desclassificados" descreve uma
+  // regra do PROCESSO, aplicada pela equipe a quem falta — nao uma automacao do sistema. So essa
+  // frase exata e removida antes da checagem; qualquer outro "automaticamente" continua barrado.
+  const EXCECAO = 'serão automaticamente desclassificados do processo seletivo';
+  assert.ok(texto.includes(EXCECAO), 'a excecao so existe enquanto a frase aprovada existir');
+  const semExcecao = texto.replace(EXCECAO, '');
+  assert.doesNotMatch(semExcecao, /automaticamente|o sistema (vai|ir[áa])|registrad[oa] automatic/i);
   assert.doesNotMatch(texto, /vaga (esta|está) (reservada|garantida)/i);
 });
 

@@ -179,11 +179,15 @@ function montarTextoWA1(application, job) {
 // site nao mudar de assinatura quando a copy voltar a usar o nome).
 //
 // ── O QUE O TEXTO NAO PROMETE ──
-// "Confirme sua presenca respondendo esta mensagem" e um pedido HUMANO: ninguem le essa resposta
-// automaticamente, e o sistema nao registra confirmacao de presenca em lugar nenhum. O texto por
+// A confirmacao de presenca acontece FORA do sistema: o candidato clica no link (Calendly,
+// cadastrado na coluna jobs.link_meet) e deixa o e-mail na agenda; quem manda o convite por
+// e-mail e o Calendly, nao este sistema, que nao registra presenca em lugar nenhum. O texto por
 // isso nao diz "o sistema registra" nem "sua vaga esta reservada" — prometer o que o sistema nao
-// faz e como se perde confianca na primeira vez que nao acontece. Era a mesma regra do texto do
-// video, onde a confirmacao tambem era 100% manual.
+// faz e como se perde confianca na primeira vez que nao acontece.
+//
+// "serao automaticamente desclassificados" e a UNICA excecao, aprovada pelo Rafael: descreve uma
+// regra do PROCESSO, aplicada pela equipe a quem falta — nao uma automacao do sistema. O teste
+// "WA2 NAO promete automacao que nao existe" libera so essa frase, e nenhuma outra.
 const VARIANTE_CONVITE_GRUPO = 'convite_grupo';
 const VARIANTE_SEM_REUNIAO = 'sem_reuniao';
 
@@ -193,20 +197,31 @@ const VARIANTE_SEM_REUNIAO = 'sem_reuniao';
 // As tres linhas de dado (data, hora, link) ficam num bloco proprio, cada uma na sua linha e com
 // rotulo em negrito: e a parte que a pessoa reabre a mensagem para consultar, e um paragrafo
 // corrido obrigaria a garimpar o horario no meio da frase.
+//
+// O aviso de pontualidade repete o horario pela MESMA proxima.horaTexto da linha "Horário": uma
+// segunda fonte (ou um horario escrito a mao) e como as duas linhas passariam a discordar.
 function montarTextoConviteGrupo(job, proxima) {
   const linhas = [
     '👇 *CONVITE PARA A ENTREVISTA EM GRUPO* 👇',
-    `Se você tem o perfil que buscamos, o próximo passo do processo seletivo${trechoVaga(job)} ` +
-      'é uma entrevista em grupo online.',
+    'Queremos convidar você para avançar no processo e participar de uma entrevista em grupo ' +
+      `online${trechoVaga(job)}.`,
     '',
     `📅 *Data:* ${proxima.dataTexto}`,
     `⏰ *Horário:* ${proxima.horaTexto} (horário de Brasília)`,
-    `🔗 *Link da reunião (Google Meet):* ${proxima.linkMeet}`,
+    `🔗 *Link para confirmar presença na entrevista:* ${proxima.linkMeet}`,
+    '',
+    'A entrevista será realizada através do Google Meet. Certifique-se que você tenha o app ' +
+      'instalado em seu celular para não ficar de fora.',
     '',
     'Entre alguns minutos antes, em um lugar tranquilo e com boa internet.',
     '',
-    'Confirme sua presença respondendo esta mensagem. Se tiver alguma dúvida pontual sobre a ' +
-      'vaga, pode me perguntar. Até lá e boa sorte! 🚀',
+    `A reunião iniciará pontualmente às ${proxima.horaTexto} e não teremos tolerância para ` +
+      'atrasos. Candidatos que não comparecerem à entrevista serão automaticamente ' +
+      'desclassificados do processo seletivo.',
+    '',
+    'Confirme sua presença clicando no link acima e cadastrando seu email na agenda para ' +
+      'receber o convite por email para acessar a entrevista no dia e horário marcados. Se ' +
+      'tiver alguma dúvida pontual sobre a vaga, pode me perguntar. Até lá e boa sorte! 🚀',
   ];
   return linhas.map((l) => limparEspacos(l)).join('\n');
 }
