@@ -73,15 +73,15 @@ test('trechoVaga omite empresa vazia e some inteiro sem vaga', () => {
 test('linhaRemuneracao: potencial_ganhos tem prioridade sobre faixa_pagamento', () => {
   assert.equal(
     linhaRemuneracao(JOB_COMPLETO),
-    `💰 Média de ganhos dos melhores vendedores: ${JOB_COMPLETO.potencial_ganhos}`,
+    `💰 Faixa de ganhos dos melhores vendedores: ${JOB_COMPLETO.potencial_ganhos}`,
   );
   assert.equal(
     linhaRemuneracao({ faixa_pagamento: 'R$ 3.000' }),
-    '💰 Média de ganhos dos melhores vendedores: R$ 3.000',
+    '💰 Faixa de ganhos dos melhores vendedores: R$ 3.000',
   );
   assert.equal(
     linhaRemuneracao({ potencial_ganhos: '  ', faixa_pagamento: 'R$ 3.000' }),
-    '💰 Média de ganhos dos melhores vendedores: R$ 3.000',
+    '💰 Faixa de ganhos dos melhores vendedores: R$ 3.000',
   );
   for (const nada of [null, undefined, {}]) assert.equal(linhaRemuneracao(nada), null);
 });
@@ -94,19 +94,19 @@ test('linhaRemuneracao: potencial_ganhos multi-linha (\\r\\n) preserva cada linh
     'R$ 6.500,00+/mês\r\nVendedores experientes e com carteira consolidada:\r\nR$ 8.000 a R$ 13.000+ / mês';
   assert.equal(
     linhaRemuneracao({ potencial_ganhos: bruto }),
-    '💰 Média de ganhos dos melhores vendedores: R$ 6.500,00+/mês\n' +
+    '💰 Faixa de ganhos dos melhores vendedores: R$ 6.500,00+/mês\n' +
       'Vendedores experientes e com carteira consolidada:\n' +
       'R$ 8.000 a R$ 13.000+ / mês',
   );
   // Linha unica: comportamento identico ao de antes, nada muda.
   assert.equal(
     linhaRemuneracao({ potencial_ganhos: 'R$ 5.000/mês' }),
-    '💰 Média de ganhos dos melhores vendedores: R$ 5.000/mês',
+    '💰 Faixa de ganhos dos melhores vendedores: R$ 5.000/mês',
   );
   // Linhas em branco no meio do cadastro nao podem sobrar como linha vazia na mensagem.
   assert.equal(
     linhaRemuneracao({ potencial_ganhos: 'R$ 5.000/mês\r\n\r\nR$ 8.000/mês' }),
-    '💰 Média de ganhos dos melhores vendedores: R$ 5.000/mês\nR$ 8.000/mês',
+    '💰 Faixa de ganhos dos melhores vendedores: R$ 5.000/mês\nR$ 8.000/mês',
   );
 });
 
@@ -142,7 +142,7 @@ test('WA1: caminho completo, com remuneracao, localidade (multi-linha) e link', 
   const t = montarTextoWA1(APP, JOB_COMPLETO);
   assert.match(t, /^Olá, Ana!/);
   assert.ok(t.includes('Recebemos sua candidatura para *Vendedor Externo* na *Labor Seg*.'));
-  assert.ok(t.includes(`💰 Média de ganhos dos melhores vendedores: ${JOB_COMPLETO.potencial_ganhos}`));
+  assert.ok(t.includes(`💰 Faixa de ganhos dos melhores vendedores: ${JOB_COMPLETO.potencial_ganhos}`));
   // linhaLocalidade e multi-linha: cada dado (endereco/modalidade/regime) numa linha propria.
   assert.ok(t.includes(`📍 ${JOB_COMPLETO.endereco}\n🏢 Presencial\n📄 ${JOB_COMPLETO.regime}`));
   assert.ok(
@@ -164,7 +164,7 @@ test('WA1: sem remuneracao, sem localidade e sem slug — linhas somem por intei
 test('WA1: so remuneracao (sem localidade) fica sozinha no bloco', () => {
   const job = { ...JOB, potencial_ganhos: 'R$ 5.000/mês' };
   const t = montarTextoWA1(APP, job);
-  assert.ok(t.includes('💰 Média de ganhos dos melhores vendedores: R$ 5.000/mês'));
+  assert.ok(t.includes('💰 Faixa de ganhos dos melhores vendedores: R$ 5.000/mês'));
   assert.doesNotMatch(t, /📍|🏢|📄/);
   semArtefatos(t, 'WA1 so remuneracao');
 });
@@ -180,7 +180,7 @@ test('WA1: remuneracao multi-linha (\\r\\n) vira multiplas linhas no texto, nao 
   const t = montarTextoWA1(APP, job);
   assert.ok(
     t.includes(
-      '💰 Média de ganhos dos melhores vendedores: R$ 6.500,00+/mês\n' +
+      '💰 Faixa de ganhos dos melhores vendedores: R$ 6.500,00+/mês\n' +
         'Vendedores experientes e com carteira consolidada:\n' +
         'R$ 8.000 a R$ 13.000+ / mês\n' +
         '📍 São Paulo – Cidade Monções\n' +

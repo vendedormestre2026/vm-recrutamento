@@ -76,7 +76,7 @@ function capitalizar(s) {
 // varias linhas ("R$ 6.500+/mês" / "Vendedores experientes:" / "R$ 8.000 a R$ 13.000+/mês"),
 // separadas por \r\n no banco. Amassar isso numa frase corrida (o que limparEspacos faria
 // se a string chegasse com '\n' embutido, sem passar por split antes) lê como uma frase so,
-// nao como duas informacoes. So a PRIMEIRA linha leva o rotulo "Média de ganhos..." — as
+// nao como duas informacoes. So a PRIMEIRA linha leva o rotulo "Faixa de ganhos..." — as
 // demais sao continuacao do mesmo dado, nao precisam repetir o emoji/rotulo.
 function linhaRemuneracao(job) {
   const bruto =
@@ -89,7 +89,7 @@ function linhaRemuneracao(job) {
     .filter(Boolean);
   if (!linhasValor.length) return null;
   const [primeira, ...resto] = linhasValor;
-  return [`💰 Média de ganhos dos melhores vendedores: ${primeira}`, ...resto].join('\n');
+  return [`💰 Faixa de ganhos dos melhores vendedores: ${primeira}`, ...resto].join('\n');
 }
 
 // 📍 localidade, 🏢 modalidade e 📄 regime — uma linha por dado, cada uma omite
