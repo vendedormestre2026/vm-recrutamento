@@ -3443,12 +3443,13 @@ function camposEntrevistaGrupoHtml(vaga) {
 
   return `
     <label class="campo">
-      <span>Link da entrevista em grupo (Google Meet)</span>
+      <span>Link para confirmar presença (Calendly)</span>
       <input type="text" name="link_meet" value="${escapeHtml(vaga.link_meet || '')}"
-        placeholder="https://meet.google.com/abc-defg-hij">
+        placeholder="https://calendly.com/vendedor-mestre/entrevista-em-grupo">
     </label>
     <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
-      Sala fixa da vaga, enviada ao candidato na mensagem automática de WhatsApp. Comece com
+      Link de agendamento da vaga, enviado ao candidato na mensagem automática de WhatsApp para
+      ele confirmar presença e receber o convite por e-mail. Comece com
       <b>https://</b> — sem isso o WhatsApp não transforma em link clicável. Sem link, a
       mensagem não convida para reunião nenhuma (avisa que as datas estão sendo definidas).</p>
 
@@ -3672,7 +3673,7 @@ function blocoAvisosEntrevistaGrupo(vaga) {
       'sempre a próxima data futura, não a ordem dos campos), mas ordem trocada normalmente é ' +
       'erro de digitação — confira as datas.',
     [PROBLEMA_LINK_SEM_ESQUEMA]:
-      'O link do Meet não começa com <b>https://</b>. Sem isso o WhatsApp não o transforma em ' +
+      'O link para confirmar presença não começa com <b>https://</b>. Sem isso o WhatsApp não o transforma em ' +
       'link clicável, e o candidato recebe um texto que não abre nada.',
   };
 

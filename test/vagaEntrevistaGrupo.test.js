@@ -118,6 +118,11 @@ test('o formulario de NOVA vaga tem o link do Meet e os 3 pares data/horario', a
     const html = await (await fetch(`${base}/admin/vagas/nova`, { headers: comAuth() })).text();
 
     assert.match(html, /name="link_meet"/);
+    // A coluna continua link_meet, mas o que o WA2 manda nela e o link de CONFIRMAR PRESENCA
+    // (Calendly) — o rotulo precisa dizer isso, senao o recrutador cola a sala do Meet.
+    assert.match(html, /Link para confirmar presença \(Calendly\)/);
+    assert.match(html, /placeholder="https:\/\/calendly\.com\//);
+    assert.doesNotMatch(html, /Link da entrevista em grupo \(Google Meet\)/);
     for (const i of [1, 2, 3]) {
       assert.match(
         html,
