@@ -46,7 +46,7 @@ const { telefoneUtilizavel } = require('./publicoDisparoWhatsapp');
 const elegibilidade = require('./elegibilidadeStatusPromocao');
 const { normalizarEmail } = require('./normalizarEmail');
 const { chave: chaveCidade } = require('./cidades');
-const { instanteDeBrasilia, paraTextoSqlUtc, RE_DATA } = require('./fusoBrasilia');
+const { instanteDeBrasilia, paraTextoSqlUtc, partesBrasilia, RE_DATA } = require('./fusoBrasilia');
 const optout = require('./optoutWhatsapp');
 
 const FONTE_SEGMENTO = 'segmento';
@@ -433,8 +433,25 @@ function mascararTelefone(telefone) {
   return `${t.slice(0, 4)}****${t.slice(-4)}`;
 }
 
+// Periodo padrao da tela de CRIACAO: os ultimos 30 dias, em DIAS DE BRASILIA ('YYYY-MM-DD'), de
+// (agora - 30 dias) ate hoje. As 22h de Brasilia ja e o dia seguinte em UTC: por isso o dia sai de
+// partesBrasilia, e nao de toISOString.
+const DIAS_PERIODO_PADRAO = 30;
+const diaBrasiliaIso = (instante) => {
+  const p = partesBrasilia(instante);
+  return `${p.ano}-${String(p.mes).padStart(2, '0')}-${String(p.dia).padStart(2, '0')}`;
+};
+function periodoPadraoSegmento(agora = new Date()) {
+  return {
+    dataDe: diaBrasiliaIso(new Date(agora.getTime() - DIAS_PERIODO_PADRAO * 86400000)),
+    dataAte: diaBrasiliaIso(agora),
+  };
+}
+
 module.exports = {
   montarPublicoSegmentoMassaWa,
+  periodoPadraoSegmento,
+  DIAS_PERIODO_PADRAO,
   sanearCriteriosSegmento,
   funilSegmentoVazio,
   conferirAritmetica,

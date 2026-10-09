@@ -539,3 +539,74 @@ test('sem JS, cidade trocada e "Atualizar previa": a previa usa as marcacoes que
     assert.deepEqual(nomesDaTabela(html), ['Curitibano']);
   });
 });
+
+// ══════════════════ I5: PERIODO PADRAO E ATALHOS ══════════════════
+
+const segLib = require('../src/lib/publicoSegmentoMassaWa');
+
+test('periodo padrao: ultimos 30 dias em DIAS DE BRASILIA (22h30 de Brasilia ja e amanha em UTC)', () => {
+  // 10/10 01:30 UTC = 09/10 22:30 em Brasilia.
+  assert.deepEqual(segLib.periodoPadraoSegmento(new Date(Date.UTC(2026, 9, 10, 1, 30))), { dataDe: '2026-09-09', dataAte: '2026-10-09' });
+  // 09/10 03:30 UTC = 09/10 00:30 em Brasilia.
+  assert.deepEqual(segLib.periodoPadraoSegmento(new Date(Date.UTC(2026, 9, 9, 3, 30))), { dataDe: '2026-09-09', dataAte: '2026-10-09' });
+  // 09/10 02:59 UTC = 08/10 23:59 em Brasilia.
+  assert.deepEqual(segLib.periodoPadraoSegmento(new Date(Date.UTC(2026, 9, 9, 2, 59))), { dataDe: '2026-09-08', dataAte: '2026-10-08' });
+});
+
+test('criacao em branco: datas PREENCHIDAS com os ultimos 30 dias, texto e atalhos; previa diz o periodo', async () => {
+  const { alvo } = cenarioSimples(2);
+  const p = segLib.periodoPadraoSegmento();
+  await comServidor(async (base) => {
+    const html = await get(base, `/admin/massa-wa/nova?fonte=segmento&vaga_alvo=${alvo}`);
+    assert.match(html, new RegExp(`name="data_de" value="${p.dataDe}"`));
+    assert.match(html, new RegExp(`name="data_ate" value="${p.dataAte}"`));
+    assert.match(html, /Padrão: últimos 30 dias\. Para toda a base, apague as duas datas\./);
+    assert.match(html, new RegExp(`data-periodo-de="${p.dataDe}" data-periodo-ate="${p.dataAte}">Últimos 30 dias</button>`));
+    assert.match(html, /data-periodo-de="" data-periodo-ate="">Toda a base<\/button>/);
+    assert.doesNotMatch(html, /Vazio = toda a base/);
+
+    const previa = await (await post(base, URL_PREVIA, camposSegmento(alvo, { data_de: p.dataDe, data_ate: p.dataAte }))).text();
+    const br = (d) => d.split('-').reverse().join('/');
+    assert.match(previa, new RegExp(`<b>Período usado:</b> de ${br(p.dataDe)} até ${br(p.dataAte)} \\(dias de Brasília\\)`));
+  });
+});
+
+test('datas apagadas pelo usuario continuam vazias (toda a base) ao voltar por GET', async () => {
+  const { alvo } = cenarioSimples(1);
+  await comServidor(async (base) => {
+    const q = new URLSearchParams({ fonte: 'segmento', vaga_alvo_id: String(alvo), nome: 'X', teto: '5', data_de: '', data_ate: '', previa: '1' });
+    const html = await get(base, `/admin/massa-wa/nova?${q}`);
+    assert.match(html, /name="data_de" value=""/);
+    assert.match(html, /<b>Período usado:<\/b> toda a base \(sem datas\)/);
+  });
+});
+
+test('script: atalhos de periodo preenchem as datas e atualizam a previa na hora', async () => {
+  const codigo = await scriptDaCriacao();
+  const vm = require('node:vm');
+  const botoes = [
+    { attrs: { 'data-periodo-de': '2026-09-09', 'data-periodo-ate': '2026-10-09' } },
+    { attrs: { 'data-periodo-de': '', 'data-periodo-ate': '' } },
+  ].map((b) => ({ ...b, ouvintes: [], getAttribute(k) { return this.attrs[k]; }, addEventListener(t, fn) { this.ouvintes.push(fn); } }));
+  const pedidos = [];
+  const elementos = { data_de: { value: '' }, data_ate: { value: '' } };
+  const no = () => ({ textContent: '', innerHTML: '', style: {}, addEventListener() {} });
+  const form = { elements: elementos, querySelectorAll: () => botoes, addEventListener() {} };
+  const nos = { 'form-segmento': form, 'previa-segmento-conteudo': no(), 'previa-segmento-estado': no(), 'btn-atualizar-previa': no() };
+  const sandbox = {
+    document: { getElementById: (id) => nos[id] },
+    URLSearchParams,
+    AbortController,
+    FormData: function FormData() { return [['data_de', elementos.data_de.value], ['data_ate', elementos.data_ate.value]]; },
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    fetch: (url, opcoes) => { pedidos.push(opcoes.body); return Promise.resolve({ text: () => Promise.resolve('') }); },
+  };
+  sandbox.window = sandbox;
+  vm.runInNewContext(codigo, sandbox);
+  botoes[1].ouvintes[0]({ preventDefault() {} });
+  assert.deepEqual([elementos.data_de.value, elementos.data_ate.value], ['', '']);
+  assert.match(pedidos.at(-1), /data_de=&data_ate=/);
+  botoes[0].ouvintes[0]({ preventDefault() {} });
+  assert.match(pedidos.at(-1), /data_de=2026-09-09&data_ate=2026-10-09/);
+});

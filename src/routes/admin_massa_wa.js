@@ -454,7 +454,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
             <input type="date" name="data_ate" value="${escapeHtml(c.dataAte || '')}"></label>
         </div>
         <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
-          Dias de Brasília. Vazio = toda a base. A pessoa entra se <b>alguma</b> candidatura dela a vaga da cidade cair no período.</p>
+          ${criacao ? atalhosPeriodo() : 'Dias de Brasília. Vazio = toda a base. A pessoa entra se <b>alguma</b> candidatura dela a vaga da cidade cair no período.'}</p>
 
         <fieldset style="border:1px solid var(--linha);border-radius:8px;padding:.8rem 1rem;margin:0 0 1.2rem;">
           <legend style="font-size:.85rem;color:var(--cinza);">Vagas de origem (opcional — nenhuma marcada = todas da cidade)</legend>
@@ -484,6 +484,17 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
 
         <button type="submit" class="btn">${escapeHtml(rotuloBotao)}</button>
       </form>${criacao ? SCRIPT_PREVIA_CRIACAO : ''}`;
+  }
+
+  // Periodo padrao da CRIACAO (segLib.periodoPadraoSegmento), preenchido DE VERDADE no campo: um
+  // campo de data vazio aparece com a data de hoje em cinza no Safari, e parecia um filtro que nao
+  // existia. Apagar as duas datas continua sendo "toda a base".
+  function atalhosPeriodo() {
+    const p = segLib.periodoPadraoSegmento();
+    return `Dias de Brasília. Padrão: últimos ${segLib.DIAS_PERIODO_PADRAO} dias. Para toda a base, apague as duas datas.
+          <button type="button" class="btn btn--ghost" data-periodo-de="${p.dataDe}" data-periodo-ate="${p.dataAte}">Últimos ${segLib.DIAS_PERIODO_PADRAO} dias</button>
+          <button type="button" class="btn btn--ghost" data-periodo-de="" data-periodo-ate="">Toda a base</button>
+          A pessoa entra se <b>alguma</b> candidatura dela a vaga da cidade cair no período.`;
   }
 
   // Painel da previa na CRIACAO. O botao, sem JavaScript, refaz a tela por GET /nova com todos os
@@ -585,6 +596,15 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           clearTimeout(timer);
           timer = setTimeout(atualizar, 800);
         }
+        Array.prototype.forEach.call(form.querySelectorAll ? form.querySelectorAll('[data-periodo-de]') : [], function (b) {
+          b.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            form.elements.data_de.value = b.getAttribute('data-periodo-de');
+            form.elements.data_ate.value = b.getAttribute('data-periodo-ate');
+            pagina = 1;
+            atualizar();
+          });
+        });
         var botaoCidade = document.getElementById('btn-recarregar-cidade');
         if (botaoCidade) botaoCidade.addEventListener('click', function (ev) { ev.preventDefault(); recarregarCidade(); });
         form.addEventListener('input', agendar);
@@ -1045,7 +1065,7 @@ ${camposCadencia(c)}
   // JavaScript, links de pagina da previa). Sem nenhum filtro na query, e a tela em branco de sempre.
   function formCriacaoDaQuery(q, alvo) {
     const veioDoForm = q.teto !== undefined || q.previa !== undefined || q.recarregar !== undefined;
-    if (!veioDoForm) return { alvo };
+    if (!veioDoForm) return { alvo, criterios: segLib.periodoPadraoSegmento() };
     const { nome, bruto, cadencia: cad } = lerSegmentoDoCorpo(q, { vagaAlvoId: alvo.id });
     // Cidade trocada: so ficam marcadas as vagas que existem nas listas da cidade nova.
     const chaveCidade = cidadesLib.chave(bruto.cidade);
