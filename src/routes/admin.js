@@ -5543,6 +5543,7 @@ router.get('/config', (req, res) => {
   const whatsappSeqAtiva = db.obterConfigBool(CHAVE_WHATSAPP_SEQ, false);
   const campanhaWaAtiva = db.obterConfigBool(CHAVE_CAMPANHA_WA, false);
   const massaWaAtiva = massaWhatsapp.ativo({ db });
+  const massaWaSegmentoAtivo = massaWhatsapp.segmentoAtivo({ db });
   const massaWaMock = massaWhatsapp.modoMock();
   // Default TRUE, ao contrario de todos os outros desta tela.
   const optoutWaAtivo = optoutWhatsapp.ativo();
@@ -5701,6 +5702,14 @@ router.get('/config', (req, res) => {
               ${massaWaMock
                 ? '⚠️ <b>Modo simulação:</b> nenhuma mensagem chega aos candidatos, mesmo com esta caixa marcada.'
                 : '🔴 <b>Envio real:</b> marcado, as campanhas ativas enviam mensagens de verdade.'}
+            </span>
+          </label>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="massa_wa_segmento_ativo" value="1"${massaWaSegmentoAtivo ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Segmento da base (Baileys)</b> —
+              deixar as campanhas de <b>segmento da base</b> enviarem (convite para quem se candidatou a outras
+              vagas). Depende também do disparo em massa acima. Desmarcado, os itens delas ficam na fila.
             </span>
           </label>
           <h3 style="margin:1.5rem 0 .5rem;">Opt-out (quem pediu para não receber)</h3>
@@ -5922,6 +5931,7 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_WHATSAPP_SEQ, marcado('whatsapp_sequencia_ativa'));
   db.definirConfigBool(CHAVE_CAMPANHA_WA, marcado('campanha_whatsapp_ativa'));
   db.definirConfigBool(massaWhatsapp.CHAVE_ATIVO, marcado('massa_wa_ativa'));
+  db.definirConfigBool(massaWhatsapp.CHAVE_SEGMENTO_ATIVO, marcado('massa_wa_segmento_ativo'));
   // Default TRUE no LEITOR (optoutWhatsapp.ativo), mas gravado SEMPRE explicito aqui, como
   // as duas linhas de formulario abaixo: checkbox desmarcado nao e 'chave ausente', e sem
   // este definirConfigBool nao haveria como desligar a supressao pela tela.

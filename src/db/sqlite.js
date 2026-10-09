@@ -4955,6 +4955,20 @@ function listarDivulgacoesEnviadasPorCanal() {
     .all();
 }
 
+// Por vaga: candidaturas VIVAS (nao arquivadas) e a data da ULTIMA candidatura (qualquer). E o que
+// o seletor "vagas que nao contam como processo" mostra para o operador reconhecer vaga parada.
+function estatisticaCandidaturasPorVagaMassaWa() {
+  return getDb()
+    .prepare(
+      `SELECT job_id,
+              SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS vivas,
+              MAX(criado_em) AS ultima
+         FROM applications
+        GROUP BY job_id`,
+    )
+    .all();
+}
+
 // Candidaturas geradas por uma campanha de massa: a UTM que o link {link_vaga} carrega
 // (utm_source=massa-wa, utm_campaign=massa-<id>). Somente leitura, para o painel.
 function contarCandidaturasPorUtmMassaWa(campanhaId) {
@@ -5338,6 +5352,7 @@ module.exports = {
   listarConsentimentosMassaWa,
   listarDivulgacoesEnviadasPorCanal,
   contarCandidaturasPorUtmMassaWa,
+  estatisticaCandidaturasPorVagaMassaWa,
   completarFilaCampanhaMassaWa,
   STATUS_SEM_DESTINO,
   reclassificarEnviosMassaWaSemDestino,
