@@ -401,7 +401,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
   // `campanha` presente = EDICAO (formulario de sempre). Ausente = CRIACAO, que tambem recebe o que
   // ja foi digitado (nome, cadencia) quando a tela volta por GET (previa sem JavaScript, recarga de
   // cidade) e ganha o painel de previa ao vivo.
-  function formSegmento({ campanha = null, alvo, criterios = {}, nome = '', cadenciaDigitada = null, previaHtml = '' }, { acao, rotuloBotao }) {
+  function formSegmento({ campanha = null, alvo, criterios = {}, nome = '', cadenciaDigitada = null, previaHtml = '', avisoCidade = '' }, { acao, rotuloBotao }) {
     const c = criterios;
     const criacao = !campanha;
     const cad = cadencia.resolverCadencia(campanha || cadenciaDigitada || {});
@@ -440,7 +440,12 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           <select name="cidade">${opcoesCidade}</select></label>
         <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
           Preenchida pela vaga-alvo. As listas abaixo são de <b>${escapeHtml(cidadeAtual || '—')}</b>; ao trocar a
-          cidade, salve e reabra para ver as vagas da nova cidade.</p>
+          ${criacao ? `cidade, a tela recarrega com as vagas da nova cidade: o que você digitou fica, e as vagas
+          marcadas da cidade anterior são desmarcadas.
+          <button type="submit" class="btn btn--ghost" id="btn-recarregar-cidade" name="recarregar" value="1"
+                  formaction="/admin/massa-wa/nova" formmethod="get" formnovalidate>Recarregar vagas da cidade</button>`
+    : 'cidade, salve e reabra para ver as vagas da nova cidade.'}</p>${avisoCidade
+    ? `\n        <p class="aviso-alerta" style="margin:-.6rem 0 1.2rem;">${escapeHtml(avisoCidade)}</p>` : ''}
 
         <div style="display:flex;gap:.6rem;flex-wrap:wrap;">
           <label class="campo" style="max-width:12rem;"><span>Candidatura de (dia)</span>
@@ -564,12 +569,24 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
             });
         }
 
+        function recarregarCidade() {
+          var dados = new URLSearchParams(new FormData(form));
+          dados.set('recarregar', '1');
+          window.location.href = '/admin/massa-wa/nova?' + dados.toString();
+        }
+
         function agendar(ev) {
           if (!ev.target || FILTROS.indexOf(ev.target.name) === -1) return;
+          if (ev.target.name === 'cidade') {
+            if (ev.type === 'change') recarregarCidade();
+            return;
+          }
           pagina = 1;
           clearTimeout(timer);
           timer = setTimeout(atualizar, 800);
         }
+        var botaoCidade = document.getElementById('btn-recarregar-cidade');
+        if (botaoCidade) botaoCidade.addEventListener('click', function (ev) { ev.preventDefault(); recarregarCidade(); });
         form.addEventListener('input', agendar);
         form.addEventListener('change', agendar);
         botao.addEventListener('click', function (ev) { ev.preventDefault(); pagina = 1; atualizar(); });
@@ -1027,13 +1044,26 @@ ${camposCadencia(c)}
   // Criacao do segmento reaberta por GET com o que ja foi digitado (botao "Atualizar previa" sem
   // JavaScript, links de pagina da previa). Sem nenhum filtro na query, e a tela em branco de sempre.
   function formCriacaoDaQuery(q, alvo) {
-    const veioDoForm = q.teto !== undefined || q.previa !== undefined;
+    const veioDoForm = q.teto !== undefined || q.previa !== undefined || q.recarregar !== undefined;
     if (!veioDoForm) return { alvo };
     const { nome, bruto, cadencia: cad } = lerSegmentoDoCorpo(q, { vagaAlvoId: alvo.id });
+    // Cidade trocada: so ficam marcadas as vagas que existem nas listas da cidade nova.
+    const chaveCidade = cidadesLib.chave(bruto.cidade);
+    const daCidade = db.listarVagas().filter((v) => v.id !== alvo.id && cidadesLib.chave(v.cidade) === chaveCidade);
+    const naLista = new Set(daCidade.map((v) => v.id));
+    const abertas = new Set(daCidade.filter((v) => v.ativo).map((v) => v.id));
+    const origemPedida = bruto.vagasOrigem.map(Number);
+    const ignoradasPedidas = bruto.vagasIgnoradasProcesso.map(Number);
+    const vagasOrigem = origemPedida.filter((id) => naLista.has(id));
+    const vagasIgnoradasProcesso = ignoradasPedidas.filter((id) => abertas.has(id));
+    const descartadas = origemPedida.length - vagasOrigem.length + ignoradasPedidas.length - vagasIgnoradasProcesso.length;
     return {
       alvo,
       nome,
-      criterios: { ...bruto, vagasOrigem: bruto.vagasOrigem.map(Number), vagasIgnoradasProcesso: bruto.vagasIgnoradasProcesso.map(Number) },
+      avisoCidade: descartadas
+        ? `${descartadas} vaga(s) marcada(s) da cidade anterior foram desmarcadas: as listas agora são de ${bruto.cidade}.`
+        : '',
+      criterios: { ...bruto, vagasOrigem, vagasIgnoradasProcesso },
       cadenciaDigitada: {
         lote_min: cad.loteMin,
         lote_max: cad.loteMax,
@@ -1046,7 +1076,12 @@ ${camposCadencia(c)}
         hora_fim: cad.horaFim,
         dias_semana: cad.diasSemana,
       },
-      previaHtml: q.previa === '1' ? previaSegmentoDoCorpo({ ...q, vaga_alvo_id: alvo.id }).html : '',
+      // A previa usa as MESMAS marcacoes que a tela mostra (sem as vagas descartadas pela cidade).
+      previaHtml: q.previa === '1'
+        ? previaSegmentoDoCorpo({
+          ...q, vaga_alvo_id: alvo.id, vagas_origem: vagasOrigem.map(String), vagas_ignoradas: vagasIgnoradasProcesso.map(String),
+        }).html
+        : '',
     };
   }
 

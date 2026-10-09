@@ -404,14 +404,15 @@ function rodarScript(codigo, { respostas = [] } = {}) {
       return Promise.resolve({ text: () => Promise.resolve(html) });
     },
   };
+  sandbox.location = { href: '' };
   sandbox.window = sandbox;
   vm.runInNewContext(codigo, sandbox);
   const avancar = (ms) => {
     agora += ms;
     for (const [id, t] of [...timers]) if (t.quando <= agora) { timers.delete(id); t.fn(); }
   };
-  const disparar = (tipo, name) => (ouvintes[tipo] || []).forEach((fn) => fn({ target: { name } }));
-  return { pedidos, avancar, disparar, nos, elementos, esperar: () => new Promise((r) => setImmediate(r)) };
+  const disparar = (tipo, name) => (ouvintes[tipo] || []).forEach((fn) => fn({ type: tipo, target: { name } }));
+  return { pedidos, avancar, disparar, nos, elementos, sandbox, esperar: () => new Promise((r) => setImmediate(r)) };
 }
 
 test('script: previa no carregamento; 800 ms depois da ULTIMA mudanca; nome nao dispara', async () => {
@@ -435,7 +436,7 @@ test('script: previa no carregamento; 800 ms depois da ULTIMA mudanca; nome nao 
 test('script: um pedido novo CANCELA o anterior', async () => {
   const s = rodarScript(await scriptDaCriacao());
   const primeiro = s.pedidos[0].opcoes.signal;
-  s.disparar('change', 'cidade');
+  s.disparar('change', 'teto');
   s.avancar(800);
   assert.equal(primeiro.aborted, true);
   assert.equal(s.pedidos[1].opcoes.signal.aborted, false);
@@ -462,4 +463,79 @@ test('script: resposta sem a marca do fragmento (login) = sessao expirada, paine
   await s.esperar();
   assert.match(s.nos['previa-segmento-estado'].textContent, /Sessão expirada/);
   assert.equal(s.nos['previa-segmento-conteudo'].innerHTML, '');
+});
+
+// ══════════════════ I4: TROCA DE CIDADE NA CRIACAO ══════════════════
+
+function cenarioDuasCidades() {
+  const { alvo, origem } = cenarioSimples(2);
+  const parada = vaga({ titulo: 'Parada Joinville' });
+  const deCuritiba = vaga({ ativo: false, cidade: 'Curitiba', titulo: 'Antiga Curitiba' });
+  const abertaCuritiba = vaga({ cidade: 'Curitiba', titulo: 'Aberta Curitiba' });
+  candidatura(deCuritiba, { nome: 'Curitibano' });
+  return { alvo, origem, parada, deCuritiba, abertaCuritiba };
+}
+
+test('criacao: texto novo e botao "Recarregar vagas da cidade" (GET, sem JS)', async () => {
+  const { alvo } = cenarioDuasCidades();
+  await comServidor(async (base) => {
+    const html = await get(base, `/admin/massa-wa/nova?fonte=segmento&vaga_alvo=${alvo}`);
+    assert.match(html, /a tela recarrega com as vagas da nova cidade/);
+    assert.match(html, /name="recarregar" value="1"\s+formaction="\/admin\/massa-wa\/nova" formmethod="get" formnovalidate>Recarregar vagas da cidade/);
+    assert.doesNotMatch(html, /salve e reabra/);
+  });
+});
+
+test('recarga com OUTRA cidade: listas da cidade nova, digitado preservado, vagas da anterior desmarcadas com aviso', async () => {
+  const { alvo, origem, parada, deCuritiba, abertaCuritiba } = cenarioDuasCidades();
+  await comServidor(async (base) => {
+    const q = new URLSearchParams({ fonte: 'segmento', vaga_alvo_id: String(alvo), nome: 'Troca', cidade: 'Curitiba', teto: '9', recarregar: '1' });
+    q.append('vagas_origem', String(origem));
+    q.append('vagas_ignoradas', String(parada));
+    const html = await get(base, `/admin/massa-wa/nova?${q}`);
+    assert.match(html, /<option value="Curitiba" selected>/);
+    assert.match(html, /name="nome" value="Troca"/);
+    assert.match(html, /name="teto" required value="9"/);
+    assert.match(html, new RegExp(`name="vagas_origem" value="${deCuritiba}">`));
+    assert.match(html, new RegExp(`name="vagas_ignoradas" value="${abertaCuritiba}">`));
+    assert.doesNotMatch(html, new RegExp(`name="vagas_origem" value="${origem}"`));
+    assert.match(html, /2 vaga\(s\) marcada\(s\) da cidade anterior foram desmarcadas: as listas agora são de Curitiba\./);
+  });
+  assert.equal(db.listarCampanhasMassaWa().length, 0);
+});
+
+test('recarga na MESMA cidade mantem as marcacoes e nao avisa nada', async () => {
+  const { alvo, origem, parada } = cenarioDuasCidades();
+  await comServidor(async (base) => {
+    const q = new URLSearchParams({ fonte: 'segmento', vaga_alvo_id: String(alvo), nome: 'Mesma', cidade: 'Joinville', teto: '9', recarregar: '1' });
+    q.append('vagas_origem', String(origem));
+    q.append('vagas_ignoradas', String(parada));
+    const html = await get(base, `/admin/massa-wa/nova?${q}`);
+    assert.match(html, new RegExp(`name="vagas_origem" value="${origem}" checked>`));
+    assert.match(html, new RegExp(`name="vagas_ignoradas" value="${parada}" checked>`));
+    assert.doesNotMatch(html, /da cidade anterior foram desmarcadas/);
+  });
+});
+
+test('script: trocar a cidade recarrega a tela (GET com recarregar=1), sem pedir previa da cidade velha', async () => {
+  const s = rodarScript(await scriptDaCriacao());
+  s.disparar('input', 'cidade');
+  s.avancar(800);
+  assert.equal(s.sandbox.location.href, '');
+  assert.equal(s.pedidos.length, 1);
+  s.disparar('change', 'cidade');
+  assert.match(s.sandbox.location.href, /^\/admin\/massa-wa\/nova\?.*recarregar=1/);
+  s.avancar(5000);
+  assert.equal(s.pedidos.length, 1);
+});
+
+test('sem JS, cidade trocada e "Atualizar previa": a previa usa as marcacoes que a tela mostra', async () => {
+  const { alvo, origem } = cenarioDuasCidades();
+  await comServidor(async (base) => {
+    const q = new URLSearchParams({ fonte: 'segmento', vaga_alvo_id: String(alvo), nome: 'X', cidade: 'Curitiba', teto: '9', previa: '1' });
+    q.append('vagas_origem', String(origem)); // de Joinville: descartada
+    const html = await get(base, `/admin/massa-wa/nova?${q}`);
+    assert.match(html, /1 vaga\(s\) marcada\(s\) da cidade anterior foram desmarcadas/);
+    assert.deepEqual(nomesDaTabela(html), ['Curitibano']);
+  });
 });
