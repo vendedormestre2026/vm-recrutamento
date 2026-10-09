@@ -67,6 +67,7 @@ const { proximaEntrevistaGrupo } = require('../lib/entrevistaGrupo');
 const { inicioDoDiaBrasiliaUtc, paraTextoSqlUtc } = require('../lib/fusoBrasilia');
 const cadencia = require('../lib/cadenciaMassaWa');
 const variacoes = require('../lib/variacoesMassaWa');
+const { fonteDaCampanhaMassaWa, criteriosDaCampanhaMassaWa, FONTE_VAGAS_ABERTAS } = require('../lib/publicoMassaWhatsapp');
 const { mascarar, varianteSemNono } = require('./sequenciaOutbox');
 
 // Interruptor de DISPARO, no store `configuracoes` — mesmo padrao de promocao_ativa,
@@ -74,6 +75,12 @@ const { mascarar, varianteSemNono } = require('./sequenciaOutbox');
 //
 // Default FALSE: a ausencia da chave NAO pode significar "pode disparar em massa".
 const CHAVE_ATIVO = 'massa_wa_ativa';
+
+// Interruptor PROPRIO das campanhas de SEGMENTO DA BASE (criterios.fonte = 'segmento'), alem do
+// geral acima. Default FALSE, como o outro: chave ausente = itens de segmento ficam PENDENTES, e
+// as campanhas de vagas abertas seguem normalmente. Desligar o segmento nunca para o resto.
+const CHAVE_SEGMENTO_ATIVO = 'massa_wa_segmento_ativo';
+const FONTE_SEGMENTO = 'segmento';
 
 // Intervalo do tick. Menor que a pausa entre lotes de proposito: o tick so CONFERE se ja pode
 // enviar (a decisao esta em `proximo_envio_em`, no banco). Um tick longo faria a campanha perder
@@ -89,6 +96,15 @@ function ativo(deps = {}) {
   const db = deps.db || dbPadrao;
   return db.obterConfigBool(CHAVE_ATIVO, false);
 }
+
+function segmentoAtivo(deps = {}) {
+  const db = deps.db || dbPadrao;
+  return db.obterConfigBool(CHAVE_SEGMENTO_ATIVO, false);
+}
+
+// Mesma regra de ruido de logarDesativado: avisa uma vez por campanha, e de novo so depois que o
+// interruptor for ligado e desligado outra vez.
+const segmentoAvisado = new Set();
 
 // Default TRUE: so sai mensagem de verdade quando alguem disser explicitamente que sim. Mesma
 // regra de WHATSAPP_SEQUENCIA_MOCK.
@@ -222,6 +238,21 @@ async function processarCicloMassaWa(deps = {}) {
     console.error(`[massa-wa] falha ao consultar campanhas: ${err.message}`);
     return resumo;
   }
+  // ── SEGMENTO DESLIGADO: a campanha nem entra na disputa pelo ciclo ──
+  // O ciclo atende UMA campanha (CAMPANHAS_POR_CICLO). Se a de segmento entrasse aqui so para ser
+  // pulada la dentro, ocuparia a vez de uma campanha de vagas abertas em todo ciclo, para sempre.
+  if (!segmentoAtivo({ db })) {
+    ativas = ativas.filter((c) => {
+      if (fonteDaCampanhaMassaWa(c) !== FONTE_SEGMENTO) return true;
+      if (!segmentoAvisado.has(c.id)) {
+        segmentoAvisado.add(c.id);
+        console.log(`[massa-wa] campanha ${c.id} (segmento) ignorada: ${CHAVE_SEGMENTO_ATIVO} desligado; itens seguem pendentes.`);
+      }
+      return false;
+    });
+  } else {
+    segmentoAvisado.clear();
+  }
   if (!ativas.length) return resumo;
 
   if (ativas.length > CAMPANHAS_POR_CICLO) {
@@ -261,6 +292,20 @@ async function processarCampanha(campanha, ctx) {
   const resumo = { enviados: 0, falhas: 0, pulados: 0 };
   const cad = cadencia.resolverCadencia(campanha);
 
+  // ── 0. FONTE DO PUBLICO ──
+  // Sem `fonte` (todas as campanhas anteriores ao segmento) o caminho e o de sempre, byte a byte.
+  // Fonte desconhecida nao envia: nao ha como saber que texto e que vaga ela pretendia.
+  const fonte = fonteDaCampanhaMassaWa(campanha);
+  const segmento = fonte === FONTE_SEGMENTO;
+  if (!segmento && fonte !== FONTE_VAGAS_ABERTAS) {
+    console.error(`[massa-wa] campanha ${campanha.id}: fonte de publico desconhecida ("${fonte}"); nada enviado.`);
+    return resumo;
+  }
+  // Segunda defesa do interruptor do segmento (a primeira tira a campanha do ciclo): quem chama
+  // processarCampanha direto, como o teste, tambem nao pode enviar com ele desligado.
+  if (segmento && !segmentoAtivo({ db })) return resumo;
+  const tipo = variacoes.tipoPorFonte(fonte);
+
   // ── 1. JANELA DE HORARIO (relogio de Brasilia) ──
   const janela = cadencia.dentroDaJanela(agora, cad);
   if (!janela.ok) {
@@ -299,7 +344,7 @@ async function processarCampanha(campanha, ctx) {
   // Checado no ENVIO, e nao so no save: alguem pode ter editado as variacoes depois de ativar a
   // campanha. Invalidas -> pausa, porque mandar texto com token nao resolvido e pior que nao mandar.
   const lista = db.listarVariacoesMassaWa(campanha.id);
-  const valid = variacoes.validarVariacoes(lista.map((v) => v.texto));
+  const valid = variacoes.validarVariacoes(lista.map((v) => v.texto), { tipo });
   if (!valid.ok) {
     db.definirStatusCampanhaMassaWa(campanha.id, 'pausada', { motivo: MOTIVO_VARIACOES_INVALIDAS });
     console.error(
@@ -313,7 +358,7 @@ async function processarCampanha(campanha, ctx) {
   const tamanho = cadencia.tamanhoDoLote(cad, restanteDoDia, aleatorio);
   if (tamanho <= 0) return resumo;
 
-  const pendentes = db.listarPendentesCampanhaMassaWa(campanha.id, { limite: tamanho });
+  let pendentes = db.listarPendentesCampanhaMassaWa(campanha.id, { limite: tamanho });
   // Uma linha por lote com a cadencia que esta VALENDO (depois dos pisos): e o que permite auditar
   // pelo log do Railway, sem abrir o banco, se o ritmo foi o combinado.
   console.log(
@@ -324,6 +369,37 @@ async function processarCampanha(campanha, ctx) {
     db.definirStatusCampanhaMassaWa(campanha.id, 'concluida');
     console.log(`[massa-wa] campanha ${campanha.id}: fila vazia; concluida.`);
     return resumo;
+  }
+
+  // ── 6b. SEGMENTO: GUARDAS DA VAGA-ALVO, ANTES DE QUALQUER CONSULTA AO WHATSAPP ──
+  // A mensagem fala da VAGA-ALVO (campanha.job_id), e nao da vaga gravada no item (a de origem do
+  // candidato). Duas coisas podem ter mudado desde a materializacao, e nas duas o item e CANCELADO
+  // com o motivo, nunca enviado: a vaga-alvo fechou (convidar para vaga encerrada), ou a pessoa se
+  // candidatou a ela por conta propria (convite para o que ela ja fez).
+  let alvo = null;
+  if (segmento) {
+    alvo = campanha.job_id ? db.obterVaga(campanha.job_id) : null;
+    if (!alvo || !alvo.ativo) {
+      for (const p of pendentes) {
+        db.marcarEnvioMassaWaTerminal(p.id, 'cancelado', '[vaga_alvo_fechada] a vaga-alvo da campanha nao esta aberta');
+        resumo.pulados += 1;
+      }
+      console.warn(`[massa-wa] campanha ${campanha.id}: vaga-alvo ${campanha.job_id} nao esta aberta; ${pendentes.length} item(ns) cancelado(s).`);
+      return resumo;
+    }
+    const naAlvo = new Set(
+      db.listarCandidaturasDaVagaMassaWa(alvo.id)
+        .map((a) => chaveCanonicaTelefone(normalizarTelefoneRecebido(a.telefone) || ''))
+        .filter(Boolean),
+    );
+    pendentes = pendentes.filter((p) => {
+      if (!naAlvo.has(p.telefone_canonico)) return true;
+      db.marcarEnvioMassaWaTerminal(p.id, 'cancelado', '[ja_candidatou_vaga_alvo] candidatou-se a vaga-alvo depois da materializacao');
+      resumo.pulados += 1;
+      console.log(`[massa-wa] ${mascarar(p.telefone)}: ja se candidatou a vaga-alvo; cancelado.`);
+      return false;
+    });
+    if (!pendentes.length) return resumo;
   }
 
   // ── 7. EXISTENCIA REAL, COM E SEM O NONO DIGITO, UMA CHAMADA PARA O LOTE ──
@@ -426,9 +502,10 @@ async function processarCampanha(campanha, ctx) {
     // A vaga e a do CANDIDATO (a campanha pode ser de todas as vagas abertas), e a data vem da
     // proxima reuniao FUTURA. Congelar isso na materializacao faria uma campanha de tres dias
     // anunciar, no segundo dia, uma reuniao que passou.
-    const job = jobDaLinha(linha);
-    const proxima = proximaEntrevistaGrupo(job, agora);
-    if (!proxima) {
+    // Segmento: a vaga e a ALVO e nao ha reuniao a exigir (o convite e para se candidatar).
+    const job = segmento ? alvo : jobDaLinha(linha);
+    const proxima = segmento ? null : proximaEntrevistaGrupo(job, agora);
+    if (!segmento && !proxima) {
       db.marcarEnvioMassaWaTerminal(
         linha.id,
         'sem_reuniao',
@@ -445,14 +522,23 @@ async function processarCampanha(campanha, ctx) {
       db.definirStatusCampanhaMassaWa(campanha.id, 'pausada', { motivo: MOTIVO_VARIACOES_INVALIDAS });
       break;
     }
-    const contexto = variacoes.montarContexto({
-      nome: linha.nome,
-      job,
-      proxima,
-      linkDescadastro: variacoes.linkDescadastroPara(telefone),
-      recrutador: db.obterConfig('recrutador_nome', ''),
-    });
-    const { texto, faltando } = variacoes.resolverTexto(escolhida.texto, contexto);
+    const contexto = segmento
+      ? variacoes.montarContextoConvite({
+        nome: linha.nome,
+        job,
+        cidade: criteriosDaCampanhaMassaWa(campanha).cidade,
+        linkVaga: variacoes.linkVagaPara(job.slug, campanha.id),
+        linkDescadastro: variacoes.linkDescadastroPara(telefone),
+        recrutador: db.obterConfig('recrutador_nome', ''),
+      })
+      : variacoes.montarContexto({
+        nome: linha.nome,
+        job,
+        proxima,
+        linkDescadastro: variacoes.linkDescadastroPara(telefone),
+        recrutador: db.obterConfig('recrutador_nome', ''),
+      });
+    const { texto, faltando } = variacoes.resolverTexto(escolhida.texto, contexto, { tipo });
     if (faltando.length) {
       // Dado que falta na VAGA (tipicamente empresa nao cadastrada) ou link de descadastro que nao
       // pode ser montado. Nao e retentavel: o proximo ciclo encontraria o mesmo buraco. O erro diz
@@ -620,6 +706,8 @@ module.exports = {
   jobDaLinha,
   aguardarEspacamento,
   CHAVE_ATIVO,
+  CHAVE_SEGMENTO_ATIVO,
+  segmentoAtivo,
   INTERVALO_TICK_MS,
   CAMPANHAS_POR_CICLO,
   MOTIVO_ERROS_CONSECUTIVOS,
