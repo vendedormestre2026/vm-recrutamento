@@ -293,12 +293,12 @@ const VARIACOES_SEED = Object.freeze([
 ]);
 
 // ══════════════════════════════════════════════════════════════
-// SEED do CONVITE PARA CANDIDATURA (segmento da base) — RASCUNHO
+// SEED do CONVITE PARA CANDIDATURA (segmento da base)
 // ══════════════════════════════════════════════════════════════
 //
-// ⚠️ RASCUNHO aguardando aprovacao do Rafael (Parada 2 do segmento, 2026-10-09). Nao ha como
-// estes textos sairem antes disso: so entram numa campanha de segmento criada no painel, e o
-// interruptor massa_wa_segmento_ativo nasce desligado.
+// Aprovadas pelo Rafael na Parada 2 do segmento (2026-10-09), com ajustes nas sementes 2 e 7. So
+// entram numa campanha de segmento criada no painel, e o interruptor massa_wa_segmento_ativo
+// nasce desligado.
 //
 // A mensagem sai de um numero que a pessoa nunca viu, para alguem que se candidatou a OUTRA vaga
 // ha semanas. Por isso cada uma das sete: (a) diz quem escreve, (b) lembra de onde a pessoa nos
@@ -319,7 +319,7 @@ const VARIACOES_SEED_CONVITE = Object.freeze([
   [
     '{saudacao} Tudo bem? {recrutador} aqui, do recrutamento da *Vendedor Mestre*.',
     '',
-    'Seu contato está com a gente desde que você participou de um processo seletivo nosso em {cidade}. Surgiu uma vaga nova e lembrei de você:',
+    'Seu contato está com a gente desde que você se candidatou a uma vaga nossa em {cidade}. Surgiu uma vaga nova e lembrei de você:',
     '',
     '📌 *{vaga}* — *{empresa}*',
     '🔗 {link_vaga}',
@@ -367,7 +367,7 @@ const VARIACOES_SEED_CONVITE = Object.freeze([
   [
     '{saudacao} Aqui é {recrutador}, da equipe de recrutamento da *Vendedor Mestre*.',
     '',
-    'Você ainda está buscando uma nova oportunidade? Você já se candidatou a uma vaga nossa em {cidade}, e estamos com uma nova: *{vaga}*, na *{empresa}*.',
+    'Você já se candidatou a uma vaga nossa em {cidade} e estamos com uma nova: *{vaga}*, na *{empresa}*. Ainda está buscando uma oportunidade?',
     '',
     '➡️ {link_vaga}',
     '',
