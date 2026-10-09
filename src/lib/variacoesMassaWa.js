@@ -564,6 +564,24 @@ function recrutadorDe(valorConfig) {
   return primeiroNomeDe(valorConfig) || primeiroNomeDe(RECRUTADOR_PADRAO);
 }
 
+// Os titulos das vagas costumam vir como "Cargo | Empresa" ("Consultor Comercial | DUO Oral
+// Care"). No convite o texto ja diz "*{vaga}*, na *{empresa}*", e a empresa sairia duas vezes. Se
+// o titulo TERMINA em "| {empresa}" (sem maiusculas, sem acentos, espacos em volta do "|"
+// tolerados), esse final sai. Se sobrar titulo vazio, nao corta. So o convite usa: o tipo
+// entrevista continua com o titulo inteiro.
+const semAcentoMinusculo = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/\s+/g, ' ').trim();
+
+function tituloSemEmpresa(titulo, empresa) {
+  const t = String(titulo || '').trim();
+  const e = semAcentoMinusculo(empresa);
+  const i = t.lastIndexOf('|');
+  if (!e || i < 0) return t;
+  const antes = t.slice(0, i).trim();
+  if (!antes || semAcentoMinusculo(t.slice(i + 1)) !== e) return t;
+  return antes;
+}
+
 // Contexto do CONVITE PARA CANDIDATURA (segmento). A vaga e a VAGA-ALVO da campanha — nunca a
 // vaga de origem do candidato, que e a que esta gravada no item da fila. `cidade` e a do recorte
 // (criterios.cidade), ja no nome canonico do vocabulario.
@@ -571,7 +589,7 @@ function montarContextoConvite({ nome, job, cidade, linkVaga, linkDescadastro, r
   return {
     saudacao: saudacao(nome),
     recrutador: recrutadorDe(recrutador),
-    vaga: String((job && job.titulo) || '').trim(),
+    vaga: tituloSemEmpresa(job && job.titulo, job && job.empresa),
     empresa: textoEmpresa(job && job.empresa),
     cidade: String(cidade || '').trim(),
     link_vaga: String(linkVaga || '').trim(),
@@ -653,6 +671,7 @@ module.exports = {
   tokensDoTipo,
   tipoPorFonte,
   montarContextoConvite,
+  tituloSemEmpresa,
   linkVagaPara,
   UTM_SOURCE_MASSA,
   utmCampaignMassa,

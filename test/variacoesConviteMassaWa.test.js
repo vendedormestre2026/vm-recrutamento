@@ -99,3 +99,45 @@ test('sementesDoTipo / textoBaseDoTipo', () => {
   assert.equal(v.textoBaseDoTipo(), v.TEXTO_BASE_PADRAO);
   assert.equal(v.textoBaseDoTipo(v.TIPO_CONVITE_CANDIDATURA), v.TEXTO_BASE_CONVITE);
 });
+
+// ══════════════════ CORTE DO "| {empresa}" NO TITULO (so convite) ══════════════════
+
+const JOB_DUO = { titulo: 'Consultor Comercial | DUO Oral Care', empresa: 'DUO Oral Care' };
+
+test('corte: titulo terminado em "| {empresa}" perde o final (sem maiusculas, sem acentos, espacos tolerados)', () => {
+  assert.equal(v.tituloSemEmpresa(JOB_DUO.titulo, JOB_DUO.empresa), 'Consultor Comercial');
+  assert.equal(v.tituloSemEmpresa('Executivo de Vendas Interno|H+ Arquitetura', 'H+ Arquitetura'), 'Executivo de Vendas Interno');
+  assert.equal(v.tituloSemEmpresa('Vendedor  |   AÇÚCAR  união ', 'Acucar Uniao'), 'Vendedor');
+  const ctx = v.montarContextoConvite({ nome: 'Maria', job: JOB_DUO, cidade: 'Joinville', linkVaga: 'https://e/v', linkDescadastro: 'https://e/d', recrutador: 'Jean Dentz' });
+  assert.equal(ctx.vaga, 'Consultor Comercial');
+  assert.equal(ctx.empresa, 'DUO Oral Care');
+  const { texto } = v.resolverTexto(v.VARIACOES_SEED_CONVITE[6], ctx, CONVITE);
+  assert.match(texto, /\*Consultor Comercial\*, na \*DUO Oral Care\*/);
+  assert.equal(texto.split('DUO Oral Care').length - 1, 1);
+});
+
+test('corte: titulo sem a empresa fica intacto', () => {
+  assert.equal(v.tituloSemEmpresa('Consultor Comercial', 'DUO Oral Care'), 'Consultor Comercial');
+  assert.equal(v.tituloSemEmpresa('Consultor Comercial DUO Oral Care', 'DUO Oral Care'), 'Consultor Comercial DUO Oral Care');
+});
+
+test('corte: OUTRA empresa no final fica intacta (inclusive empresa contida no final)', () => {
+  assert.equal(v.tituloSemEmpresa('Consultor | Outra Ltda', 'DUO Oral Care'), 'Consultor | Outra Ltda');
+  assert.equal(v.tituloSemEmpresa('Consultor | DUO Oral Care Joinville', 'DUO Oral Care'), 'Consultor | DUO Oral Care Joinville');
+  assert.equal(v.tituloSemEmpresa('Consultor | DUO Oral Care', ''), 'Consultor | DUO Oral Care');
+});
+
+test('corte: titulo que ficaria vazio NAO e cortado', () => {
+  assert.equal(v.tituloSemEmpresa('| DUO Oral Care', 'DUO Oral Care'), '| DUO Oral Care');
+  assert.equal(v.tituloSemEmpresa('  |  DUO Oral Care', 'DUO Oral Care'), '|  DUO Oral Care');
+});
+
+test('REGRESSAO: tipo entrevista mantem o titulo inteiro, texto identico ao de antes', () => {
+  const proxima = { dataTexto: 'quinta, 01/10', horaTexto: '19h30', linkMeet: 'https://calendly.com/x' };
+  const ctx = v.montarContexto({ nome: 'Maria', job: JOB_DUO, proxima, linkDescadastro: 'https://e/d', recrutador: 'Jean Dentz' });
+  assert.equal(ctx.vaga, 'Consultor Comercial | DUO Oral Care');
+  for (const semente of v.VARIACOES_SEED) {
+    const esperado = semente.replace(/\{(\w+)\}/g, (_, k) => ctx[k]);
+    assert.equal(v.resolverTexto(semente, ctx).texto, esperado);
+  }
+});
