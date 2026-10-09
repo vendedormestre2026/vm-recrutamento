@@ -500,14 +500,10 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       </div>`;
   }
 
-  function blocoPreviaSegmento(campanha) {
-    let r;
-    try {
-      r = publico.montarPublicoDaCampanha(campanha);
-    } catch (err) {
-      return `<section class="rel-sec"><h2>Público</h2>
-        <p class="aviso-alerta">${escapeHtml(err.message)}</p></section>`;
-    }
+  // Funil do segmento (linhas, aritmetica e aviso de contato frio) a partir do retorno de
+  // montarPublicoDaCampanha. E o MESMO HTML na pagina da campanha e na previa ao vivo da criacao:
+  // os dois lugares nao podem contar o publico de jeitos diferentes.
+  function funilSegmentoHtml(r) {
     const f = r.funil;
     const c = r.criterios;
     const linha = (rotulo, valor, nota) => `
@@ -518,12 +514,8 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       : 'toda a base';
     const ignoradas = f.vagasIgnoradasProcesso.length
       ? `ignoradas: ${f.vagasIgnoradasProcesso.map((id) => `vaga ${id}`).join(', ')}` : '';
-    const materializada = db.resumoCampanhaMassaWa(campanha.id).reduce((a, l) => a + l.n, 0) > 0;
 
-    return `
-      <section class="rel-sec">
-        <h2>Público do segmento (prévia)</h2>
-        <p style="color:var(--cinza);font-size:.85rem;margin:0 0 .8rem;">
+    return `<p style="color:var(--cinza);font-size:.85rem;margin:0 0 .8rem;">
           Recalculado agora. As quatro primeiras linhas contam <b>candidaturas</b> a vagas de
           ${escapeHtml(c.cidade)} (${periodo}, sem a vaga-alvo) e chegam em <b>Pessoas</b>; dali para baixo
           são pessoas, e cada uma sai na primeira linha que a pega.</p>
@@ -553,7 +545,22 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
         ${f.finalComContatoAnterior ? `<p class="aviso-alerta" style="margin:.8rem 0 0;"><b>Contato frio:</b>
           ${fmtInt(f.finalComContatoAnterior)} de ${fmtInt(f.total)} pessoa(s) do público final já receberam divulgação ou
           convite por outro canal antes do período acima${f.finalComContatoSemData ? ` (${fmtInt(f.finalComContatoSemData)} com contato sem data, histórico do n8n)` : ''}.
-          A mensagem sai de um número que elas não conhecem: comece com teto pequeno.</p>` : ''}
+          A mensagem sai de um número que elas não conhecem: comece com teto pequeno.</p>` : ''}`;
+  }
+
+  function blocoPreviaSegmento(campanha) {
+    let r;
+    try {
+      r = publico.montarPublicoDaCampanha(campanha);
+    } catch (err) {
+      return `<section class="rel-sec"><h2>Público</h2>
+        <p class="aviso-alerta">${escapeHtml(err.message)}</p></section>`;
+    }
+    const materializada = db.resumoCampanhaMassaWa(campanha.id).reduce((a, l) => a + l.n, 0) > 0;
+    return `
+      <section class="rel-sec">
+        <h2>Público do segmento (prévia)</h2>
+        ${funilSegmentoHtml(r)}
         <p style="margin:.8rem 0 0;"><a class="btn btn--ghost" href="/admin/massa-wa/${campanha.id}/conferencia">
           ${materializada ? 'Ver a conferência nominal' : 'Conferência nominal (revisar e desmarcar antes de materializar)'}</a></p>
       </section>`;
