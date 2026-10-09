@@ -801,7 +801,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     const pagina = Math.min(Math.max(1, Number(b.pagina) || 1), paginas);
     const fatia = r.itens.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA);
     const linhas = fatia.map((p) => `
-          <tr>
+          <tr data-candidatura="${escapeHtml(String(p.applicationId))}">
             <td>${escapeHtml(p.nome || '—')}</td>
             <td>${escapeHtml(p.jobTitulo || '—')}</td>
             <td>${escapeHtml(cidadeDaVaga.get(p.jobId) || '—')}</td>
@@ -863,8 +863,8 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
 
     const linhas = fatia.map((p) => `
       <tr>
-        <td>${materializada ? (p.marcado ? '✔' : '—') : `<input type="hidden" name="na_pagina" value="${escapeHtml(p.telefoneCanonico)}">
-          <input type="checkbox" name="manter" value="${escapeHtml(p.telefoneCanonico)}"${p.marcado ? ' checked' : ''} aria-label="Manter ${escapeHtml(p.nome)}">`}</td>
+        <td>${materializada ? (p.marcado ? '✔' : '—') : `<input type="hidden" name="na_pagina" value="${escapeHtml(String(p.applicationId))}">
+          <input type="checkbox" name="manter" value="${escapeHtml(String(p.applicationId))}"${p.marcado ? ' checked' : ''} aria-label="Manter ${escapeHtml(p.nome)}">`}</td>
         <td>${escapeHtml(p.nome || '—')}</td>
         <td>${escapeHtml(p.jobTitulo || '—')}</td>
         <td>${escapeHtml(diaHoraBrasilia(p.candidaturaEm))}</td>
@@ -905,6 +905,11 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
 
   // Salva as marcacoes DA PAGINA: quem estava na pagina e nao veio em `manter` vira desmarcado; quem
   // veio volta. As outras paginas ficam como estavam.
+  //
+  // O formulario identifica cada pessoa pelo ID DA CANDIDATURA (o telefone completo nao vai para o
+  // HTML). Aqui o publico e recalculado e cada id e resolvido para a chave canonica do telefone, que
+  // e o que criterios.desmarcadas guarda desde sempre (formato inalterado). Id que nao esta mais no
+  // publico (a pessoa saiu entre abrir e salvar a pagina) e ignorado.
   router.post('/:id/conferencia', (req, res) => {
     const id = Number(req.params.id);
     const campanha = db.obterCampanhaMassaWa(id);
@@ -919,9 +924,19 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     const naPagina = new Set(lista(b.na_pagina));
     const manter = new Set(lista(b.manter));
     const criterios = criteriosDaCampanha(campanha);
+    let r;
+    try {
+      r = publico.montarPublicoDaCampanha(campanha);
+    } catch (err) {
+      console.warn(`[massa-wa] campanha ${id}: conferencia sem publico do segmento: ${err.message}`);
+      return res.redirect(`/admin/massa-wa/${id}?erro=seg_publico`);
+    }
+    const chavePorCandidatura = new Map([...r.itens, ...r.desmarcadas].map((p) => [String(p.applicationId), p.telefoneCanonico]));
     const desmarcadas = new Set(criterios.desmarcadas || []);
-    for (const k of naPagina) {
-      if (manter.has(k)) desmarcadas.delete(k);
+    for (const idCandidatura of naPagina) {
+      const k = chavePorCandidatura.get(idCandidatura);
+      if (!k) continue;
+      if (manter.has(idCandidatura)) desmarcadas.delete(k);
       else desmarcadas.add(k);
     }
     db.atualizarCampanhaMassaWa(id, {

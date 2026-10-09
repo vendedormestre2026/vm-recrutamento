@@ -179,7 +179,7 @@ test('REGRESSAO: o formulario de edicao da campanha de segmento e o de antes', a
 // ══════════════════ I2: ENDPOINT DA PREVIA (so leitura) ══════════════════
 
 const URL_PREVIA = '/admin/massa-wa/segmento/previa';
-const nomesDaTabela = (html) => [...html.matchAll(/<tr>\s*<td>([^<]*)<\/td>/g)].map((m) => m[1]);
+const nomesDaTabela = (html) => [...html.matchAll(/<tr data-candidatura="\d+">\s*<td>([^<]*)<\/td>/g)].map((m) => m[1]);
 
 // Cenario simples: N pessoas so na vaga de origem, a de indice 0 e a candidatura mais recente.
 function cenarioSimples(n) {
@@ -609,4 +609,88 @@ test('script: atalhos de periodo preenchem as datas e atualizam a previa na hora
   assert.match(pedidos.at(-1), /data_de=&data_ate=/);
   botoes[0].ouvintes[0]({ preventDefault() {} });
   assert.match(pedidos.at(-1), /data_de=2026-09-09&data_ate=2026-10-09/);
+});
+
+// ══════════════════ I6: CONFERENCIA POR ID DA CANDIDATURA (sem telefone no HTML) ══════════════════
+
+const publicoLib = require('../src/lib/publicoMassaWhatsapp');
+const critDe = (id) => JSON.parse(db.obterCampanhaMassaWa(id).criterios_json);
+
+test('conferencia: nenhum telefone completo no HTML; o formulario usa o id da candidatura', async () => {
+  const { alvo, pessoas } = cenarioSimples(4);
+  await comServidor(async (base) => {
+    await post(base, '/admin/massa-wa', camposSegmento(alvo));
+    const c = ultimaCampanha();
+    const html = await get(base, `/admin/massa-wa/${c.id}/conferencia`);
+    for (const p of pessoas) {
+      assert.ok(!html.includes(p.telefone.slice(2)), `telefone vazou no HTML: ${p.telefone}`);
+      assert.match(html, new RegExp(`name="na_pagina" value="${p.id}"`));
+      assert.match(html, new RegExp(`name="manter" value="${p.id}" checked`));
+    }
+    assert.equal((html.match(/<code>5547\*\*\*\*\d{4}<\/code>/g) || []).length, 4);
+  });
+});
+
+test('desmarcar por id grava a CHAVE DO TELEFONE (formato de sempre) e a fila sai sem a pessoa', async () => {
+  const { alvo, pessoas } = cenarioSimples(3);
+  await comServidor(async (base) => {
+    await post(base, '/admin/massa-wa', camposSegmento(alvo));
+    const c = ultimaCampanha();
+    const chave = publicoLib.montarPublicoDaCampanha(c).itens.find((i) => i.applicationId === pessoas[1].id).telefoneCanonico;
+    await post(base, `/admin/massa-wa/${c.id}/conferencia?pagina=1`, {
+      na_pagina: pessoas.map((p) => String(p.id)), manter: [String(pessoas[0].id), String(pessoas[2].id)],
+    });
+    assert.deepEqual(critDe(c.id).desmarcadas, [chave]);
+    assert.match(chave, /^5547\d{8}$/);
+    await post(base, `/admin/massa-wa/${c.id}/materializar`, {});
+    const fila = db.getDb().prepare('SELECT nome FROM campanhas_massa_wa_envios WHERE campanha_id = ? ORDER BY id').all(c.id).map((x) => x.nome);
+    assert.deepEqual(fila, [pessoas[0], pessoas[2]].map((p) => db.getDb().prepare('SELECT nome FROM applications WHERE id = ?').get(p.id).nome));
+  });
+});
+
+test('FORMATO ANTIGO: desmarcadas ja gravadas como chave de telefone continuam valendo e podem ser remarcadas', async () => {
+  const { alvo, pessoas } = cenarioSimples(3);
+  await comServidor(async (base) => {
+    await post(base, '/admin/massa-wa', camposSegmento(alvo));
+    const c = ultimaCampanha();
+    const chave = publicoLib.montarPublicoDaCampanha(c).itens.find((i) => i.applicationId === pessoas[2].id).telefoneCanonico;
+    // Como uma campanha salva antes desta mudanca: chave de telefone direto no criterios_json.
+    db.getDb().prepare('UPDATE campanhas_massa_wa SET criterios_json = ? WHERE id = ?')
+      .run(JSON.stringify({ ...critDe(c.id), desmarcadas: [chave] }), c.id);
+
+    let html = await get(base, `/admin/massa-wa/${c.id}/conferencia`);
+    assert.match(html, new RegExp(`name="manter" value="${pessoas[2].id}" aria-label`)); // desmarcada
+    assert.match(html, /<b>1<\/b> desmarcada\(s\)/);
+    assert.match(await get(base, `/admin/massa-wa/${c.id}`), /desmarcadas na conferência<\/dt><dd>1/);
+
+    // Salvar outra pessoa nao mexe na desmarcada antiga.
+    await post(base, `/admin/massa-wa/${c.id}/conferencia?pagina=1`, { na_pagina: [String(pessoas[0].id)], manter: [String(pessoas[0].id)] });
+    assert.deepEqual(critDe(c.id).desmarcadas, [chave]);
+    // Remarcar a antiga pelo id dela.
+    await post(base, `/admin/massa-wa/${c.id}/conferencia?pagina=1`, { na_pagina: [String(pessoas[2].id)], manter: [String(pessoas[2].id)] });
+    assert.deepEqual(critDe(c.id).desmarcadas, []);
+    html = await get(base, `/admin/massa-wa/${c.id}/conferencia`);
+    assert.match(html, new RegExp(`name="manter" value="${pessoas[2].id}" checked`));
+  });
+});
+
+test('id que nao esta no publico (ou um telefone vindo de pagina antiga) e ignorado, sem gravar lixo', async () => {
+  const { alvo, pessoas } = cenarioSimples(2);
+  await comServidor(async (base) => {
+    await post(base, '/admin/massa-wa', camposSegmento(alvo));
+    const c = ultimaCampanha();
+    const r = await post(base, `/admin/massa-wa/${c.id}/conferencia?pagina=1`, {
+      na_pagina: ['999999', `55${pessoas[0].telefone}`, 'abc'], manter: [],
+    });
+    assert.equal(r.status, 302);
+    assert.deepEqual(critDe(c.id).desmarcadas, []);
+  });
+});
+
+test('previa: cada linha leva o id da candidatura, nunca o telefone', async () => {
+  const { alvo, pessoas } = cenarioSimples(2);
+  await comServidor(async (base) => {
+    const html = await (await post(base, URL_PREVIA, camposSegmento(alvo))).text();
+    for (const p of pessoas) assert.match(html, new RegExp(`<tr data-candidatura="${p.id}">`));
+  });
 });

@@ -215,11 +215,13 @@ test('conferencia nominal: lista nome, origem e telefone MASCARADO; desmarcar vi
     assert.match(html, /<code>5547\*\*\*\*\d{4}<\/code>/);
     assert.doesNotMatch(html, /5547999600\d{3}/);
 
+    // O formulario manda o ID DA CANDIDATURA; o que fica gravado continua a chave do telefone.
     const r = publico.montarPublicoDaCampanha(c);
-    const [primeiro, ...resto] = r.itens.map((i) => i.telefoneCanonico);
+    const [primeiro, ...resto] = r.itens.map((i) => String(i.applicationId));
+    const chavePrimeiro = r.itens[0].telefoneCanonico;
     await post(base, `/admin/massa-wa/${c.id}/conferencia?pagina=1`, { na_pagina: [primeiro, ...resto], manter: resto });
     const crit = JSON.parse(db.obterCampanhaMassaWa(c.id).criterios_json);
-    assert.deepEqual(crit.desmarcadas, [primeiro]);
+    assert.deepEqual(crit.desmarcadas, [chavePrimeiro]);
     const det = await get(base, `/admin/massa-wa/${c.id}`);
     assert.match(det, /desmarcadas na conferência<\/dt><dd>1/);
 
