@@ -248,6 +248,7 @@ module.exports = {
   listarCandidaturasSegmentoMassaWa: driver.listarCandidaturasSegmentoMassaWa,
   listarCandidaturasVivasVagasAbertasMassaWa: driver.listarCandidaturasVivasVagasAbertasMassaWa,
   listarCandidaturasDaVagaMassaWa: driver.listarCandidaturasDaVagaMassaWa,
+  listarConsentimentosMassaWa: driver.listarConsentimentosMassaWa,
   listarDivulgacoesEnviadasPorCanal: driver.listarDivulgacoesEnviadasPorCanal,
   contarCandidaturasPorUtmMassaWa: driver.contarCandidaturasPorUtmMassaWa,
   completarFilaCampanhaMassaWa: driver.completarFilaCampanhaMassaWa,

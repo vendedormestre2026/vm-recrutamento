@@ -36,14 +36,17 @@ function novaVaga({ ativo = true, cidade = 'Joinville' } = {}) {
   return db.criarVaga({ slug: `vaga-seg-${seq}`, titulo: `Vaga ${seq}`, perfil: 'CLOSER', cidade, ativo });
 }
 
-function novaCandidatura({ jobId, telefone, nome = 'Pessoa', status = null, arquivada = false, criadoEm = '2026-10-01 12:00:00', email = null }) {
+// `consentiu` default TRUE: o segmento exige consent_at, e os testes que nao sao SOBRE isso nao
+// devem cair nessa linha por acidente.
+function novaCandidatura({ jobId, telefone, nome = 'Pessoa', status = null, arquivada = false, criadoEm = '2026-10-01 12:00:00', email = null, consentiu = true }) {
   return Number(
     db.getDb()
       .prepare(
-        `INSERT INTO applications (job_id, nome, telefone, email, status_recrutador, deleted_at, criado_em)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO applications (job_id, nome, telefone, email, status_recrutador, deleted_at, criado_em, consent_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(jobId, nome, telefone, email, status, arquivada ? '2026-01-01 00:00:00' : null, criadoEm)
+      .run(jobId, nome, telefone, email, status, arquivada ? '2026-01-01 00:00:00' : null, criadoEm,
+        consentiu ? criadoEm : null)
       .lastInsertRowid,
   );
 }
@@ -218,6 +221,71 @@ test('em processo em vaga aberta de OUTRA cidade nao exclui', () => {
   novaCandidatura({ jobId: origem, telefone: t });
   novaCandidatura({ jobId: outra, telefone: t });
   assert.deepEqual(tels(montar({ vagaAlvoId: alvo })), [t]);
+});
+
+test('CONSENTIMENTO: pessoa sem consent_at em nenhuma candidatura fica fora', () => {
+  const { alvo, origem } = cenario();
+  const sem = telefone();
+  const com = telefone();
+  novaCandidatura({ jobId: origem, telefone: sem, consentiu: false });
+  novaCandidatura({ jobId: origem, telefone: com });
+  const r = montar({ vagaAlvoId: alvo });
+  assert.equal(r.funil.pessoasSemConsentimento, 1);
+  assert.deepEqual(tels(r), [com]);
+});
+
+test('CONSENTIMENTO: consent_at em QUALQUER candidatura basta (outra cidade, fora da janela, arquivada)', () => {
+  const { alvo, origem } = cenario();
+  const outraCidade = novaVaga({ ativo: false, cidade: 'Barueri' });
+  const t = telefone();
+  novaCandidatura({ jobId: origem, telefone: t, consentiu: false });
+  novaCandidatura({ jobId: outraCidade, telefone: t, criadoEm: '2026-07-01 12:00:00', arquivada: true });
+  assert.deepEqual(tels(montar({ vagaAlvoId: alvo, dataDe: '2026-09-01' })), [t]);
+});
+
+test('VAGAS IGNORADAS: pessoa em processo SO na vaga ignorada entra, e conta como liberada', () => {
+  const { alvo, origem } = cenario();
+  const parada = novaVaga();
+  const t = telefone();
+  novaCandidatura({ jobId: origem, telefone: t });
+  novaCandidatura({ jobId: parada, telefone: t });
+  assert.equal(montar({ vagaAlvoId: alvo }).funil.pessoasEmProcesso, 1);
+  const r = montar({ vagaAlvoId: alvo, vagasIgnoradasProcesso: [parada] });
+  assert.deepEqual(tels(r), [t]);
+  assert.equal(r.funil.liberadasPorVagasIgnoradas, 1);
+  assert.deepEqual(r.funil.vagasIgnoradasProcesso, [parada]);
+});
+
+test('VAGAS IGNORADAS: quem tambem esta em OUTRA vaga aberta da cidade continua fora', () => {
+  const { alvo, origem } = cenario();
+  const parada = novaVaga();
+  const viva = novaVaga();
+  const t = telefone();
+  novaCandidatura({ jobId: origem, telefone: t });
+  novaCandidatura({ jobId: parada, telefone: t });
+  novaCandidatura({ jobId: viva, telefone: t });
+  const r = montar({ vagaAlvoId: alvo, vagasIgnoradasProcesso: [parada] });
+  assert.equal(r.funil.pessoasEmProcesso, 1);
+  assert.equal(r.funil.liberadasPorVagasIgnoradas, 0);
+});
+
+test('VAGAS IGNORADAS: a vaga-alvo nao pode ser ignorada', () => {
+  const { alvo } = cenario();
+  assert.throws(() => montar({ vagaAlvoId: alvo, vagasIgnoradasProcesso: [alvo] }), /vaga_alvo_ignorada/);
+});
+
+test('VAGAS IGNORADAS: lista vazia = comportamento identico a sem o criterio', () => {
+  const { alvo, origem } = cenario();
+  const aberta = novaVaga();
+  for (let i = 0; i < 3; i += 1) {
+    const t = telefone();
+    novaCandidatura({ jobId: origem, telefone: t });
+    if (i) novaCandidatura({ jobId: aberta, telefone: t, status: i === 1 ? null : 'reprovado' });
+  }
+  const sem = montar({ vagaAlvoId: alvo });
+  const vazia = montar({ vagaAlvoId: alvo, vagasIgnoradasProcesso: [] });
+  assert.deepEqual(vazia.itens, sem.itens);
+  assert.deepEqual(vazia.funil, sem.funil);
 });
 
 test('quem ja se candidatou a VAGA-ALVO fica fora, inclusive reprovado la (bug-to-confirm)', () => {
@@ -463,8 +531,10 @@ test('a ARITMETICA do funil fecha num cenario com todas as linhas', () => {
   const opt = telefone();
   novaCandidatura({ jobId: origem, telefone: opt });
   optout.registrarOptout({ telefone: opt });
+  novaCandidatura({ jobId: origem, telefone: telefone(), consentiu: false });
   for (let i = 0; i < 4; i += 1) novaCandidatura({ jobId: origem, telefone: telefone() });
   const r = montar({ vagaAlvoId: alvo, teto: 2 });
+  assert.equal(r.funil.pessoasSemConsentimento, 1);
   assert.ok(seg.conferirAritmetica(r.funil), JSON.stringify(r.funil));
   assert.equal(r.funil.total, 2);
   assert.ok(r.funil.pessoasForaPorTeto > 0 && r.funil.pessoasEmProcesso > 0 && r.funil.pessoasStatus > 0);

@@ -17,8 +17,13 @@
 //   periodo       a pessoa entra se ALGUMA candidatura dela a vaga da cidade cair na janela. Os
 //                 limites sao DIAS DE BRASILIA, convertidos para UTC (criado_em e UTC).
 //   arquivadas    candidatura arquivada nao conta para a base (linha propria no funil).
+//   consentimento a pessoa so entra se ALGUMA candidatura dela tiver consent_at (LGPD). O
+//                 checkbox e opcional desde 2026-08-20; ~5% do segmento de Joinville nao tem.
 //   em processo   P2: candidatura viva em vaga ABERTA da cidade com status Sem decisao ou Em
-//                 analise. Reprovado em vaga aberta NAO e "em processo".
+//                 analise. Reprovado em vaga aberta NAO e "em processo". Vagas que o operador
+//                 marca como PARADAS (vagasIgnoradasProcesso) nao prendem ninguem — sem encerrar
+//                 a vaga e sem id fixo no codigo (a vaga 2 de Joinville, aberta desde julho, foi
+//                 o caso que motivou).
 //   status        regra A, a mesma da promocao de vagas (lib/elegibilidadeStatusPromocao): por
 //                 PESSOA, olhando todas as candidaturas, inclusive arquivadas.
 //   ja recebeu    disparo em massa: sempre excluido (sem a opcao de desmarcar da outra fonte).
@@ -101,6 +106,11 @@ function sanearCriteriosSegmento(bruto = {}) {
 
   const desmarcadas = [...new Set([].concat(b.desmarcadas || []).map((s) => String(s || '').trim()).filter(Boolean))];
 
+  // A vaga-alvo nao pode ser ignorada: seria declarar parado o processo para o qual estamos
+  // convidando, e quem esta nele (em processo) passaria a receber convite para ele mesmo.
+  const vagasIgnoradasProcesso = [...new Set([].concat(b.vagasIgnoradasProcesso || []).map(inteiro).filter(Boolean))];
+  if (vagaAlvoId && vagasIgnoradasProcesso.includes(vagaAlvoId)) erros.push('vaga_alvo_ignorada');
+
   return {
     criterios: {
       fonte: FONTE_SEGMENTO,
@@ -112,6 +122,7 @@ function sanearCriteriosSegmento(bruto = {}) {
       diasOutrosCanais: diasOutrosCanais == null ? DIAS_OUTROS_CANAIS_PADRAO : diasOutrosCanais,
       teto,
       desmarcadas,
+      vagasIgnoradasProcesso,
     },
     erros,
   };
@@ -149,8 +160,12 @@ function funilSegmentoVazio() {
     candidaturasSemTelefoneUtil: 0,
     candidaturasDuplicadas: 0,
     pessoas: 0,
+    pessoasSemConsentimento: 0,
     pessoasJaCandidatasAlvo: 0,
     pessoasEmProcesso: 0,
+    // Informativo: quem SO estaria em processo por causa de uma vaga ignorada, e por isso seguiu.
+    liberadasPorVagasIgnoradas: 0,
+    vagasIgnoradasProcesso: [],
     pessoasStatus: 0,
     porStatusExcluido: { aprovado: 0, em_analise: 0, desconhecido: 0 },
     pessoasOptout: 0,
@@ -175,7 +190,7 @@ function funilSegmentoVazio() {
 // funil que nao fecha, em vez de mostrar numeros que nao se explicam).
 function conferirAritmetica(f) {
   const pessoas = f.candidaturas - f.candidaturasArquivadas - f.candidaturasSemTelefoneUtil - f.candidaturasDuplicadas;
-  const total = f.pessoas - f.pessoasJaCandidatasAlvo - f.pessoasEmProcesso - f.pessoasStatus - f.pessoasOptout
+  const total = f.pessoas - f.pessoasSemConsentimento - f.pessoasJaCandidatasAlvo - f.pessoasEmProcesso - f.pessoasStatus - f.pessoasOptout
     - f.pessoasJaReceberam - f.pessoasConvidadasAlvo - f.pessoasDivulgadasRecentes - f.pessoasDesmarcadas
     - f.pessoasForaPorTeto;
   return pessoas === f.pessoas && total === f.total;
@@ -234,8 +249,11 @@ function montarPublicoSegmentoMassaWa(criteriosBrutos = {}, deps = {}) {
     .filter((v) => !origemPedida.size || origemPedida.has(v.id))
     .map((v) => v.id);
   const idsAbertasDaCidade = vagasDaCidade.filter((v) => v.ativo).map((v) => v.id);
+  const ignoradas = new Set(c.vagasIgnoradasProcesso);
+  const idsProcessoVivo = idsAbertasDaCidade.filter((id) => !ignoradas.has(id));
 
   const funil = funilSegmentoVazio();
+  funil.vagasIgnoradasProcesso = idsAbertasDaCidade.filter((id) => ignoradas.has(id));
 
   // ── 1. CANDIDATURAS DA BASE (mais recente primeiro) ──
   const linhas = db.listarCandidaturasSegmentoMassaWa({ jobIds: idsBase, ...janelaUtc(c) });
@@ -298,11 +316,14 @@ function montarPublicoSegmentoMassaWa(criteriosBrutos = {}, deps = {}) {
     return (k) => tels.has(k) || [...emailsDe(k)].some((e) => emails.has(e));
   };
 
+  const consentiu = indicePorPessoa(db.listarConsentimentosMassaWa());
   const estaNaAlvo = indicePorPessoa(db.listarCandidaturasDaVagaMassaWa(alvo.id));
-  const emProcesso = indicePorPessoa(
-    db.listarCandidaturasVivasVagasAbertasMassaWa({ jobIds: idsAbertasDaCidade })
-      .filter((a) => STATUS_EM_PROCESSO.includes(elegibilidade.normalizarStatusRecrutador(a.status_recrutador))),
-  );
+  // Lidas UMA vez, com todas as abertas da cidade; o recorte das ignoradas e em JS, para a linha
+  // informativa "liberadas por vagas ignoradas" sair da mesma leitura que decide o P2.
+  const vivasEmCurso = db.listarCandidaturasVivasVagasAbertasMassaWa({ jobIds: idsAbertasDaCidade })
+    .filter((a) => STATUS_EM_PROCESSO.includes(elegibilidade.normalizarStatusRecrutador(a.status_recrutador)));
+  const emProcesso = indicePorPessoa(vivasEmCurso.filter((a) => idsProcessoVivo.includes(a.job_id)));
+  const emProcessoSemIgnorar = indicePorPessoa(vivasEmCurso);
   const indiceStatus = elegibilidade.construirIndiceElegibilidade({ db });
   const mapaOptout = optout.mapaOptoutAtivo({ db });
   const optoutAntigo = db.listarTelefonesOptOutWhatsapp();
@@ -339,8 +360,10 @@ function montarPublicoSegmentoMassaWa(criteriosBrutos = {}, deps = {}) {
   let itens = [];
   const desmarcadas = [];
   for (const [k, pessoa] of porChave) {
+    if (!consentiu(k)) { funil.pessoasSemConsentimento += 1; continue; }
     if (estaNaAlvo(k)) { funil.pessoasJaCandidatasAlvo += 1; continue; }
     if (emProcesso(k)) { funil.pessoasEmProcesso += 1; continue; }
+    if (emProcessoSemIgnorar(k)) funil.liberadasPorVagasIgnoradas += 1;
 
     const aval = indiceStatus.avaliar({ telefones: [pessoa.telefone], emails: [...emailsDe(k)] });
     if (!aval.elegivel) {

@@ -4892,6 +4892,18 @@ function listarCandidaturasDaVagaMassaWa(jobId) {
     .all(Number(jobId));
 }
 
+// Candidaturas COM consentimento LGPD (consent_at preenchido), de qualquer vaga, inclusive
+// arquivadas: o segmento exige que ALGUMA candidatura da pessoa tenha consentido (decisao de
+// 2026-10-09). A identidade (telefone canonico, e-mail) e resolvida em JS.
+function listarConsentimentosMassaWa() {
+  return getDb()
+    .prepare(
+      `SELECT telefone, email FROM applications
+        WHERE consent_at IS NOT NULL AND TRIM(consent_at) <> ''`,
+    )
+    .all();
+}
+
 // Toda divulgacao/convite de vaga ENVIADO, por canal, num formato so:
 //   { canal, telefone, email, job_id, enviado_em }
 //
@@ -5323,6 +5335,7 @@ module.exports = {
   listarCandidaturasSegmentoMassaWa,
   listarCandidaturasVivasVagasAbertasMassaWa,
   listarCandidaturasDaVagaMassaWa,
+  listarConsentimentosMassaWa,
   listarDivulgacoesEnviadasPorCanal,
   contarCandidaturasPorUtmMassaWa,
   completarFilaCampanhaMassaWa,
