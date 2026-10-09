@@ -4834,6 +4834,126 @@ function telefonesComDisparoMassaWaEnviado() {
   return new Set(recebedoresDisparoMassaWa().keys());
 }
 
+// ── SEGMENTO DA BASE (campanhas com criterios.fonte = 'segmento') ──
+//
+// Quatro leituras, todas SELECT, e nenhuma decide nada que dependa de normalizacao: cidade (por
+// cidades.chave), status do recrutador, telefone canonico e e-mail normalizado sao todos JS, em
+// lib/publicoSegmentoMassaWa — pelas mesmas tres razoes documentadas em
+// listarCandidaturasVagasAbertas. O que fica aqui e so o que e FATO no banco.
+//
+// As listas de vagas entram como JSON (`json_each`) porque better-sqlite3 nao liga array a um
+// IN (...). Quem resolve "quais vagas sao da cidade" e o JS, comparando cidades.chave(): fazer
+// isso no SQL exigiria reimplementar a remocao de acento em SQLite.
+
+// Candidaturas a vagas da cidade (ABERTAS E ENCERRADAS), na janela [deUtc, ateUtc).
+//
+// ARQUIVADAS e SEM TELEFONE vem junto, de proposito: o funil da previa conta cada uma numa linha
+// propria ("− arquivadas", "− telefone inutilizavel"), e uma linha que o SQL some antes nao tem
+// como aparecer — a aritmetica da tela deixaria de fechar.
+//
+// Mesma ordem de listarCandidaturasVagasAbertas (mais recente primeiro, id como desempate): e a
+// ordem que decide quem representa a pessoa e quem fica dentro do teto, e tem que ser estavel.
+function listarCandidaturasSegmentoMassaWa({ jobIds = [], deUtc = null, ateUtc = null } = {}) {
+  return getDb()
+    .prepare(
+      `SELECT a.id, a.nome, a.telefone, a.email, a.status_recrutador, a.deleted_at, a.criado_em,
+              a.job_id, j.titulo AS job_titulo, j.ativo AS job_ativo, j.cidade AS job_cidade
+         FROM applications a
+         JOIN jobs j ON j.id = a.job_id
+        WHERE a.job_id IN (SELECT value FROM json_each(@jobIds))
+          AND (@deUtc IS NULL OR a.criado_em >= @deUtc)
+          AND (@ateUtc IS NULL OR a.criado_em < @ateUtc)
+        ORDER BY a.criado_em DESC, a.id DESC`,
+    )
+    .all({ jobIds: JSON.stringify(jobIds.map(Number)), deUtc, ateUtc });
+}
+
+// Candidaturas VIVAS (nao arquivadas) em vagas ABERTAS da lista. O "em processo" (P2) e decidido
+// em JS sobre o status normalizado — NULL e '' sao "sem decisao" e um IN (...) os perderia.
+function listarCandidaturasVivasVagasAbertasMassaWa({ jobIds = [] } = {}) {
+  return getDb()
+    .prepare(
+      `SELECT a.id, a.telefone, a.email, a.status_recrutador, a.job_id
+         FROM applications a
+         JOIN jobs j ON j.id = a.job_id
+        WHERE j.ativo = 1
+          AND a.deleted_at IS NULL
+          AND a.job_id IN (SELECT value FROM json_each(@jobIds))`,
+    )
+    .all({ jobIds: JSON.stringify(jobIds.map(Number)) });
+}
+
+// Todas as candidaturas (inclusive arquivadas) a UMA vaga. E o "ja se candidatou a vaga-alvo":
+// arquivar nao desfaz o fato de a pessoa ja estar la (mesma leitura de
+// listarCandidatosParaCampanhaWhatsapp).
+function listarCandidaturasDaVagaMassaWa(jobId) {
+  return getDb()
+    .prepare('SELECT id, telefone, email, criado_em FROM applications WHERE job_id = ?')
+    .all(Number(jobId));
+}
+
+// Toda divulgacao/convite de vaga ENVIADO, por canal, num formato so:
+//   { canal, telefone, email, job_id, enviado_em }
+//
+// `job_id` e a vaga DIVULGADA (NULL = convite de grupo, que nao e de vaga nenhuma). `enviado_em`
+// pode vir NULL — o historico importado do n8n nao tem data — e quem consome decide o que fazer
+// com isso (ver lib/publicoSegmentoMassaWa: entra na contagem "sem data", nao e excluido).
+//
+// FORA, de proposito: a sequencia WA1/WA2 e os lembretes (transacionais, a pessoa esta no
+// processo), e o tipo 'status_candidatura' da Meta (comunica um resultado, nao divulga vaga).
+//
+// Canais:
+//   meta    campanha_whatsapp_envios (API da Meta, enviada pela Central Whats): enviado,
+//           entregue ou lido.
+//   email   campanha_envios: so 'enviado'. A identidade e o e-mail, nao o telefone.
+//   massa   campanhas_massa_wa_envios: so 'enviado' ('sem_destino' nunca chegou). A vaga
+//           divulgada e a da CAMPANHA quando ela e de segmento (o item guarda a vaga de ORIGEM
+//           do candidato), e a do ITEM nas campanhas de vagas abertas (la a mensagem fala da
+//           vaga em que a pessoa ja esta).
+//   n8n     disparos_whatsapp: convite de grupo por praca, sem vaga. So 'enviado'.
+function listarDivulgacoesEnviadasPorCanal() {
+  return getDb()
+    .prepare(
+      `SELECT 'meta' AS canal, e.telefone, NULL AS email,
+              CASE WHEN c.tipo_mensagem = 'divulgacao_vaga' THEN c.job_id END AS job_id,
+              e.enviado_em
+         FROM campanha_whatsapp_envios e
+         JOIN campanhas_whatsapp c ON c.id = e.campanha_id
+        WHERE c.tipo_mensagem IN ('divulgacao_vaga', 'convite_grupo')
+          AND e.status IN ('enviado', 'entregue', 'lido')
+       UNION ALL
+       SELECT 'email', NULL, e.email,
+              CASE WHEN c.tipo = 'divulgacao_vaga' THEN c.job_id END,
+              e.enviado_em
+         FROM campanha_envios e
+         JOIN campanhas c ON c.id = e.campanha_id
+        WHERE e.status = 'enviado'
+       UNION ALL
+       SELECT 'massa', e.telefone, NULL,
+              CASE WHEN json_extract(c.criterios_json, '$.fonte') = 'segmento' THEN c.job_id ELSE e.job_id END,
+              e.enviado_em
+         FROM campanhas_massa_wa_envios e
+         JOIN campanhas_massa_wa c ON c.id = e.campanha_id
+        WHERE e.status = 'enviado'
+       UNION ALL
+       SELECT 'n8n', telefone, NULL, NULL, enviado_em
+         FROM disparos_whatsapp
+        WHERE status = 'enviado'`,
+    )
+    .all();
+}
+
+// Candidaturas geradas por uma campanha de massa: a UTM que o link {link_vaga} carrega
+// (utm_source=massa-wa, utm_campaign=massa-<id>). Somente leitura, para o painel.
+function contarCandidaturasPorUtmMassaWa(campanhaId) {
+  return getDb()
+    .prepare(
+      `SELECT count(*) AS n FROM applications
+        WHERE utm_source = 'massa-wa' AND utm_campaign = ?`,
+    )
+    .get(`massa-${Number(campanhaId)}`).n;
+}
+
 // Chaves canonicas que JA estao na fila desta campanha, em qualquer status. E o que o script de
 // completar fila usa para nao tentar inserir de novo quem ja esta la (o ON CONFLICT seguraria, mas
 // o dry-run precisa saber a lista antes de gravar).
@@ -5200,6 +5320,11 @@ module.exports = {
   recebedoresDisparoMassaWa,
   telefonesComDisparoMassaWaEnviado,
   telefonesNaFilaMassaWa,
+  listarCandidaturasSegmentoMassaWa,
+  listarCandidaturasVivasVagasAbertasMassaWa,
+  listarCandidaturasDaVagaMassaWa,
+  listarDivulgacoesEnviadasPorCanal,
+  contarCandidaturasPorUtmMassaWa,
   completarFilaCampanhaMassaWa,
   STATUS_SEM_DESTINO,
   reclassificarEnviosMassaWaSemDestino,

@@ -244,6 +244,12 @@ module.exports = {
   recebedoresDisparoMassaWa: driver.recebedoresDisparoMassaWa,
   telefonesComDisparoMassaWaEnviado: driver.telefonesComDisparoMassaWaEnviado,
   telefonesNaFilaMassaWa: driver.telefonesNaFilaMassaWa,
+  // Segmento da base (campanhas com criterios.fonte = 'segmento'), ver lib/publicoSegmentoMassaWa.
+  listarCandidaturasSegmentoMassaWa: driver.listarCandidaturasSegmentoMassaWa,
+  listarCandidaturasVivasVagasAbertasMassaWa: driver.listarCandidaturasVivasVagasAbertasMassaWa,
+  listarCandidaturasDaVagaMassaWa: driver.listarCandidaturasDaVagaMassaWa,
+  listarDivulgacoesEnviadasPorCanal: driver.listarDivulgacoesEnviadasPorCanal,
+  contarCandidaturasPorUtmMassaWa: driver.contarCandidaturasPorUtmMassaWa,
   completarFilaCampanhaMassaWa: driver.completarFilaCampanhaMassaWa,
   STATUS_SEM_DESTINO: driver.STATUS_SEM_DESTINO,
   reclassificarEnviosMassaWaSemDestino: driver.reclassificarEnviosMassaWaSemDestino,
