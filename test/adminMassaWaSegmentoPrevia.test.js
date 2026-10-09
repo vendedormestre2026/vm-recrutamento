@@ -155,6 +155,27 @@ test('REGRESSAO: a secao do funil na pagina da campanha e byte a byte a de antes
   });
 });
 
+// O formulario de EDICAO de uma campanha de segmento nao muda com a previa ao vivo, a recarga de
+// cidade e o periodo padrao (todos so na CRIACAO). Fixture gravada com o codigo de antes (cc1533d),
+// com GERAR_FIXTURE_FORM=1; datas e horas da estatistica das vagas e ids sao neutralizados.
+const FIXTURE_FORM_EDICAO = path.join(__dirname, 'fixtures', 'massaWaSegmentoFormEdicao.html');
+test('REGRESSAO: o formulario de edicao da campanha de segmento e o de antes', async () => {
+  const { alvo, parada, origem } = cenarioCompleto();
+  await comServidor(async (base) => {
+    await post(base, '/admin/massa-wa', camposSegmento(alvo, {
+      teto: '7', vagas_ignoradas: [String(parada)], vagas_origem: [String(origem)], data_de: '2026-09-01', data_ate: '2026-09-30',
+    }));
+    const html = await get(base, `/admin/massa-wa/${ultimaCampanha().id}`);
+    const ini = html.indexOf('<h2>Configuração</h2>');
+    const form = html.slice(ini, html.indexOf('</form>', ini) + '</form>'.length)
+      .replace(/\d\d\/\d\d \d\d:\d\d/g, 'DATA')
+      .replace(/(value="|#|massa-wa\/)\d+/g, '$1ID');
+    if (process.env.GERAR_FIXTURE_FORM === '1') fs.writeFileSync(FIXTURE_FORM_EDICAO, form);
+    assert.equal(form, fs.readFileSync(FIXTURE_FORM_EDICAO, 'utf8'));
+    assert.match(html, /name="data_de" value="2026-09-01"/);
+  });
+});
+
 // ══════════════════ I2: ENDPOINT DA PREVIA (so leitura) ══════════════════
 
 const URL_PREVIA = '/admin/massa-wa/segmento/previa';
@@ -301,4 +322,144 @@ test('rota /segmento/previa nao colide com /:id; sem sessao vai para o login (se
     assert.match(semSessao.headers.get('location'), /^\/admin\/login/);
   });
   assert.equal(db.listarCampanhasMassaWa().length, 0);
+});
+
+// ══════════════════ I3: PAINEL DE PREVIA NA TELA DE CRIACAO ══════════════════
+
+test('criacao: painel de previa, botao "Atualizar previa" (GET sem JS) e script; nada e criado', async () => {
+  const { alvo } = cenarioSimples(2);
+  await comServidor(async (base) => {
+    const html = await get(base, `/admin/massa-wa/nova?fonte=segmento&vaga_alvo=${alvo}`);
+    assert.match(html, /<form method="POST" action="\/admin\/massa-wa" id="form-segmento">/);
+    assert.match(html, /id="previa-segmento-conteudo"/);
+    assert.match(html, /name="previa" value="1"\s+formaction="\/admin\/massa-wa\/nova#previa-segmento" formmethod="get" formnovalidate>Atualizar prévia/);
+    assert.match(html, /setTimeout\(atualizar, 800\)/);
+    assert.match(html, /\/admin\/massa-wa\/segmento\/previa/);
+  });
+  assert.equal(db.listarCampanhasMassaWa().length, 0);
+});
+
+test('sem JavaScript: GET /nova com os campos e previa=1 mostra a previa e preserva o que foi digitado', async () => {
+  const { alvo } = cenarioSimples(4);
+  await comServidor(async (base) => {
+    const q = new URLSearchParams({
+      fonte: 'segmento', vaga_alvo_id: String(alvo), nome: 'Teste Sem JS', cidade: 'Joinville', teto: '3',
+      dias_outros_canais: '7', lote_min: '4', previa: '1',
+    });
+    const html = await get(base, `/admin/massa-wa/nova?${q}`);
+    assert.match(html, /name="nome" value="Teste Sem JS"/);
+    assert.match(html, /name="teto" required value="3"/);
+    assert.match(html, /name="dias_outros_canais" value="7"/);
+    assert.match(html, /name="lote_min" value="4"/);
+    assert.match(html, /data-previa-segmento="1"/);
+    assert.deepEqual(nomesDaTabela(html), ['P000', 'P001', 'P002']);
+  });
+  assert.equal(db.listarCampanhasMassaWa().length, 0);
+});
+
+test('edicao de campanha existente NAO ganha painel nem script de previa ao vivo', async () => {
+  const { alvo } = cenarioSimples(2);
+  await comServidor(async (base) => {
+    await post(base, '/admin/massa-wa', camposSegmento(alvo));
+    const html = await get(base, `/admin/massa-wa/${ultimaCampanha().id}`);
+    assert.doesNotMatch(html, /previa-segmento-conteudo|id="form-segmento"|setTimeout\(atualizar/);
+  });
+});
+
+// O script da tela, executado com DOM, fetch e relogio FALSOS: prova o atraso de 800 ms, o
+// cancelamento do pedido anterior, o filtro invalido e a sessao expirada sem navegador.
+async function scriptDaCriacao() {
+  const { alvo } = cenarioSimples(1);
+  return comServidor(async (base) => {
+    const html = await get(base, `/admin/massa-wa/nova?fonte=segmento&vaga_alvo=${alvo}`);
+    const ini = html.indexOf('<script>\n      (function () {\n        var form = document.getElementById(\'form-segmento\')');
+    assert.ok(ini >= 0);
+    return html.slice(ini + '<script>'.length, html.indexOf('</script>', ini));
+  });
+}
+
+function rodarScript(codigo, { respostas = [] } = {}) {
+  const vm = require('node:vm');
+  const ouvintes = {};
+  const timers = new Map();
+  let proximoTimer = 1;
+  let agora = 0;
+  const pedidos = [];
+  const campo = (name, extra = {}) => ({ name, value: '', checkValidity: () => true, ...extra });
+  const elementos = { teto: campo('teto'), data_de: campo('data_de'), data_ate: campo('data_ate'), nome: campo('nome') };
+  const form = { elements: elementos, addEventListener: (t, fn) => { (ouvintes[t] = ouvintes[t] || []).push(fn); } };
+  const el = () => ({ textContent: '', innerHTML: '', style: {}, addEventListener: (t, fn) => { (ouvintes[`el:${t}`] = ouvintes[`el:${t}`] || []).push(fn); } });
+  const nos = { 'form-segmento': form, 'previa-segmento-conteudo': el(), 'previa-segmento-estado': el(), 'btn-atualizar-previa': el() };
+  const sandbox = {
+    document: { getElementById: (id) => nos[id] },
+    URLSearchParams,
+    AbortController,
+    FormData: function FormData() { return [['teto', elementos.teto.value || '30']]; },
+    setTimeout: (fn, ms) => { const id = proximoTimer++; timers.set(id, { fn, quando: agora + ms }); return id; },
+    clearTimeout: (id) => timers.delete(id),
+    fetch: (url, opcoes) => {
+      const p = { url, opcoes };
+      pedidos.push(p);
+      const html = respostas.length ? respostas.shift() : '<div data-previa-segmento="1">ok</div>';
+      return Promise.resolve({ text: () => Promise.resolve(html) });
+    },
+  };
+  sandbox.window = sandbox;
+  vm.runInNewContext(codigo, sandbox);
+  const avancar = (ms) => {
+    agora += ms;
+    for (const [id, t] of [...timers]) if (t.quando <= agora) { timers.delete(id); t.fn(); }
+  };
+  const disparar = (tipo, name) => (ouvintes[tipo] || []).forEach((fn) => fn({ target: { name } }));
+  return { pedidos, avancar, disparar, nos, elementos, esperar: () => new Promise((r) => setImmediate(r)) };
+}
+
+test('script: previa no carregamento; 800 ms depois da ULTIMA mudanca; nome nao dispara', async () => {
+  const s = rodarScript(await scriptDaCriacao());
+  assert.equal(s.pedidos.length, 1); // carregamento
+  s.disparar('input', 'teto');
+  s.avancar(500);
+  s.disparar('input', 'teto');
+  s.avancar(799);
+  assert.equal(s.pedidos.length, 1);
+  s.avancar(1);
+  assert.equal(s.pedidos.length, 2);
+  assert.equal(s.pedidos[1].url, '/admin/massa-wa/segmento/previa');
+  assert.match(s.pedidos[1].opcoes.body, /pagina=1/);
+  s.disparar('input', 'nome');
+  s.disparar('input', 'lote_min');
+  s.avancar(5000);
+  assert.equal(s.pedidos.length, 2);
+});
+
+test('script: um pedido novo CANCELA o anterior', async () => {
+  const s = rodarScript(await scriptDaCriacao());
+  const primeiro = s.pedidos[0].opcoes.signal;
+  s.disparar('change', 'cidade');
+  s.avancar(800);
+  assert.equal(primeiro.aborted, true);
+  assert.equal(s.pedidos[1].opcoes.signal.aborted, false);
+});
+
+test('script: filtro invalido nao dispara pedido e avisa', async () => {
+  const s = rodarScript(await scriptDaCriacao());
+  s.elementos.teto.checkValidity = () => false;
+  s.disparar('input', 'teto');
+  s.avancar(800);
+  assert.equal(s.pedidos.length, 1);
+  assert.match(s.nos['previa-segmento-estado'].textContent, /Filtros inválidos/);
+  s.elementos.teto.checkValidity = () => true;
+  s.elementos.data_de.value = '2026-10-05';
+  s.elementos.data_ate.value = '2026-10-01';
+  s.disparar('input', 'data_de');
+  s.avancar(800);
+  assert.equal(s.pedidos.length, 1);
+});
+
+test('script: resposta sem a marca do fragmento (login) = sessao expirada, painel nao e trocado', async () => {
+  const s = rodarScript(await scriptDaCriacao(), { respostas: ['<html>login</html>'] });
+  await s.esperar();
+  await s.esperar();
+  assert.match(s.nos['previa-segmento-estado'].textContent, /Sessão expirada/);
+  assert.equal(s.nos['previa-segmento-conteudo'].innerHTML, '');
 });

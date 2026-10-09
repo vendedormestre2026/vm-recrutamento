@@ -329,6 +329,8 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
   // ser trocada por outra do vocabulario.
 
   const ehSegmento = (campanha) => publico.fonteDaCampanhaMassaWa(campanha) === segLib.FONTE_SEGMENTO;
+  // Atributo do fragmento da previa ao vivo: a tela so troca o painel se ele vier (senao e o login).
+  const MARCA_PREVIA = 'data-previa-segmento';
   const tipoDaCampanha = (campanha) => variacoesLib.tipoPorFonte(publico.fonteDaCampanhaMassaWa(campanha));
 
   const ROTULO_CANAL = { meta: 'Meta/Central Whats', email: 'e-mail', massa: 'massa (Baileys)', n8n: 'n8n por praça' };
@@ -396,9 +398,13 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     return { criterios };
   }
 
-  function formSegmento({ campanha = null, alvo, criterios = {} }, { acao, rotuloBotao }) {
+  // `campanha` presente = EDICAO (formulario de sempre). Ausente = CRIACAO, que tambem recebe o que
+  // ja foi digitado (nome, cadencia) quando a tela volta por GET (previa sem JavaScript, recarga de
+  // cidade) e ganha o painel de previa ao vivo.
+  function formSegmento({ campanha = null, alvo, criterios = {}, nome = '', cadenciaDigitada = null, previaHtml = '' }, { acao, rotuloBotao }) {
     const c = criterios;
-    const cad = cadencia.resolverCadencia(campanha || {});
+    const criacao = !campanha;
+    const cad = cadencia.resolverCadencia(campanha || cadenciaDigitada || {});
     const est = estatisticaPorVaga();
     const cidadeAtual = c.cidade || alvo.cidade || '';
     const chaveCidade = cidadesLib.chave(cidadeAtual);
@@ -421,11 +427,11 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       .join('');
 
     return `
-      <form method="POST" action="${acao}">
+      <form method="POST" action="${acao}"${criacao ? ' id="form-segmento"' : ''}>
         <input type="hidden" name="fonte" value="segmento">
         ${campanha ? '' : `<input type="hidden" name="vaga_alvo_id" value="${alvo.id}">`}
         <label class="campo"><span>Nome da campanha</span>
-          <input type="text" name="nome" value="${escapeHtml((campanha && campanha.nome) || '')}" required></label>
+          <input type="text" name="nome" value="${escapeHtml((campanha && campanha.nome) || nome || '')}" required></label>
 
         <p style="font-size:.9rem;margin:0 0 1rem;"><b>Vaga-alvo:</b> #${alvo.id} ${escapeHtml(vagaRotulo(alvo))}
           ${campanha ? '' : ' · <a href="/admin/massa-wa/nova?fonte=segmento">trocar</a>'}</p>
@@ -469,11 +475,114 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           <b>para a vaga-alvo</b> sai sempre. Teto: no máximo ${segLib.TETO_MAXIMO}; passando dele, ficam as
           candidaturas mais recentes.</p>
 
-        ${camposCadencia(cad)}
+        ${criacao ? painelPreviaCriacao(previaHtml) : ''}${camposCadencia(cad)}
 
         <button type="submit" class="btn">${escapeHtml(rotuloBotao)}</button>
-      </form>`;
+      </form>${criacao ? SCRIPT_PREVIA_CRIACAO : ''}`;
   }
+
+  // Painel da previa na CRIACAO. O botao, sem JavaScript, refaz a tela por GET /nova com todos os
+  // campos e a previa calculada no servidor; com JavaScript, o script abaixo o intercepta.
+  function painelPreviaCriacao(previaHtml) {
+    return `
+        <section id="previa-segmento" class="rel-sec" style="margin:0 0 1.2rem;">
+          <h2>Prévia do público</h2>
+          <p style="color:var(--cinza);font-size:.8rem;margin:0 0 .6rem;">
+            Recalculada a cada mudança nos filtros, sem gravar nada. Nenhuma campanha é criada até você
+            clicar em "Criar rascunho".</p>
+          <button type="submit" class="btn btn--ghost" id="btn-atualizar-previa" name="previa" value="1"
+                  formaction="/admin/massa-wa/nova#previa-segmento" formmethod="get" formnovalidate>Atualizar prévia</button>
+          <span id="previa-segmento-estado" style="font-size:.85rem;color:var(--cinza);margin-left:.6rem;" aria-live="polite"></span>
+          <div id="previa-segmento-conteudo" style="margin-top:.8rem;">${previaHtml
+            || '<p style="color:var(--cinza);font-size:.85rem;">Clique em "Atualizar prévia" para ver quem entraria.</p>'}</div>
+        </section>
+        `;
+  }
+
+  // Atualizacao automatica: 800 ms depois da ultima mudanca num FILTRO (nome e cadencia nao mudam o
+  // publico); cada pedido novo cancela o anterior; filtro invalido nao dispara pedido. Sessao
+  // expirada: o fetch segue o redirect para o login, que nao traz a marca do fragmento.
+  const SCRIPT_PREVIA_CRIACAO = `
+      <script>
+      (function () {
+        var form = document.getElementById('form-segmento');
+        var conteudo = document.getElementById('previa-segmento-conteudo');
+        var estado = document.getElementById('previa-segmento-estado');
+        var botao = document.getElementById('btn-atualizar-previa');
+        if (!form || !conteudo || !estado || !botao || !window.fetch || !window.FormData || !window.URLSearchParams) return;
+        var FILTROS = ['cidade', 'data_de', 'data_ate', 'vagas_origem', 'vagas_ignoradas', 'dias_outros_canais', 'teto'];
+        var timer = null;
+        var controle = null;
+        var pagina = 1;
+
+        function filtrosValidos() {
+          var ok = true;
+          FILTROS.forEach(function (n) {
+            var el = form.elements[n];
+            if (el && typeof el.checkValidity === 'function' && !el.checkValidity()) ok = false;
+          });
+          var de = form.elements.data_de ? form.elements.data_de.value : '';
+          var ate = form.elements.data_ate ? form.elements.data_ate.value : '';
+          if (de && ate && de > ate) ok = false;
+          return ok;
+        }
+
+        function atualizar() {
+          clearTimeout(timer);
+          if (controle) controle.abort();
+          controle = null;
+          if (!filtrosValidos()) {
+            estado.textContent = 'Filtros inválidos: corrija para ver a prévia.';
+            conteudo.style.opacity = '.45';
+            return;
+          }
+          controle = window.AbortController ? new AbortController() : null;
+          var dados = new URLSearchParams(new FormData(form));
+          dados.set('pagina', String(pagina));
+          estado.textContent = 'Calculando…';
+          conteudo.style.opacity = '.45';
+          fetch('/admin/massa-wa/segmento/previa', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: dados.toString(),
+            signal: controle ? controle.signal : undefined,
+          })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+              if (html.indexOf('${MARCA_PREVIA}') === -1) {
+                estado.textContent = 'Sessão expirada: entre de novo no painel para ver a prévia.';
+                return;
+              }
+              conteudo.innerHTML = html;
+              conteudo.style.opacity = '1';
+              estado.textContent = '';
+            })
+            .catch(function (e) {
+              if (e && e.name === 'AbortError') return;
+              estado.textContent = 'Não foi possível calcular a prévia agora. Tente "Atualizar prévia".';
+            });
+        }
+
+        function agendar(ev) {
+          if (!ev.target || FILTROS.indexOf(ev.target.name) === -1) return;
+          pagina = 1;
+          clearTimeout(timer);
+          timer = setTimeout(atualizar, 800);
+        }
+        form.addEventListener('input', agendar);
+        form.addEventListener('change', agendar);
+        botao.addEventListener('click', function (ev) { ev.preventDefault(); pagina = 1; atualizar(); });
+        conteudo.addEventListener('click', function (ev) {
+          var a = ev.target && ev.target.closest ? ev.target.closest('[data-pagina]') : null;
+          if (!a) return;
+          ev.preventDefault();
+          pagina = Number(a.getAttribute('data-pagina')) || 1;
+          atualizar();
+        });
+        atualizar();
+      })();
+      </script>`;
 
   // Passo 1 da criacao: escolher a vaga-alvo (so vagas ABERTAS).
   function formEscolherAlvo() {
@@ -618,8 +727,6 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
   // da pagina da campanha e da materializacao, sobre uma campanha que so existe em memoria. Nada e
   // gravado. O calculo e sincrono (better-sqlite3), entao o servidor nunca roda duas previas ao
   // mesmo tempo; a tela ainda cancela o pedido anterior a cada mudanca.
-  const MARCA_PREVIA = 'data-previa-segmento';
-
   function textoPeriodoUsado(c) {
     if (!c.dataDe && !c.dataAte) return 'toda a base (sem datas)';
     return `de ${dataBr(c.dataDe) || 'o início'} até ${dataBr(c.dataAte) || 'hoje'} (dias de Brasília)`;
@@ -917,11 +1024,39 @@ ${camposCadencia(c)}
       </form>`;
   }
 
+  // Criacao do segmento reaberta por GET com o que ja foi digitado (botao "Atualizar previa" sem
+  // JavaScript, links de pagina da previa). Sem nenhum filtro na query, e a tela em branco de sempre.
+  function formCriacaoDaQuery(q, alvo) {
+    const veioDoForm = q.teto !== undefined || q.previa !== undefined;
+    if (!veioDoForm) return { alvo };
+    const { nome, bruto, cadencia: cad } = lerSegmentoDoCorpo(q, { vagaAlvoId: alvo.id });
+    return {
+      alvo,
+      nome,
+      criterios: { ...bruto, vagasOrigem: bruto.vagasOrigem.map(Number), vagasIgnoradasProcesso: bruto.vagasIgnoradasProcesso.map(Number) },
+      cadenciaDigitada: {
+        lote_min: cad.loteMin,
+        lote_max: cad.loteMax,
+        gap_min_s: cad.gapMinS,
+        gap_max_s: cad.gapMaxS,
+        pausa_lote_min_s: cad.pausaLoteMinS,
+        pausa_lote_max_s: cad.pausaLoteMaxS,
+        teto_diario: cad.tetoDiario,
+        hora_inicio: cad.horaInicio,
+        hora_fim: cad.horaFim,
+        dias_semana: cad.diasSemana,
+      },
+      previaHtml: q.previa === '1' ? previaSegmentoDoCorpo({ ...q, vaga_alvo_id: alvo.id }).html : '',
+    };
+  }
+
   router.get('/nova', (req, res) => {
     if (req.query.fonte === 'segmento') {
-      const alvo = req.query.vaga_alvo ? db.obterVaga(Number(req.query.vaga_alvo)) : null;
+      const q = req.query;
+      const idAlvo = Number(q.vaga_alvo || q.vaga_alvo_id) || null;
+      const alvo = idAlvo ? db.obterVaga(idAlvo) : null;
       const corpo = alvo && alvo.ativo
-        ? formSegmento({ alvo }, { acao: '/admin/massa-wa', rotuloBotao: 'Criar rascunho' })
+        ? formSegmento(formCriacaoDaQuery(q, alvo), { acao: '/admin/massa-wa', rotuloBotao: 'Criar rascunho' })
         : formEscolherAlvo();
       const conteudoSeg = `
         <p><a class="btn btn--ghost" href="/admin/massa-wa">← Voltar</a></p>

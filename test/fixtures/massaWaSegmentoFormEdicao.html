@@ -1,0 +1,100 @@
+<h2>Configuração</h2>
+        
+      <form method="POST" action="/admin/massa-wa/ID">
+        <input type="hidden" name="fonte" value="segmento">
+        
+        <label class="campo"><span>Nome da campanha</span>
+          <input type="text" name="nome" value="Convite Joinville" required></label>
+
+        <p style="font-size:.9rem;margin:0 0 1rem;"><b>Vaga-alvo:</b> #ID Vendedor Alvo — Joinville
+          </p>
+
+        <label class="campo" style="max-width:20rem;"><span>Cidade (das vagas de origem)</span>
+          <select name="cidade"><option value="Balneário Camboriú">Balneário Camboriú</option><option value="Barueri">Barueri</option><option value="Campinas">Campinas</option><option value="Curitiba">Curitiba</option><option value="Florianópolis">Florianópolis</option><option value="Jaraguá do Sul">Jaraguá do Sul</option><option value="Joinville" selected>Joinville</option><option value="São Paulo">São Paulo</option><option value="Tijucas">Tijucas</option></select></label>
+        <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+          Preenchida pela vaga-alvo. As listas abaixo são de <b>Joinville</b>; ao trocar a
+          cidade, salve e reabra para ver as vagas da nova cidade.</p>
+
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap;">
+          <label class="campo" style="max-width:12rem;"><span>Candidatura de (dia)</span>
+            <input type="date" name="data_de" value="ID-09-01"></label>
+          <label class="campo" style="max-width:12rem;"><span>até (dia)</span>
+            <input type="date" name="data_ate" value="ID-09-30"></label>
+        </div>
+        <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+          Dias de Brasília. Vazio = toda a base. A pessoa entra se <b>alguma</b> candidatura dela a vaga da cidade cair no período.</p>
+
+        <fieldset style="border:1px solid var(--linha);border-radius:8px;padding:.8rem 1rem;margin:0 0 1.2rem;">
+          <legend style="font-size:.85rem;color:var(--cinza);">Vagas de origem (opcional — nenhuma marcada = todas da cidade)</legend>
+          
+          <label class="campo-check" style="margin:0 0 .3rem;">
+            <input type="checkbox" name="vagas_origem" value="ID" checked>
+            <span style="color:var(--preto);text-transform:none;">#ID Vaga Antiga
+              <small>(encerrada)</small> <small style="color:var(--cinza)">(8 candidatura(s) viva(s) · última DATA)</small></span>
+          </label>
+          <label class="campo-check" style="margin:0 0 .3rem;">
+            <input type="checkbox" name="vagas_origem" value="ID">
+            <span style="color:var(--preto);text-transform:none;">#ID Vaga Parada
+               <small style="color:var(--cinza)">(1 candidatura(s) viva(s) · última DATA)</small></span>
+          </label>
+        </fieldset>
+
+        <fieldset style="border:1px solid var(--linha);border-radius:8px;padding:.8rem 1rem;margin:0 0 1.2rem;">
+          <legend style="font-size:.85rem;color:var(--cinza);">Vagas abertas que NÃO contam como processo em andamento</legend>
+          
+          <label class="campo-check" style="margin:0 0 .3rem;">
+            <input type="checkbox" name="vagas_ignoradas" value="ID" checked>
+            <span style="color:var(--preto);text-transform:none;">#ID Vaga Parada
+               <small style="color:var(--cinza)">(1 candidatura(s) viva(s) · última DATA)</small></span>
+          </label>
+          <p style="color:var(--cinza);font-size:.8rem;margin:.4rem 0 0;">
+            Marque as vagas <b>paradas</b>: quem só está em processo nelas pode ser convidado. Nenhuma vaga é
+            encerrada ou alterada. A vaga-alvo não aparece aqui: ela nunca pode ser ignorada.</p>
+        </fieldset>
+
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap;">
+          <label class="campo" style="max-width:16rem;"><span>Excluir quem recebeu divulgação nos últimos (dias)</span>
+            <input type="number" min="0" name="dias_outros_canais" value="ID"></label>
+          <label class="campo" style="max-width:14rem;"><span>Teto de destinatários (obrigatório)</span>
+            <input type="number" min="1" max="100" name="teto" required value="ID"></label>
+        </div>
+        <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+          Dias: qualquer canal (Meta/Central Whats, e-mail, massa, n8n); 0 desliga. Quem já foi convidado
+          <b>para a vaga-alvo</b> sai sempre. Teto: no máximo 100; passando dele, ficam as
+          candidaturas mais recentes.</p>
+
+        
+        <details style="margin:0 0 1.2rem;">
+          <summary style="cursor:pointer;color:var(--cinza);font-size:.85rem;">Cadência (anti-bloqueio) — mexer só com motivo</summary>
+          <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.7rem;">
+            <label class="campo" style="margin:0;max-width:11rem;"><span>Mensagens por lote (mín.)</span>
+              <input type="number" min="1" max="8" name="lote_min" value="ID"></label>
+            <label class="campo" style="margin:0;max-width:11rem;"><span>Mensagens por lote (máx.)</span>
+              <input type="number" min="1" max="8" name="lote_max" value="ID"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Entre mensagens, mín. (segundos)</span>
+              <input type="number" min="20" name="gap_min_s" value="ID"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Entre mensagens, máx. (segundos)</span>
+              <input type="number" min="20" name="gap_max_s" value="ID"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Entre lotes, mín. (MINUTOS)</span>
+              <input type="number" min="5" name="pausa_lote_min_min" value="ID"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Entre lotes, máx. (MINUTOS)</span>
+              <input type="number" min="5" name="pausa_lote_max_min" value="ID"></label>
+            <label class="campo" style="margin:0;max-width:10rem;"><span>Teto/dia</span>
+              <input type="number" min="1" name="teto_diario" value="ID"></label>
+            <label class="campo" style="margin:0;max-width:9rem;"><span>Início</span>
+              <input type="time" name="hora_inicio" value="ID:00"></label>
+            <label class="campo" style="margin:0;max-width:9rem;"><span>Fim</span>
+              <input type="time" name="hora_fim" value="ID:00"></label>
+            <label class="campo" style="margin:0;max-width:12rem;"><span>Dias (1=seg … 7=dom)</span>
+              <input type="text" name="dias_semana" value="ID,2,3,4,5,6"></label>
+          </div>
+          <p style="font-size:.85rem;margin:.6rem 0 0;">Nesse ritmo: cerca de <b>35 mensagens por hora</b>; o teto de 30/dia é atingido em cerca de <b>0,9 h</b>.</p>
+          <p style="color:var(--cinza);font-size:.8rem;margin:.4rem 0 0;">
+            Mínimos que o sistema não deixa furar: 20 s entre mensagens,
+            5 min entre lotes, 8 por lote.
+            Rampa recomendada do teto diário: 30 → 60 → 100 → 150. Subir é
+            decisão sua, depois de dias sem incidente — o sistema nunca sobe sozinho.</p>
+        </details>
+
+        <button type="submit" class="btn">Salvar configuração</button>
+      </form>
