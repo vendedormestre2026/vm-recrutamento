@@ -154,3 +154,151 @@ test('REGRESSAO: a secao do funil na pagina da campanha e byte a byte a de antes
       /fora pelo teto \(3\)<\/dt><dd>2/, /Contato frio:/, /com contato sem data/]) assert.match(html, re);
   });
 });
+
+// ══════════════════ I2: ENDPOINT DA PREVIA (so leitura) ══════════════════
+
+const URL_PREVIA = '/admin/massa-wa/segmento/previa';
+const nomesDaTabela = (html) => [...html.matchAll(/<tr>\s*<td>([^<]*)<\/td>/g)].map((m) => m[1]);
+
+// Cenario simples: N pessoas so na vaga de origem, a de indice 0 e a candidatura mais recente.
+function cenarioSimples(n) {
+  limpar();
+  const alvo = vaga({ titulo: 'Vendedor Alvo' });
+  const origem = vaga({ ativo: false, titulo: 'Vaga Antiga' });
+  const pessoas = [];
+  for (let i = 0; i < n; i += 1) pessoas.push(candidatura(origem, { nome: `P${String(i).padStart(3, '0')}`, minutos: i + 1 }));
+  return { alvo, origem, pessoas };
+}
+
+const linhasGravaveis = () => Object.fromEntries(['campanhas_massa_wa', 'campanhas_massa_wa_variacoes', 'campanhas_massa_wa_envios', 'configuracoes']
+  .map((t) => [t, db.getDb().prepare(`SELECT count(*) n FROM ${t}`).get().n]));
+
+test('PREVIA == CAMPANHA CRIADA == FILA: mesma lista, mesma ordem, com os mesmos filtros', async () => {
+  const { alvo, parada } = cenarioCompleto();
+  const filtros = camposSegmento(alvo, { teto: '3', vagas_ignoradas: [String(parada)] });
+  await comServidor(async (base) => {
+    const r = await post(base, URL_PREVIA, filtros);
+    assert.equal(r.status, 200);
+    const nomesPrevia = nomesDaTabela(await r.text());
+    assert.equal(nomesPrevia.length, 3);
+
+    await post(base, '/admin/massa-wa', filtros);
+    const c = ultimaCampanha();
+    const daCampanha = require('../src/lib/publicoMassaWhatsapp').montarPublicoDaCampanha(c).itens.map((i) => i.nome);
+    assert.deepEqual(nomesPrevia, daCampanha);
+
+    const m = await post(base, `/admin/massa-wa/${c.id}/materializar`, {});
+    assert.match(m.headers.get('location'), /ok=materializada/);
+    const fila = db.getDb().prepare('SELECT nome FROM campanhas_massa_wa_envios WHERE campanha_id = ? ORDER BY id').all(c.id).map((x) => x.nome);
+    assert.deepEqual(nomesPrevia, fila);
+  });
+});
+
+test('a previa NAO grava nada: nenhuma mudanca no banco (total_changes) nem nas contagens', async () => {
+  const { alvo, parada } = cenarioCompleto();
+  await comServidor(async (base) => {
+    const antes = linhasGravaveis();
+    const mudancasAntes = db.getDb().prepare('SELECT total_changes() n').get().n;
+    for (const extra of [{}, { teto: '1' }, { pagina: '2' }, { vagas_ignoradas: [String(parada)] }, { teto: '0' }]) {
+      await post(base, URL_PREVIA, camposSegmento(alvo, extra));
+    }
+    assert.equal(db.getDb().prepare('SELECT total_changes() n').get().n, mudancasAntes);
+    assert.deepEqual(linhasGravaveis(), antes);
+    assert.equal(db.listarCampanhasMassaWa().length, 0);
+  });
+});
+
+test('telefone NUNCA aparece completo no HTML da previa (so mascarado)', async () => {
+  const { alvo, pessoas } = cenarioSimples(4);
+  await comServidor(async (base) => {
+    const html = await (await post(base, URL_PREVIA, camposSegmento(alvo))).text();
+    assert.equal((html.match(/<code>5547\*\*\*\*\d{4}<\/code>/g) || []).length, 4);
+    for (const p of pessoas) {
+      assert.ok(!html.includes(p.telefone), `telefone completo vazou: ${p.telefone}`);
+      assert.ok(!html.includes(p.telefone.slice(2)), 'numero sem DDD vazou');
+    }
+  });
+});
+
+test('teto e ordem: candidatura mais recente primeiro; o teto corta as mais antigas e so conta', async () => {
+  const { alvo } = cenarioSimples(5);
+  await comServidor(async (base) => {
+    const html = await (await post(base, URL_PREVIA, camposSegmento(alvo, { teto: '3' }))).text();
+    assert.deepEqual(nomesDaTabela(html), ['P000', 'P001', 'P002']);
+    assert.match(html, /<b>3<\/b> pessoa\(s\) entrariam\s*· 2 fora pelo teto \(não listadas\)/);
+    assert.match(html, /fora pelo teto \(3\)<\/dt><dd>2/);
+  });
+});
+
+test('paginacao de 25: a pagina 2 continua a ordem; links de pagina levam os filtros para GET /nova', async () => {
+  const { alvo } = cenarioSimples(30);
+  await comServidor(async (base) => {
+    const p1 = await (await post(base, URL_PREVIA, camposSegmento(alvo, { teto: '100' }))).text();
+    assert.equal(nomesDaTabela(p1).length, 25);
+    assert.match(p1, /Página 1 de 2/);
+    assert.match(p1, /href="\/admin\/massa-wa\/nova\?fonte=segmento&amp;[^"]*teto=100[^"]*&amp;previa=1&amp;pagina=2#previa-segmento" data-pagina="2"/);
+    const p2 = await (await post(base, URL_PREVIA, camposSegmento(alvo, { teto: '100', pagina: '2' }))).text();
+    assert.deepEqual(nomesDaTabela(p2), ['P025', 'P026', 'P027', 'P028', 'P029']);
+  });
+});
+
+test('periodo vazio = toda a base, e a previa escreve o periodo usado', async () => {
+  const { alvo } = cenarioSimples(2);
+  await comServidor(async (base) => {
+    const html = await (await post(base, URL_PREVIA, camposSegmento(alvo))).text();
+    assert.match(html, /<b>Período usado:<\/b> toda a base \(sem datas\)/);
+    const com = await (await post(base, URL_PREVIA, camposSegmento(alvo, { data_de: '2026-09-01', data_ate: '2026-09-30' }))).text();
+    assert.match(com, /<b>Período usado:<\/b> de 01\/09\/2026 até 30\/09\/2026 \(dias de Brasília\)/);
+  });
+});
+
+test('publico vazio: mensagem clara e o funil continua aparecendo', async () => {
+  const { alvo } = cenarioSimples(0);
+  await comServidor(async (base) => {
+    const r = await post(base, URL_PREVIA, camposSegmento(alvo));
+    assert.equal(r.status, 200);
+    const html = await r.text();
+    assert.match(html, /Ninguém entraria com estes filtros/);
+    assert.match(html, /PÚBLICO FINAL<\/dt><dd>0/);
+  });
+});
+
+test('validacao igual a do "Criar rascunho" (sem exigir nome): 422 com a mensagem, sem calcular', async () => {
+  const { alvo, origem } = cenarioSimples(1);
+  await comServidor(async (base) => {
+    for (const [extra, msg] of [
+      [{ teto: '' }, /teto de destinatários é obrigatório/],
+      [{ teto: '0' }, /teto de destinatários é obrigatório/],
+      [{ teto: '101' }, /no máximo 100/],
+      [{ data_de: '2026-10-05', data_ate: '2026-10-01' }, /Período inválido/],
+      [{ cidade: 'Atlantida Perdida' }, /Cidade fora do vocabulário/],
+      [{ vagas_ignoradas: [String(alvo)] }, /vaga-alvo não pode ser marcada/],
+    ]) {
+      const r = await post(base, URL_PREVIA, camposSegmento(alvo, extra));
+      assert.equal(r.status, 422, JSON.stringify(extra));
+      const html = await r.text();
+      assert.match(html, msg);
+      assert.doesNotMatch(html, /PÚBLICO FINAL/);
+    }
+    const semNome = await post(base, URL_PREVIA, camposSegmento(alvo, { nome: '' }));
+    assert.equal(semNome.status, 200);
+    const fechada = await post(base, URL_PREVIA, camposSegmento(origem));
+    assert.equal(fechada.status, 422);
+    assert.match(await fechada.text(), /não está aberta/);
+  });
+});
+
+test('rota /segmento/previa nao colide com /:id; sem sessao vai para o login (sem o fragmento)', async () => {
+  const { alvo } = cenarioSimples(1);
+  await comServidor(async (base) => {
+    const ok = await post(base, URL_PREVIA, camposSegmento(alvo));
+    assert.match(await ok.text(), /data-previa-segmento="1"/);
+    // /:id com "segmento" continua sendo "campanha nao encontrada", como antes.
+    const det = await fetch(`${base}/admin/massa-wa/segmento`, { headers: { Cookie: cookieAdmin } });
+    assert.equal(det.status, 404);
+    const semSessao = await post(base, URL_PREVIA, camposSegmento(alvo), { cookie: '' });
+    assert.equal(semSessao.status, 302);
+    assert.match(semSessao.headers.get('location'), /^\/admin\/login/);
+  });
+  assert.equal(db.listarCampanhasMassaWa().length, 0);
+});

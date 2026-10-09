@@ -611,6 +611,95 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     return [...ultimo].map(([canal, em]) => `${ROTULO_CANAL[canal] || canal} ${em ? diaHoraBrasilia(em).slice(0, 5) : '(sem data)'}`).join(', ');
   }
 
+  // ── PREVIA AO VIVO NA CRIACAO (so leitura) ──
+  //
+  // Os filtros do formulario de criacao viram os MESMOS criterios que "Criar rascunho" gravaria
+  // (lerSegmentoDoCorpo + validarSegmento, sem exigir o nome) e passam pela MESMA funcao de publico
+  // da pagina da campanha e da materializacao, sobre uma campanha que so existe em memoria. Nada e
+  // gravado. O calculo e sincrono (better-sqlite3), entao o servidor nunca roda duas previas ao
+  // mesmo tempo; a tela ainda cancela o pedido anterior a cada mudanca.
+  const MARCA_PREVIA = 'data-previa-segmento';
+
+  function textoPeriodoUsado(c) {
+    if (!c.dataDe && !c.dataAte) return 'toda a base (sem datas)';
+    return `de ${dataBr(c.dataDe) || 'o início'} até ${dataBr(c.dataAte) || 'hoje'} (dias de Brasília)`;
+  }
+
+  // Os campos do formulario como query string (sem a pagina), para os links de pagina da previa
+  // sem JavaScript, que caem em GET /nova.
+  function queryDosFiltros(b) {
+    const q = new URLSearchParams();
+    q.set('fonte', 'segmento');
+    for (const [k, v] of Object.entries(b || {})) {
+      if (['pagina', 'fonte'].includes(k)) continue;
+      for (const x of [].concat(v)) q.append(k, String(x ?? ''));
+    }
+    return q.toString();
+  }
+
+  // { status, html } — html e o fragmento do painel de previa.
+  function previaSegmentoDoCorpo(b) {
+    const embrulho = (miolo) => `<div ${MARCA_PREVIA}="1">${miolo}</div>`;
+    const lido = lerSegmentoDoCorpo(b, { vagaAlvoId: Number(b.vaga_alvo_id || b.vaga_alvo) || null });
+    // Mesma validacao do "Criar rascunho"; o nome so e exigido na hora de criar.
+    const v = validarSegmento({ ...lido, nome: lido.nome || 'prévia' });
+    if (v.erro) {
+      return { status: 422, html: embrulho(`<p class="aviso-alerta">${escapeHtml(ERROS[v.erro] || v.erro)} A prévia volta quando o filtro for corrigido.</p>`) };
+    }
+    let r;
+    try {
+      r = publico.montarPublicoDaCampanha({ id: null, job_id: lido.alvo.id, criterios_json: JSON.stringify(v.criterios) });
+    } catch (err) {
+      return { status: 422, html: embrulho(`<p class="aviso-alerta">${escapeHtml(err.message)}</p>`) };
+    }
+    const cidadeDaVaga = new Map(db.listarVagas().map((x) => [x.id, x.cidade]));
+    const paginas = Math.max(1, Math.ceil(r.itens.length / POR_PAGINA));
+    const pagina = Math.min(Math.max(1, Number(b.pagina) || 1), paginas);
+    const fatia = r.itens.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA);
+    const linhas = fatia.map((p) => `
+          <tr>
+            <td>${escapeHtml(p.nome || '—')}</td>
+            <td>${escapeHtml(p.jobTitulo || '—')}</td>
+            <td>${escapeHtml(cidadeDaVaga.get(p.jobId) || '—')}</td>
+            <td>${escapeHtml(diaHoraBrasilia(p.candidaturaEm))}</td>
+            <td>${escapeHtml(ROTULO_STATUS_RECRUTADOR[p.statusRecrutador] || p.statusRecrutador || '—')}</td>
+            <td>${escapeHtml(textoContatos(p.contatos)) || '—'}</td>
+            <td><code>${escapeHtml(segLib.mascararTelefone(p.telefone))}</code></td>
+          </tr>`).join('');
+    const q = queryDosFiltros(b);
+    const linkPagina = (n, rotulo) => `<a href="/admin/massa-wa/nova?${escapeHtml(q)}&amp;previa=1&amp;pagina=${n}#previa-segmento" data-pagina="${n}">${rotulo}</a>`;
+    const nav = paginas > 1
+      ? `<p style="font-size:.85rem;">Página ${pagina} de ${paginas} ·
+          ${pagina > 1 ? linkPagina(pagina - 1, '← anterior') : ''}
+          ${pagina < paginas ? linkPagina(pagina + 1, 'próxima →') : ''}</p>` : '';
+    const lista = r.itens.length
+      ? `<p style="font-size:.9rem;margin:.8rem 0 .4rem;"><b>${fmtInt(r.itens.length)}</b> pessoa(s) entrariam
+          ${r.funil.pessoasForaPorTeto ? ` · ${fmtInt(r.funil.pessoasForaPorTeto)} fora pelo teto (não listadas)` : ''}.
+          Mais recente primeiro. Desmarcar alguém continua sendo na conferência nominal, depois de criar o rascunho.</p>
+        <div class="admin-tab-scroll">
+          <table class="admin-tab">
+            <thead><tr><th>Nome</th><th>Vaga de origem</th><th>Cidade da vaga</th><th>Candidatura</th><th>Status</th><th>Canais já contatados</th><th>Telefone</th></tr></thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>
+        ${nav}`
+      : '<p class="aviso-alerta" style="margin:.8rem 0 0;">Ninguém entraria com estes filtros. O funil acima mostra em que linha as pessoas saíram.</p>';
+    return {
+      status: 200,
+      html: embrulho(`
+        <p style="font-size:.9rem;margin:0 0 .6rem;"><b>Período usado:</b> ${escapeHtml(textoPeriodoUsado(r.criterios))} ·
+          <b>Cidade:</b> ${escapeHtml(r.criterios.cidade)} · <b>Teto:</b> ${fmtInt(r.criterios.teto)}</p>
+        ${funilSegmentoHtml(r)}
+        ${lista}`),
+    };
+  }
+
+  router.post('/segmento/previa', (req, res) => {
+    const { status, html } = previaSegmentoDoCorpo(req.body || {});
+    res.set('Cache-Control', 'no-store');
+    return res.status(status).type('html').send(html);
+  });
+
   router.get('/:id/conferencia', (req, res) => {
     const campanha = db.obterCampanhaMassaWa(Number(req.params.id));
     if (!campanha || !ehSegmento(campanha)) {
