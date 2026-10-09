@@ -452,7 +452,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     // nao existe mais. O que congela e a materializacao, que e um gesto separado.
     let r;
     try {
-      r = publico.montarPublicoMassaWa({ jobId: campanha.job_id, statusList: statusDaCampanha(campanha) });
+      r = publico.montarPublicoDaCampanha(campanha);
     } catch (err) {
       return `<section class="rel-sec"><h2>Público</h2>
         <p class="aviso-alerta">${escapeHtml(err.message)}</p></section>`;
@@ -841,12 +841,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     const maxDestinatarios = Number.isInteger(max) && max > 0 ? max : null;
     let r;
     try {
-      r = publico.montarPublicoMassaWa({
-        jobId: campanha.job_id,
-        statusList: statusDaCampanha(campanha),
-        excluirJaReceberam,
-        maxDestinatarios,
-      });
+      r = publico.montarPublicoDaCampanha(campanha, { excluirJaReceberam, maxDestinatarios });
     } catch {
       return res.redirect(`/admin/massa-wa/${id}?erro=status`);
     }

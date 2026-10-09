@@ -274,8 +274,67 @@ function montarPublicoMassaWa(
   return { itens, funil, statusList: status };
 }
 
+// ══════════════════════════════════════════════════════════════
+// DESPACHANTE: a UNICA porta de entrada da previa, da conferencia e da materializacao
+// ══════════════════════════════════════════════════════════════
+//
+// A fonte do publico mora em criterios_json.fonte. AUSENTE = "inscritos em vagas abertas", e o
+// caminho e montarPublicoMassaWa com exatamente os argumentos que a rota passava antes deste
+// despachante existir — inclusive para as campanhas ja materializadas, que nunca tiveram `fonte`.
+// 'segmento' vai para lib/publicoSegmentoMassaWa. Qualquer OUTRO valor lanca: uma fonte que
+// ninguem reconhece cair no publico de vagas abertas seria um publico surpresa.
+//
+// `opcoes` (excluirJaReceberam, maxDestinatarios) so valem para vagas abertas: no segmento o "ja
+// recebeu" e sempre excluido e o teto vem dos criterios gravados.
+//
+// O require do segmento e PREGUICOSO: aquele modulo nao depende deste, mas carregar o segmento
+// no topo faria toda campanha antiga pagar pela importacao do motor novo.
+const FONTE_VAGAS_ABERTAS = 'vagas_abertas';
+
+function criteriosDaCampanhaMassaWa(campanha) {
+  try {
+    const c = JSON.parse((campanha && campanha.criterios_json) || '{}');
+    return c && typeof c === 'object' ? c : {};
+  } catch {
+    return {};
+  }
+}
+
+function fonteDaCampanhaMassaWa(campanha) {
+  const f = criteriosDaCampanhaMassaWa(campanha).fonte;
+  return f == null || f === '' ? FONTE_VAGAS_ABERTAS : String(f);
+}
+
+function montarPublicoDaCampanha(campanha, opcoes = {}, deps = {}) {
+  const criterios = criteriosDaCampanhaMassaWa(campanha);
+  const fonte = fonteDaCampanhaMassaWa(campanha);
+  if (fonte === FONTE_VAGAS_ABERTAS) {
+    const lista = criterios.statusList || [];
+    const r = montarPublicoMassaWa(
+      {
+        jobId: campanha.job_id,
+        statusList: lista.length ? lista : [...STATUS_PADRAO],
+        ...(opcoes.excluirJaReceberam === undefined ? {} : { excluirJaReceberam: opcoes.excluirJaReceberam }),
+        ...(opcoes.maxDestinatarios === undefined ? {} : { maxDestinatarios: opcoes.maxDestinatarios }),
+      },
+      deps,
+    );
+    return { fonte, ...r };
+  }
+  // eslint-disable-next-line global-require
+  const segmento = require('./publicoSegmentoMassaWa');
+  if (fonte === segmento.FONTE_SEGMENTO) {
+    return { fonte, ...segmento.montarPublicoSegmentoMassaWa(criterios, deps) };
+  }
+  throw new Error(`Fonte de publico desconhecida na campanha ${campanha && campanha.id}: "${fonte}".`);
+}
+
 module.exports = {
   montarPublicoMassaWa,
+  montarPublicoDaCampanha,
+  criteriosDaCampanhaMassaWa,
+  fonteDaCampanhaMassaWa,
+  FONTE_VAGAS_ABERTAS,
   sanearStatusList,
   funilVazio,
   STATUS_SELECIONAVEIS,
