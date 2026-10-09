@@ -183,6 +183,22 @@ function conferirAritmetica(f) {
 
 const somar = (obj, k) => { obj[k] = (obj[k] || 0) + 1; };
 
+// enviado_em de qualquer canal -> 'YYYY-MM-DD HH:MM:SS' UTC, ou null.
+//
+// Tres canais gravam datetime('now') do SQLite. O n8n NAO: o historico de disparos_whatsapp veio
+// em ISO com fuso ("2026-07-15T11:38:17.379-04:00", "...Z"), visto em producao no dry-run da
+// parada 1. Comparado como string com o limite dos N dias, o 'T' (maior que ' ') faria qualquer
+// hora do dia-limite contar como dentro, e o -04:00 seria ignorado. Data ilegivel vira null:
+// "sem data", que a regra dos N dias nao avalia e o funil informa.
+const RE_SQL_UTC = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+function dataEnvioUtc(v) {
+  const t = String(v == null ? '' : v).trim();
+  if (!t) return null;
+  if (RE_SQL_UTC.test(t)) return t;
+  const ms = Date.parse(t);
+  return Number.isNaN(ms) ? null : paraTextoSqlUtc(new Date(ms));
+}
+
 // ══════════════════════════════════════════════════════════════
 // MONTAGEM
 // ══════════════════════════════════════════════════════════════
@@ -296,7 +312,7 @@ function montarPublicoSegmentoMassaWa(criteriosBrutos = {}, deps = {}) {
   const contatosPorTel = new Map();
   const contatosPorEmail = new Map();
   for (const d of db.listarDivulgacoesEnviadasPorCanal()) {
-    const contato = { canal: d.canal, jobId: d.job_id == null ? null : Number(d.job_id), em: d.enviado_em || null };
+    const contato = { canal: d.canal, jobId: d.job_id == null ? null : Number(d.job_id), em: dataEnvioUtc(d.enviado_em) };
     if (d.email) {
       const e = normalizarEmail(d.email);
       if (!contatosPorEmail.has(e)) contatosPorEmail.set(e, []);
@@ -400,6 +416,7 @@ module.exports = {
   funilSegmentoVazio,
   conferirAritmetica,
   janelaUtc,
+  dataEnvioUtc,
   mascararTelefone,
   FONTE_SEGMENTO,
   TETO_PADRAO,

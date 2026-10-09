@@ -393,6 +393,25 @@ test('n8n SEM DATA nao e excluido pelos N dias, mas aparece no informativo', () 
   assert.equal(r.funil.finalComContatoSemData, 1);
 });
 
+test('n8n com data ISO+fuso e convertida para UTC antes da regra dos N dias (bug-to-confirm)', () => {
+  // Visto em producao (parada 1): disparos_whatsapp.enviado_em = "2026-07-15T11:38:17.379-04:00".
+  assert.equal(seg.dataEnvioUtc('2026-07-15T11:38:17.379-04:00'), '2026-07-15 15:38:17');
+  assert.equal(seg.dataEnvioUtc('2026-08-14T17:48:52.142Z'), '2026-08-14 17:48:52');
+  assert.equal(seg.dataEnvioUtc('2026-08-14 17:48:52'), '2026-08-14 17:48:52');
+  assert.equal(seg.dataEnvioUtc('lixo'), null);
+
+  const { alvo, origem } = cenario();
+  const t = telefone();
+  novaCandidatura({ jobId: origem, telefone: t });
+  // Limite de N = 7 com AGORA = 2026-10-09 15:00 UTC: 2026-10-02 15:00:00 UTC.
+  // 02/10 10:00 em -04:00 = 14:00 UTC, ANTES do limite. Como string crua ('2026-10-02T...' >
+  // '2026-10-02 15:...') contaria como recente e tiraria a pessoa.
+  db.getDb().prepare("INSERT INTO disparos_whatsapp (telefone, status, enviado_em) VALUES (?, 'enviado', ?)")
+    .run(t, '2026-10-02T10:00:00.000-04:00');
+  assert.equal(montar({ vagaAlvoId: alvo, diasOutrosCanais: 7 }).funil.total, 1);
+  assert.equal(montar({ vagaAlvoId: alvo, diasOutrosCanais: 8 }).funil.pessoasDivulgadasRecentes, 1);
+});
+
 test('mensagens TRANSACIONAIS (WA1/WA2) nao contam como divulgacao', () => {
   const tiposNaConsulta = db.listarDivulgacoesEnviadasPorCanal.toString();
   assert.doesNotMatch(tiposNaConsulta, /whatsapp_sequencia_envios/);
