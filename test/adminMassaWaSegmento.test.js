@@ -292,6 +292,31 @@ test('Configuracoes: o interruptor do segmento aparece, nasce desligado, e salva
   });
 });
 
+test('ATRIBUICAO: o link da mensagem leva a UTM que a captura grava, e o painel conta as candidaturas', async () => {
+  const { alvo } = cenario();
+  const { extrairUtmDaQuery } = require('../src/lib/utm');
+  await comServidor(async (base) => {
+    await post(base, '/admin/massa-wa', camposSegmento(alvo));
+    const c = ultimaCampanha();
+    // O link que a mensagem leva, lido pelo MESMO extrator que /vaga/:slug usa.
+    const link = new URL(variacoes.linkVagaPara(db.obterVaga(alvo).slug, c.id));
+    const utm = extrairUtmDaQuery(Object.fromEntries(link.searchParams));
+    assert.equal(utm.source, 'massa-wa');
+    assert.equal(utm.campaign, `massa-${c.id}`);
+
+    let html = await get(base, `/admin/massa-wa/${c.id}`);
+    assert.match(html, /Candidaturas geradas por esta campanha<\/h2>\s*<p[^>]*><b>0<\/b>/);
+    const ins = db.getDb().prepare(
+      "INSERT INTO applications (job_id, nome, telefone, utm_source, utm_campaign) VALUES (?, 'n', '47999000111', ?, ?)",
+    );
+    ins.run(alvo, utm.source, utm.campaign);
+    ins.run(alvo, 'massa-wa', `massa-${c.id + 1}`); // outra campanha nao conta
+    html = await get(base, `/admin/massa-wa/${c.id}`);
+    assert.match(html, /Candidaturas geradas por esta campanha<\/h2>\s*<p[^>]*><b>1<\/b>/);
+    assert.equal(db.contarCandidaturasPorUtmMassaWa(c.id), 1);
+  });
+});
+
 test('REGRESSAO: campanha de vagas abertas continua com a previa e o formulario de sempre', async () => {
   cenario();
   const aberta = vaga();
@@ -304,6 +329,7 @@ test('REGRESSAO: campanha de vagas abertas continua com a previa e o formulario 
     assert.match(html, /Candidaturas em vagas abertas/);
     assert.doesNotMatch(html, /Público do segmento/);
     assert.doesNotMatch(html, /Segmento (LIGADO|DESLIGADO)/);
+    assert.doesNotMatch(html, /Candidaturas geradas por esta campanha/);
     const conf = await fetch(`${base}/admin/massa-wa/${c.id}/conferencia`, { headers: { Cookie: cookieAdmin } });
     assert.equal(conf.status, 404);
   });

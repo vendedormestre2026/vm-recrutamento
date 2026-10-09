@@ -1226,6 +1226,7 @@ ${camposCadencia(c)}
       ${blocoEstado(campanha)}
       ${blocoAcoes(campanha)}
       ${blocoFila(campanha)}
+      ${ehSegmento(campanha) ? blocoAtribuicao(campanha) : ''}
       ${ehSegmento(campanha) ? blocoPreviaSegmento(campanha) : blocoPrevia(campanha)}
       ${blocoVariacoes(campanha, req)}
       ${blocoTeste(campanha)}
