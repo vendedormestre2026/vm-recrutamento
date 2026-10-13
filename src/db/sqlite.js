@@ -5424,6 +5424,16 @@ function chavesLembreteEntrevista(jobId, inicioUtc, mock) {
   );
 }
 
+// Momento do ULTIMO lembrete WA3 enviado DE VERDADE (mock = 0), ou null. Mesmo papel de
+// ultimoEnvioSequenciaWhatsapp: entra no espacamento minimo global da massa, que divide o socket
+// com este motor. Simulacao nao conta — nao tocou o socket.
+function ultimoEnvioLembreteEntrevista() {
+  const linha = getDb()
+    .prepare("SELECT MAX(enviado_em) AS ultimo FROM lembretes_entrevista_enviados WHERE status = 'enviado' AND mock = 0")
+    .get();
+  return (linha && linha.ultimo) || null;
+}
+
 // Lembretes de uma vaga para a tela (mais recentes primeiro). Telefone NAO sai daqui completo
 // para o HTML — quem renderiza mascara.
 function listarLembretesEntrevistaDaVaga(jobId, { limite = 200 } = {}) {
@@ -5546,6 +5556,7 @@ module.exports = {
   marcarLembreteEntrevistaTerminal,
   chavesLembreteEntrevista,
   listarLembretesEntrevistaDaVaga,
+  ultimoEnvioLembreteEntrevista,
 
   registrarOptOutWhatsapp,
   estaOptOutWhatsapp,

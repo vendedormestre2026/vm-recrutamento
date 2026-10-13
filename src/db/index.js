@@ -276,6 +276,7 @@ module.exports = {
   marcarLembreteEntrevistaTerminal: driver.marcarLembreteEntrevistaTerminal,
   chavesLembreteEntrevista: driver.chavesLembreteEntrevista,
   listarLembretesEntrevistaDaVaga: driver.listarLembretesEntrevistaDaVaga,
+  ultimoEnvioLembreteEntrevista: driver.ultimoEnvioLembreteEntrevista,
 
   registrarOptOutWhatsapp: driver.registrarOptOutWhatsapp,
   estaOptOutWhatsapp: driver.estaOptOutWhatsapp,

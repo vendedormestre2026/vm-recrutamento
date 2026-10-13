@@ -69,6 +69,9 @@ const cadencia = require('../lib/cadenciaMassaWa');
 const variacoes = require('../lib/variacoesMassaWa');
 const { fonteDaCampanhaMassaWa, criteriosDaCampanhaMassaWa, FONTE_VAGAS_ABERTAS } = require('../lib/publicoMassaWhatsapp');
 const { mascarar, varianteSemNono } = require('./sequenciaOutbox');
+// WA3 (lembretes da entrevista em grupo): precedencia no passo 3 e espacamento global. Com o WA3
+// desligado, as duas leituras sao no-op (ver existeLembretePendente e aguardarEspacamento).
+const lembretesWa3 = require('./lembreteEntrevistaOutbox');
 
 // Interruptor de DISPARO, no store `configuracoes` — mesmo padrao de promocao_ativa,
 // whatsapp_sequencia_ativa e campanha_whatsapp_ativa. Config de BANCO, com checkbox no painel.
@@ -270,6 +273,7 @@ async function processarCicloMassaWa(deps = {}) {
     const r = await processarCampanha(campanha, {
       db, mock, agora, aleatorio, dormir, enviar, onWhatsAppLote, espacamentoMs,
       instancia: deps.instancia,
+      lembreteWa3Pendente: deps.lembreteWa3Pendente,
     });
     resumo.enviados += r.enviados;
     resumo.falhas += r.falhas;
@@ -325,6 +329,13 @@ async function processarCampanha(campanha, ctx) {
   // de um lote inverte a importancia das duas coisas.
   if (db.existePendenciaSequenciaWhatsapp(agoraSql)) {
     console.log(`[massa-wa] campanha ${campanha.id}: ha WA1/WA2 pendente; cedendo a vez.`);
+    return resumo;
+  }
+  // Mesma prioridade para o lembrete WA3 vencido ou a vencer em poucos minutos: ele tem hora para
+  // sair, a campanha nao. Temporario por construcao (ver existeLembretePendente).
+  const lembreteWa3Pendente = ctx.lembreteWa3Pendente || lembretesWa3.existeLembretePendente;
+  if (lembreteWa3Pendente({ db, agora })) {
+    console.log(`[massa-wa] campanha ${campanha.id}: ha lembrete WA3 vencido ou a vencer; cedendo a vez.`);
     return resumo;
   }
 
@@ -660,14 +671,19 @@ function jobDaLinha(linha) {
 
 // Espera o que falta para respeitar o espacamento minimo desde o ULTIMO envio de QUALQUER motor.
 //
-// Le o ultimo envio do transacional no banco (ver ultimoEnvioSequenciaWhatsapp em db/sqlite.js) e
-// o ultimo da propria massa. Dorme so a diferenca.
+// Le o ultimo envio do transacional no banco (ver ultimoEnvioSequenciaWhatsapp em db/sqlite.js) e,
+// com o WA3 ligado, o ultimo lembrete REAL (ultimoEnvioLembreteEntrevista). Dorme so a diferenca.
 async function aguardarEspacamento({ db, dormir, espacamentoMs, agora }) {
   if (!(espacamentoMs > 0)) return;
   const ultimoSeq = db.ultimoEnvioSequenciaWhatsapp();
-  if (!ultimoSeq) return;
+  // WA3: so com o interruptor ligado — desligado, esta funcao se comporta exatamente como antes.
+  // As duas colunas estao no mesmo formato ('YYYY-MM-DD HH:MM:SS' UTC), entao o maior e o
+  // maior em texto.
+  const ultimoWa3 = lembretesWa3.ativo({ db }) ? db.ultimoEnvioLembreteEntrevista() : null;
+  const ultimo = [ultimoSeq, ultimoWa3].filter(Boolean).sort().pop();
+  if (!ultimo) return;
   // A coluna e UTC sem sufixo (datetime('now') do SQLite); o 'Z' diz ao JS o que ela ja e.
-  const t = new Date(`${String(ultimoSeq).replace(' ', 'T')}Z`).getTime();
+  const t = new Date(`${String(ultimo).replace(' ', 'T')}Z`).getTime();
   if (Number.isNaN(t)) return;
   const decorrido = agora.getTime() - t;
   if (decorrido >= espacamentoMs) return;

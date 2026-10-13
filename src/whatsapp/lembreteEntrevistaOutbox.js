@@ -316,6 +316,59 @@ async function processarCicloLembretes(deps = {}) {
   return resumo;
 }
 
+// ══════════════════════════════════════════════════════════════
+// PRECEDENCIA SOBRE A MASSA (lido por whatsapp/massaOutbox)
+// ══════════════════════════════════════════════════════════════
+//
+// Ha lembrete WA3 VENCIDO, ou que vence nos proximos HORIZONTE_PRECEDENCIA_MIN minutos, ainda sem
+// linha gravada? A massa cede a vez enquanto isso for verdade — o lembrete tem hora, a campanha
+// nao. NAO e permanente: cada lembrete deixa de contar assim que o worker o grava (enviado,
+// pulado, opt-out, falha) ou quando passa da tolerancia (no maximo 3 h, a do wa3a).
+//
+// FALSE, sem tocar o banco de candidatos, quando o WA3 esta desligado ou em simulacao (mock nao
+// usa o socket, entao nao disputa nada com a massa). Erro aqui tambem devolve false: uma falha de
+// leitura nao pode travar a massa.
+//
+// Usa as MESMAS funcoes do ciclo (publico, cronograma, carencia, chaves gravadas), sem gravar
+// nada: nem reserva, nem reuniao vista. Opt-out nao e consultado — um suprimido conta como
+// pendente ate o proximo tick do WA3 grava-lo, o que custa no maximo um minuto de cessao.
+const HORIZONTE_PRECEDENCIA_MIN = 5;
+
+function existeLembretePendente(deps = {}) {
+  const db = deps.db || dbPadrao;
+  if (!ativo({ db })) return false;
+  const mock = deps.mock === undefined ? modoMock() : deps.mock;
+  if (mock) return false;
+
+  const agora = deps.agora instanceof Date ? deps.agora : new Date();
+  const horizonte = new Date(agora.getTime() + HORIZONTE_PRECEDENCIA_MIN * 60 * 1000);
+  try {
+    for (const vaga of db.listarVagasParaLembreteEntrevista()) {
+      if (!linkPareceUrl(L.linkSalaDe(vaga))) continue;
+      const vistas = new Map(db.listarReunioesVistasLembrete(vaga.id).map((v) => [v.inicio, v]));
+      const { reunioes } = carregarPublicoLembrete(vaga, { agora }, { db });
+      for (const reuniao of reunioes) {
+        if (!reuniao.destinatarios.length) continue;
+        const vista = vistas.get(reuniao.inicioUtc);
+        if (!L.carenciaCumprida(vista && vista.primeira_vez_vista, horizonte)) continue;
+        const chaves = db.chavesLembreteEntrevista(vaga.id, reuniao.inicioUtc, false);
+        for (const tipo of L.TIPOS) {
+          for (const dest of reuniao.destinatarios) {
+            if (chaves.has(`${dest.telefoneCanonico}|${tipo}`)) continue;
+            const base = { tipo, inicio: reuniao.inicio, conviteEm: dest.conviteEm };
+            if (L.situacaoLembrete({ ...base, agora }).acao === L.ACAO_ENVIAR) return true;
+            if (L.situacaoLembrete({ ...base, agora: horizonte }).acao === L.ACAO_ENVIAR) return true;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`[wa3] falha ao checar lembretes pendentes para a massa: ${err.message}`);
+    return false;
+  }
+  return false;
+}
+
 // ── Trava em memoria contra ciclos sobrepostos ──
 // O ciclo pode levar minutos (gap entre mensagens) e o tick e de 1 min. A trava descarta o tick
 // que chega no meio; a garantia contra duplicidade, mesmo sem ela, e a reserva no banco.
@@ -338,6 +391,8 @@ module.exports = {
   processarCicloLembretes,
   varrerSeOcioso,
   resolverDestino,
+  existeLembretePendente,
+  HORIZONTE_PRECEDENCIA_MIN,
   ativo,
   modoMock,
   CHAVE_ATIVO,
