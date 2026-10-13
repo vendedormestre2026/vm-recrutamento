@@ -43,6 +43,7 @@ const { paraTextoSqlUtc } = require('../lib/fusoBrasilia');
 const L = require('../lib/lembreteEntrevista');
 const { carregarPublicoLembrete, carregarOptout, suprimidoPorOptout } = require('../lib/publicoLembreteEntrevista');
 const { montarTextoLembrete } = require('../lib/textosLembreteEntrevista');
+const { linkPareceUrl } = require('../lib/entrevistaGrupo');
 
 // Interruptor de banco (/admin/config). Default FALSE: chave ausente nao envia nada.
 const CHAVE_ATIVO = 'wa3_ativo';
@@ -173,6 +174,9 @@ async function processarCicloLembretes(deps = {}) {
   // ── 1. O QUE ESTA VENCIDO, EM TODAS AS VAGAS ──
   const fila = [];
   for (const vaga of vagas) {
+    // Sala que nao comeca com http(s):// nao vira link no WhatsApp: lembrete sem sala clicavel
+    // nao sai (a tela da vaga avisa — diagnosticarLembretesEntrevista).
+    if (!linkPareceUrl(L.linkSalaDe(vaga))) continue;
     try {
       // Toda reuniao valida da vaga (inclusive as passadas) fica registrada: e o historico que
       // segura os convidados de um slot sobrescrito, e a referencia da carencia.

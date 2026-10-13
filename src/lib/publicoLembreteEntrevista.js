@@ -37,7 +37,9 @@ const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('./wh
 const { chaveCanonicaTelefone } = require('./chaveTelefone');
 const { normalizarStatusRecrutador } = require('./elegibilidadeStatusPromocao');
 const { fonteDaCampanhaMassaWa, FONTE_VAGAS_ABERTAS } = require('./publicoMassaWhatsapp');
-const { reunioesDaVaga, linhaDoTempo, reuniaoAnunciada, comoData } = require('./lembreteEntrevista');
+const L = require('./lembreteEntrevista');
+
+const { reunioesDaVaga, linhaDoTempo, reuniaoAnunciada, comoData } = L;
 const { paraTextoSqlUtc } = require('./fusoBrasilia');
 const optout = require('./optoutWhatsapp');
 
@@ -161,8 +163,95 @@ function suprimidoPorOptout(dest, tipo, { mapa, antigo } = {}) {
   return antigo.has(dest.telefone) || antigo.has(dest.telefoneCanonico);
 }
 
+// ══════════════════════════════════════════════════════════════
+// PREVIA PARA A TELA DA VAGA (somente leitura)
+// ══════════════════════════════════════════════════════════════
+//
+// Para cada reuniao futura e cada tipo de lembrete: quantas pessoas, e em que situacao cada uma
+// esta AGORA. Le o que ja esta gravado (lembretes_entrevista_enviados, no modo atual — mock ou
+// real) e, para quem ainda nao tem linha, aplica as MESMAS regras do worker (opt-out e
+// cronograma). Nao grava nada: nem reserva, nem reuniao vista.
+//
+// Linha em 'enviando' ha mais de MINUTOS_INDETERMINADO vira "indeterminado": o processo caiu
+// entre o envio e a marcacao, e nao ha como saber se a mensagem saiu (ela NAO sera reenviada).
+const MINUTOS_INDETERMINADO = 10;
+
+function estadoDaLinha(linha, agora) {
+  if (linha.status !== 'enviando') return linha.status;
+  const criado = comoData(linha.criado_em);
+  if (criado && agora.getTime() - criado.getTime() > MINUTOS_INDETERMINADO * 60 * 1000) return 'indeterminado';
+  return 'enviando';
+}
+
+function contadorVazio() {
+  return {
+    total: 0, enviado: 0, enviando: 0, indeterminado: 0, pulado: 0, opt_out: 0, falha: 0, sem_whatsapp: 0,
+    aEnviar: 0, aSuprimir: 0, aPular: 0, motivosPulo: {},
+  };
+}
+
+// Devolve { mock, reunioes: [{ inicio, inicioUtc, indice, pessoas, emCarencia, tipos: { wa3a: {...prazo, ...contador}, ... } }] }.
+function previaLembretes(job, { agora = new Date(), mock = true } = {}, deps = {}) {
+  const db = deps.db || dbPadrao;
+  const ref = comoData(agora) || new Date();
+  const { reunioes } = carregarPublicoLembrete(job, { agora: ref }, { db });
+  const opt = carregarOptout({ db });
+  const gravadas = db.listarLembretesEntrevistaDaVaga(job.id, { limite: 100000 }).filter((l) => Boolean(l.mock) === Boolean(mock));
+  const vistas = new Map(db.listarReunioesVistasLembrete(job.id).map((v) => [v.inicio, v]));
+
+  return {
+    mock: Boolean(mock),
+    reunioes: reunioes.map((r) => {
+      const vista = vistas.get(r.inicioUtc);
+      const tipos = {};
+      for (const tipo of L.TIPOS) {
+        const prazo = L.prazoDoLembrete(tipo, r.inicio);
+        const c = { ...contadorVazio(), devido: prazo.devido, limite: prazo.limite };
+        const porPessoa = new Map(
+          gravadas.filter((l) => l.inicio_reuniao_utc === r.inicioUtc && l.tipo === tipo).map((l) => [l.telefone_canonico, l]),
+        );
+        for (const dest of r.destinatarios) {
+          c.total += 1;
+          const linha = porPessoa.get(dest.telefoneCanonico);
+          if (linha) {
+            const estado = estadoDaLinha(linha, ref);
+            c[estado] = (c[estado] || 0) + 1;
+            if (estado === 'pulado') c.motivosPulo[linha.motivo || '?'] = (c.motivosPulo[linha.motivo || '?'] || 0) + 1;
+            continue;
+          }
+          if (suprimidoPorOptout(dest, tipo, opt)) {
+            c.aSuprimir += 1;
+            continue;
+          }
+          const sit = L.situacaoLembrete({ tipo, inicio: r.inicio, conviteEm: dest.conviteEm, agora: ref });
+          if (sit.acao === L.ACAO_PULAR) {
+            c.aPular += 1;
+            c.motivosPulo[sit.motivo] = (c.motivosPulo[sit.motivo] || 0) + 1;
+          } else {
+            c.aEnviar += 1;
+          }
+        }
+        tipos[tipo] = c;
+      }
+      return {
+        inicio: r.inicio,
+        inicioUtc: r.inicioUtc,
+        indice: r.indice,
+        pessoas: r.destinatarios.length,
+        // Sem registro ainda (worker desligado ou reuniao recem-cadastrada) tambem e carencia:
+        // a contagem dos 10 min comeca no primeiro tick que a enxergar.
+        emCarencia: !L.carenciaCumprida(vista && vista.primeira_vez_vista, ref),
+        tipos,
+      };
+    }),
+  };
+}
+
 module.exports = {
   STATUS_QUE_RECEBEM,
+  MINUTOS_INDETERMINADO,
+  estadoDaLinha,
+  previaLembretes,
   carregarOptout,
   suprimidoPorOptout,
   montarPublicoLembrete,

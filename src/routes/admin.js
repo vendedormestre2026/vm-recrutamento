@@ -35,7 +35,15 @@ const {
   PROBLEMA_LINK_SEM_REUNIAO,
   PROBLEMA_SEM_REUNIAO_FUTURA,
   PROBLEMA_LINK_SEM_ESQUEMA,
+  diagnosticarLembretesEntrevista,
+  LEMBRETE_SEM_SALA,
+  LEMBRETE_SALA_SEM_ESQUEMA,
+  LEMBRETE_REUNIAO_DESATUALIZADA,
 } = require('../lib/entrevistaGrupo');
+// WA3 — previa e historico dos lembretes na tela da vaga (somente leitura).
+const { previaLembretes, estadoDaLinha } = require('../lib/publicoLembreteEntrevista');
+const { formatarDataBrasilia, formatarHoraBrasilia } = require('../lib/fusoBrasilia');
+const { comoData: comoDataUtc } = require('../lib/lembreteEntrevista');
 const followup = require('../lib/followupEntrevista');
 const emailRecusa = require('../lib/emailRecusa');
 const decisaoRecrutador = require('../lib/decisaoRecrutador');
@@ -3712,6 +3720,124 @@ function blocoAvisosEntrevistaGrupo(vaga) {
   return `${ok}${avisos}`;
 }
 
+// ── WA3: lembretes da entrevista em grupo (tela da vaga) ──
+//
+// Tres partes, todas SOMENTE LEITURA: os alertas (diagnosticarLembretesEntrevista), a previa de
+// quantas pessoas cada lembrete alcanca e em que situacao (previaLembretes, mesmas regras do
+// worker) e o historico do que foi enviado ou pulado. Telefone SEMPRE mascarado no HTML.
+const ROTULO_TIPO_WA3 = { wa3a: 'Véspera (18h)', wa3b: '2h antes', wa3c: '15 min antes' };
+const ROTULO_MOTIVO_WA3 = {
+  atrasado: 'horário já passou',
+  convite_depois: 'convite chegou depois do horário',
+  fora_janela: 'fora da janela 07h–21h',
+};
+const ROTULO_ESTADO_WA3 = {
+  enviado: 'enviado',
+  enviando: 'enviando',
+  indeterminado: 'indeterminado (caiu no meio do envio; não será reenviado)',
+  pulado: 'pulado',
+  opt_out: 'opt-out',
+  falha: 'falha',
+  sem_whatsapp: 'sem WhatsApp',
+};
+
+function dataHoraBrasilia(instante) {
+  const d = comoDataUtc(instante);
+  return d ? `${formatarDataBrasilia(d)} ${formatarHoraBrasilia(d)}` : '—';
+}
+
+function blocoLembretesWa3(vaga, agora = new Date()) {
+  const { problemas } = diagnosticarLembretesEntrevista(vaga, agora);
+  const FRASES = {
+    [LEMBRETE_SEM_SALA]:
+      'Há entrevista em grupo futura, mas <b>falta o link da sala (Google Meet)</b>. Nenhum lembrete de ' +
+      'WhatsApp será enviado até ele ser preenchido.',
+    [LEMBRETE_SALA_SEM_ESQUEMA]:
+      'O link da sala do Meet não começa com <b>https://</b>. Ele não seria clicável no WhatsApp, e os ' +
+      'lembretes <b>não são enviados</b> enquanto isso não for corrigido.',
+    [LEMBRETE_REUNIAO_DESATUALIZADA]:
+      '<b>Reunião desatualizada:</b> há link da sala, mas nenhuma entrevista em grupo futura cadastrada. ' +
+      'Nenhum lembrete é enviado — cadastre a próxima data.',
+  };
+  const alertas = problemas.map((c) => `<p class="aviso-alerta">${FRASES[c]}</p>`).join('');
+
+  const mock = lembreteEntrevistaWa.modoMock();
+  const ligado = lembreteEntrevistaWa.ativo({ db });
+  let previa = '';
+  try {
+    const p = previaLembretes(vaga, { agora, mock });
+    const linhasPrevia = p.reunioes.map((r) => {
+      const tiposHtml = Object.entries(r.tipos).map(([tipo, c]) => {
+        const partes = [];
+        if (c.enviado) partes.push(`${c.enviado} enviado(s)`);
+        if (c.enviando) partes.push(`${c.enviando} enviando`);
+        if (c.indeterminado) partes.push(`<b>${c.indeterminado} indeterminado(s)</b>`);
+        if (c.aEnviar) partes.push(`${c.aEnviar} a enviar`);
+        if (c.aSuprimir + c.opt_out) partes.push(`${c.aSuprimir + c.opt_out} opt-out`);
+        if (c.aPular + c.pulado) {
+          const motivos = Object.entries(c.motivosPulo)
+            .map(([m, n]) => `${n} ${escapeHtml(ROTULO_MOTIVO_WA3[m] || m)}`).join(', ');
+          partes.push(`${c.aPular + c.pulado} pulado(s) (${motivos})`);
+        }
+        if (c.falha + c.sem_whatsapp) partes.push(`${c.falha + c.sem_whatsapp} falha(s)`);
+        return `<tr><td>${escapeHtml(ROTULO_TIPO_WA3[tipo])}</td>
+          <td>${escapeHtml(dataHoraBrasilia(c.devido))}</td>
+          <td class="col-num">${c.total}</td>
+          <td>${partes.join(' · ') || '—'}</td></tr>`;
+      }).join('');
+      const carencia = r.emCarencia
+        ? '<p style="color:var(--cinza);font-size:.8rem;margin:.2rem 0;">Carência: nada sai nos primeiros 10 min depois que o sistema vê esta data.</p>'
+        : '';
+      return `
+        <h3 style="margin:1rem 0 .3rem;">Reunião ${r.indice} — ${escapeHtml(dataHoraBrasilia(r.inicio))} · ${r.pessoas} pessoa(s) convidada(s)</h3>
+        ${carencia}
+        <div class="admin-tab-scroll"><table class="admin-tab">
+          <thead><tr><th>Lembrete</th><th>Horário</th><th class="col-num">Pessoas</th><th>Situação</th></tr></thead>
+          <tbody>${tiposHtml}</tbody>
+        </table></div>`;
+    }).join('');
+    previa = linhasPrevia || '<p style="color:var(--cinza);">Nenhuma reunião futura com convidados.</p>';
+  } catch (err) {
+    previa = `<p class="aviso-alerta">Não foi possível calcular a prévia: ${escapeHtml(err.message)}</p>`;
+  }
+
+  const historico = db.listarLembretesEntrevistaDaVaga(vaga.id, { limite: 200 });
+  const linhasHist = historico.map((l) => {
+    const estado = estadoDaLinha(l, agora);
+    const motivo = l.motivo ? ROTULO_MOTIVO_WA3[l.motivo] || l.motivo : '';
+    return `<tr>
+      <td>${escapeHtml(dataHoraBrasilia(l.enviado_em || l.criado_em))}</td>
+      <td>${escapeHtml(dataHoraBrasilia(l.inicio_reuniao_utc))}</td>
+      <td>${escapeHtml(ROTULO_TIPO_WA3[l.tipo] || l.tipo)}</td>
+      <td>${escapeHtml(String(l.app_nome || '').trim().split(/\s+/)[0] || '—')}</td>
+      <td>${escapeHtml(sequenciaWhatsapp.mascarar(l.telefone || ''))}</td>
+      <td>${escapeHtml(ROTULO_ESTADO_WA3[estado] || estado)}${l.mock ? ' <small>(simulação)</small>' : ''}</td>
+      <td>${escapeHtml(motivo)}</td>
+    </tr>`;
+  }).join('');
+  const tabelaHist = linhasHist
+    ? `<div class="admin-tab-scroll"><table class="admin-tab">
+        <thead><tr><th>Quando</th><th>Reunião</th><th>Lembrete</th><th>Nome</th><th>Telefone</th><th>Situação</th><th>Motivo</th></tr></thead>
+        <tbody>${linhasHist}</tbody></table></div>`
+    : '<p style="color:var(--cinza);">Nenhum lembrete enviado ou pulado ainda.</p>';
+
+  const estadoGeral = !ligado
+    ? 'Lembretes <b>desligados</b> em Configurações (a prévia mostra o que sairia).'
+    : mock
+      ? 'Lembretes ligados em <b>modo simulação</b>: nada chega aos candidatos.'
+      : 'Lembretes ligados com <b>envio real</b>.';
+
+  return `
+    ${alertas}
+    <section class="rel-sec" id="lembretes-wa3">
+      <h2>Lembretes de WhatsApp da entrevista (WA3)</h2>
+      <p style="font-size:.85rem;">${estadoGeral} Horários de Brasília.</p>
+      ${previa}
+      <h3 style="margin:1.2rem 0 .3rem;">Enviados e pulados</h3>
+      ${tabelaHist}
+    </section>`;
+}
+
 // Mini-form "Cadastrar cidade nova": precisa ser um <form> de verdade (POST tradicional,
 // recarrega a pagina inteira), mas NAO pode ficar aninhado dentro do form principal da
 // vaga (camposVagaHtml ficava dentro do <form> de "Criar vaga"/"Salvar alteracoes"). HTML
@@ -4365,6 +4491,7 @@ router.get('/vagas/:id', (req, res) => {
     ${avisoVideo}
     ${avisoRoteiroFaltando(vaga)}
     ${blocoAvisosEntrevistaGrupo(vaga)}
+    ${blocoLembretesWa3(vaga)}
     ${blocoLinksEtapa(vaga)}
     ${salvoSlug}
     ${blocoEditarSlug(vaga, { erroSlug: req.query.erroSlug })}

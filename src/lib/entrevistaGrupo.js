@@ -189,7 +189,42 @@ function diagnosticarEntrevistaGrupo(vaga, agora = new Date()) {
   return { link, slots, proxima, problemas, usaFallback: proxima === null };
 }
 
+// ══════════════════════════════════════════════════════════════
+// DIAGNOSTICO DOS LEMBRETES (WA3)
+// ══════════════════════════════════════════════════════════════
+//
+// Separado de diagnosticarEntrevistaGrupo porque olha OUTRO link: o lembrete depende da sala do
+// Meet (link_meet_reuniao), nao do Calendly (link_meet). Mesmo contrato: codigos aqui, frases em
+// routes/admin.js, calculado no GET a partir do que esta gravado.
+//
+//   sem_sala               ha reuniao futura, mas falta a sala: nenhum lembrete sai
+//   sala_sem_esquema       a sala nao comeca com http(s)://: nao e clicavel, e o worker a ignora
+//   reuniao_desatualizada  ha sala, mas nenhuma reuniao futura valida (todas passaram, ou nenhuma)
+const LEMBRETE_SEM_SALA = 'sem_sala';
+const LEMBRETE_SALA_SEM_ESQUEMA = 'sala_sem_esquema';
+const LEMBRETE_REUNIAO_DESATUALIZADA = 'reuniao_desatualizada';
+
+function diagnosticarLembretesEntrevista(vaga, agora = new Date()) {
+  const sala = texto(vaga && vaga.link_meet_reuniao);
+  const referencia = agora instanceof Date ? agora : new Date(agora);
+  const futuras = lerEntrevistasGrupo(vaga).filter(
+    (e) => e.estado === OK && e.instante.getTime() > referencia.getTime(),
+  );
+  const problemas = [];
+  if (!sala) {
+    if (futuras.length) problemas.push(LEMBRETE_SEM_SALA);
+  } else {
+    if (!linkPareceUrl(sala)) problemas.push(LEMBRETE_SALA_SEM_ESQUEMA);
+    if (!futuras.length) problemas.push(LEMBRETE_REUNIAO_DESATUALIZADA);
+  }
+  return { sala, problemas, podeEnviar: Boolean(sala) && linkPareceUrl(sala) && futuras.length > 0 };
+}
+
 module.exports = {
+  diagnosticarLembretesEntrevista,
+  LEMBRETE_SEM_SALA,
+  LEMBRETE_SALA_SEM_ESQUEMA,
+  LEMBRETE_REUNIAO_DESATUALIZADA,
   proximaEntrevistaGrupo,
   temEntrevistaGrupoFutura,
   lerEntrevistasGrupo,
