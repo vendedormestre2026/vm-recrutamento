@@ -23,8 +23,14 @@
 //      >= enviado_em, teto de 10 dias, historico de slots — ver lib/lembreteEntrevista). A pessoa
 //      entra na lista de uma reuniao futura se algum convite dela anunciou aquela reuniao.
 //
-// O opt-out NAO e decidido aqui por enquanto; `houveWa2` sai junto para quem decidir o escopo
-// (D3: transacional quando houve WA2, campanha quando o unico convite veio da massa).
+// ── OPT-OUT (D3) FICA FORA DE montarPublicoLembrete, DE PROPOSITO ──
+// O publico e montado a cada tick e tambem pela previa da tela; o opt-out tem que ser consultado
+// NO ENVIO (alguem pode pedir para sair entre um tick e outro). Por isso ele e uma funcao a parte,
+// suprimidoPorOptout, que o worker chama por destinatario e a previa chama para contar.
+//   houve WA2  -> escopo transacional: so `total` suprime; tabela antiga NAO e lida (a mesma
+//                 decisao do transacional WA1/WA2, ver sequenciaOutbox.js:346-354)
+//   so massa   -> escopo campanha: qualquer opt-out da tabela nova, e tambem a tabela antiga
+//                 sem escopo — exatamente o que a massa respeitou ao mandar o convite.
 
 const dbPadrao = require('../db');
 const { normalizarTelefoneWhatsapp, normalizarTelefoneRecebido } = require('./whatsapp');
@@ -33,6 +39,7 @@ const { normalizarStatusRecrutador } = require('./elegibilidadeStatusPromocao');
 const { fonteDaCampanhaMassaWa, FONTE_VAGAS_ABERTAS } = require('./publicoMassaWhatsapp');
 const { reunioesDaVaga, linhaDoTempo, reuniaoAnunciada, comoData } = require('./lembreteEntrevista');
 const { paraTextoSqlUtc } = require('./fusoBrasilia');
+const optout = require('./optoutWhatsapp');
 
 const STATUS_QUE_RECEBEM = Object.freeze(['sem_decisao', 'em_analise']);
 
@@ -139,8 +146,25 @@ function carregarPublicoLembrete(job, { agora = new Date() } = {}, deps = {}) {
   });
 }
 
+// Carrega o estado de opt-out UMA vez por ciclo: { mapa (tabela nova, ja respeitando o
+// kill-switch), antigo (Set da tabela sem escopo) }.
+function carregarOptout(deps = {}) {
+  const db = deps.db || dbPadrao;
+  return { mapa: optout.mapaOptoutAtivo({ db }), antigo: db.listarTelefonesOptOutWhatsapp() };
+}
+
+// O destinatario esta suprimido para ESTE lembrete?
+function suprimidoPorOptout(dest, tipo, { mapa, antigo } = {}) {
+  const escopo = optout.escopoDoLembreteEntrevista(tipo, { houveWa2: dest.houveWa2 });
+  if (optout.optoutAtivoNoMapa(mapa, dest.telefone, escopo)) return true;
+  if (escopo !== optout.CONSULTA_CAMPANHA || !antigo || !antigo.size) return false;
+  return antigo.has(dest.telefone) || antigo.has(dest.telefoneCanonico);
+}
+
 module.exports = {
   STATUS_QUE_RECEBEM,
+  carregarOptout,
+  suprimidoPorOptout,
   montarPublicoLembrete,
   carregarPublicoLembrete,
   telefoneDe,

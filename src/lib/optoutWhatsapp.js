@@ -107,6 +107,13 @@ const ESCOPO_POR_TIPO_MENSAGEM = {
   wa1: CONSULTA_TRANSACIONAL,
   wa2: CONSULTA_TRANSACIONAL,
   reprovacao: CONSULTA_TRANSACIONAL,
+  // WA3 — lembretes da entrevista em grupo. Transacionais NA TABELA, porque lembram um
+  // compromisso que a pessoa recebeu para o processo dela. Mas o escopo efetivo depende de COMO
+  // o convite chegou (D3) — ver escopoDoLembreteEntrevista, logo abaixo. Quem consulta lembrete
+  // deve passar por la, e nao direto por aqui.
+  wa3a: CONSULTA_TRANSACIONAL,
+  wa3b: CONSULTA_TRANSACIONAL,
+  wa3c: CONSULTA_TRANSACIONAL,
 };
 
 // Escopo de consulta de um tipo de mensagem.
@@ -117,6 +124,17 @@ const ESCOPO_POR_TIPO_MENSAGEM = {
 // seguro do erro: no maximo alguem deixa de receber algo, nunca o contrario.
 function escopoDoTipoMensagem(tipo) {
   return ESCOPO_POR_TIPO_MENSAGEM[String(tipo || '').trim()] || CONSULTA_CAMPANHA;
+}
+
+// Escopo de consulta de UM lembrete da entrevista em grupo (D3).
+//
+//   houve WA2       a pessoa se candidatou e recebeu o convite como consequencia disso: o
+//                   lembrete e transacional, e so opt-out `total` suprime — igual ao WA2.
+//   so massa        o unico convite foi uma mensagem que NOS iniciamos, e ela trazia o link de
+//                   descadastro. Quem clicou nele pediu para parar justamente esse tipo de
+//                   contato: escopo `campanha` (qualquer opt-out suprime).
+function escopoDoLembreteEntrevista(tipo, { houveWa2 = false } = {}) {
+  return houveWa2 ? escopoDoTipoMensagem(tipo) : CONSULTA_CAMPANHA;
 }
 
 // ── ESCOPO A PARTIR DA CATEGORIA DO TEMPLATE ──
@@ -277,6 +295,7 @@ module.exports = {
   ORIGEM_IMPORTACAO,
   ESCOPO_POR_TIPO_MENSAGEM,
   escopoDoTipoMensagem,
+  escopoDoLembreteEntrevista,
   escopoDaCategoriaTemplate,
   CHAVE_ATIVO,
   ativo,
