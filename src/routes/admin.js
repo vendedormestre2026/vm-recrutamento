@@ -74,6 +74,7 @@ const { criarRouterOptout, seloOptout, botaoMarcarOptout } = require('./admin_op
 const { criarRouterCampanhaWhatsapp } = require('./admin_campanha_whatsapp');
 const { criarRouterMassaWa } = require('./admin_massa_wa');
 const massaWhatsapp = require('../whatsapp/massaOutbox');
+const lembreteEntrevistaWa = require('../whatsapp/lembreteEntrevistaOutbox');
 const fichaWa = require('../lib/whatsappFicha');
 const { escapeHtml } = require('../views');
 
@@ -5559,6 +5560,9 @@ router.get('/config', (req, res) => {
   const massaWaAtiva = massaWhatsapp.ativo({ db });
   const massaWaSegmentoAtivo = massaWhatsapp.segmentoAtivo({ db });
   const massaWaMock = massaWhatsapp.modoMock();
+  // WA3 — lembretes da entrevista em grupo (default desligado; mock por WA3_MOCK, default true).
+  const wa3Ativo = lembreteEntrevistaWa.ativo({ db });
+  const wa3Mock = lembreteEntrevistaWa.modoMock();
   // Default TRUE, ao contrario de todos os outros desta tela.
   const optoutWaAtivo = optoutWhatsapp.ativo();
   const optoutLinkAtivo = optoutWhatsapp.linkAtivo();
@@ -5698,6 +5702,16 @@ router.get('/config', (req, res) => {
             <span style="color:var(--preto);text-transform:none;">
               <b style="text-transform:uppercase;letter-spacing:.03em;">Transacional</b> —
               enviar a <b>sequência de WhatsApp</b> (WA1 e WA2) a cada nova candidatura
+            </span>
+          </label>
+          <label class="campo-check">
+            <input type="checkbox" form="form-notificacoes" name="wa3_ativo" value="1"${wa3Ativo ? ' checked' : ''}>
+            <span style="color:var(--preto);text-transform:none;">
+              <b style="text-transform:uppercase;letter-spacing:.03em;">Lembretes da entrevista em grupo (WA3)</b> —
+              véspera às 18h, 2h e 15 min antes, com o link da sala do Meet, para quem recebeu o convite.
+              ${wa3Mock
+                ? '⚠️ <b>Modo simulação:</b> nenhuma mensagem chega aos candidatos, mesmo com esta caixa marcada.'
+                : '🔴 <b>Envio real:</b> marcado, os lembretes saem de verdade.'}
             </span>
           </label>
 
@@ -5943,6 +5957,7 @@ router.post('/config/notificacoes', (req, res) => {
   db.definirConfigBool(CHAVE_LIMPEZA_AUDIO_ATIVO, marcado('limpeza_audio_ativo'));
   db.definirConfigBool(CHAVE_PROMOCAO_ATIVA, marcado('promocao_ativa'));
   db.definirConfigBool(CHAVE_WHATSAPP_SEQ, marcado('whatsapp_sequencia_ativa'));
+  db.definirConfigBool(lembreteEntrevistaWa.CHAVE_ATIVO, marcado('wa3_ativo'));
   db.definirConfigBool(CHAVE_CAMPANHA_WA, marcado('campanha_whatsapp_ativa'));
   db.definirConfigBool(massaWhatsapp.CHAVE_ATIVO, marcado('massa_wa_ativa'));
   db.definirConfigBool(massaWhatsapp.CHAVE_SEGMENTO_ATIVO, marcado('massa_wa_segmento_ativo'));

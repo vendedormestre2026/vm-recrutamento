@@ -26,6 +26,7 @@ const limpezaAudio = require('./lib/limpezaAudio');
 const dispararPromocao = require('./lib/dispararPromocao');
 const sequenciaWhatsapp = require('./whatsapp/sequenciaOutbox');
 const massaWhatsapp = require('./whatsapp/massaOutbox');
+const lembreteEntrevistaWhatsapp = require('./whatsapp/lembreteEntrevistaOutbox');
 const conexaoWhatsapp = require('./whatsapp/connection');
 const campanhaWhatsapp = require('./lib/campanhaWhatsapp');
 const { router: webhookMeta } = require('./routes/webhook_meta');
@@ -74,6 +75,10 @@ const INTERVALO_CAMPANHA_WA_MS = 10 * 60 * 1000;
 // cadencia gravada no banco (proximo_envio_em). Um tick longo faria a campanha perder janelas de
 // envio por arredondamento, sem deixar o envio mais lento de proposito.
 const INTERVALO_MASSA_WA_MS = 60 * 1000;
+
+// WA3 — lembretes da entrevista em grupo: 1 min. O lembrete de 15 min tem tolerancia de 10, e um
+// tick mais longo comeria boa parte dela. Como na massa, o tick so CONFERE o que venceu.
+const INTERVALO_WA3_MS = 60 * 1000;
 
 function criarApp() {
   const app = express();
@@ -170,6 +175,7 @@ function iniciar() {
   agendarSequenciaWhatsapp();
   agendarCampanhaWhatsapp();
   agendarMassaWhatsapp();
+  agendarLembreteEntrevistaWhatsapp();
   conectarWhatsappNoBoot();
 }
 
@@ -398,6 +404,24 @@ function agendarMassaWhatsapp() {
 
   console.log(
     `[massa-wa] varredura agendada a cada ${INTERVALO_MASSA_WA_MS / 60000} min ` +
+      '(1a passada no boot; interruptor de banco desligado por padrao).',
+  );
+}
+
+// ── WA3: lembretes da entrevista em grupo (Baileys) ──
+//
+// Agendada como as outras. wa3_ativo nasce DESLIGADO e WA3_MOCK nasce LIGADO: registrar o
+// intervalo aqui nao envia nada. Desligado, o ciclo sai no primeiro if sem tocar o banco de
+// candidatos, e loga uma linha so por mudanca de estado (nao uma por minuto).
+function agendarLembreteEntrevistaWhatsapp() {
+  void lembreteEntrevistaWhatsapp.varrerSeOcioso();
+
+  setInterval(() => {
+    void lembreteEntrevistaWhatsapp.varrerSeOcioso();
+  }, INTERVALO_WA3_MS);
+
+  console.log(
+    `[wa3] varredura agendada a cada ${INTERVALO_WA3_MS / 60000} min ` +
       '(1a passada no boot; interruptor de banco desligado por padrao).',
   );
 }
