@@ -142,7 +142,7 @@ function criarVaga(vaga) {
        beneficios, atividades, requisitos, requisitos_obrigatorios, secoes_extras,
        endereco, cidade, modalidade, regime, horario,
        descricao, sobre_empresa, cultura_empresa, empresa, video_intro_tipo, video_intro_ref,
-       link_meet,
+       link_meet, link_meet_reuniao,
        entrevista_grupo_1_data, entrevista_grupo_1_hora,
        entrevista_grupo_2_data, entrevista_grupo_2_hora,
        entrevista_grupo_3_data, entrevista_grupo_3_hora,
@@ -152,7 +152,7 @@ function criarVaga(vaga) {
        @beneficios, @atividades, @requisitos, @requisitos_obrigatorios, @secoes_extras,
        @endereco, @cidade, @modalidade, @regime, @horario,
        @descricao, @sobre_empresa, @cultura_empresa, @empresa, @video_intro_tipo, @video_intro_ref,
-       @link_meet,
+       @link_meet, @link_meet_reuniao,
        @entrevista_grupo_1_data, @entrevista_grupo_1_hora,
        @entrevista_grupo_2_data, @entrevista_grupo_2_hora,
        @entrevista_grupo_3_data, @entrevista_grupo_3_hora,
@@ -189,6 +189,8 @@ function criarVaga(vaga) {
     // ver o bloco em db/migrate.js). `|| null` uniforme com os vizinhos: '' e ausencia aqui,
     // e NULL e o que proximaEntrevistaGrupo le como "nao cadastrado".
     link_meet: vaga.link_meet || null,
+    // WA3 — sala do Google Meet (link_meet e o Calendly; ver db/migrate.js).
+    link_meet_reuniao: vaga.link_meet_reuniao || null,
     entrevista_grupo_1_data: vaga.entrevista_grupo_1_data || null,
     entrevista_grupo_1_hora: vaga.entrevista_grupo_1_hora || null,
     entrevista_grupo_2_data: vaga.entrevista_grupo_2_data || null,
@@ -231,6 +233,7 @@ function atualizarVaga(id, campos) {
          video_intro_tipo = @video_intro_tipo,
          video_intro_ref  = @video_intro_ref,
          link_meet        = @link_meet,
+         link_meet_reuniao = @link_meet_reuniao,
          entrevista_grupo_1_data = @entrevista_grupo_1_data,
          entrevista_grupo_1_hora = @entrevista_grupo_1_hora,
          entrevista_grupo_2_data = @entrevista_grupo_2_data,
@@ -266,6 +269,7 @@ function atualizarVaga(id, campos) {
       video_intro_ref: campos.video_intro_ref || null,
       // Entrevista em grupo — mesma leitura de criarVaga acima.
       link_meet: campos.link_meet || null,
+      link_meet_reuniao: campos.link_meet_reuniao || null,
       entrevista_grupo_1_data: campos.entrevista_grupo_1_data || null,
       entrevista_grupo_1_hora: campos.entrevista_grupo_1_hora || null,
       entrevista_grupo_2_data: campos.entrevista_grupo_2_data || null,

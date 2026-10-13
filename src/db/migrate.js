@@ -200,6 +200,13 @@ function migrar() {
   adicionarColunaSeFaltar('jobs', 'entrevista_grupo_3_data', 'TEXT');
   adicionarColunaSeFaltar('jobs', 'entrevista_grupo_3_hora', 'TEXT');
 
+  // WA3 — link da SALA da entrevista em grupo (Google Meet), separado de link_meet. O nome
+  // link_meet ficou como legado: desde o deploy do Calendly (docs/deploy-calendly-wa2.md) ela
+  // guarda o link de CONFIRMAR PRESENCA, e o lembrete precisa dos dois — "ja se inscreveu? entre
+  // pela sala / ainda nao? inscreva-se". Nullable: vaga sem sala nao recebe lembrete (e o admin
+  // avisa), nunca um lembrete sem link.
+  adicionarColunaSeFaltar('jobs', 'link_meet_reuniao', 'TEXT');
+
   // Func. 2 - toggle por-vaga do modo do funil: 1 = Completo (entrevista automatica,
   // comportamento atual), 0 = Simples (so confirmacao + WhatsApp). Default 1 preserva
   // o comportamento de todas as vagas existentes. So vale quando o toggle GERAL esta ON.

@@ -3353,7 +3353,11 @@ function lerVideoIntro(b, vagaAnterior) {
 // vazio trava), e travar o save inteiro por causa de um horario faria perder as outras 20
 // alteracoes da mesma submissao.
 function lerEntrevistaGrupo(b) {
-  const campos = { link_meet: String((b && b.link_meet) || '').trim() };
+  const campos = {
+    link_meet: String((b && b.link_meet) || '').trim(),
+    // WA3 — sala do Google Meet, lida pelo lembrete (o link_meet acima e o Calendly).
+    link_meet_reuniao: String((b && b.link_meet_reuniao) || '').trim(),
+  };
   for (const { indice, campoData, campoHora } of SLOTS_ENTREVISTA_GRUPO) {
     campos[campoData] = String((b && b[`entrevista_grupo_${indice}_data`]) || '').trim();
     campos[campoHora] = String((b && b[`entrevista_grupo_${indice}_hora`]) || '').trim();
@@ -3452,6 +3456,16 @@ function camposEntrevistaGrupoHtml(vaga) {
       ele confirmar presença e receber o convite por e-mail. Comece com
       <b>https://</b> — sem isso o WhatsApp não transforma em link clicável. Sem link, a
       mensagem não convida para reunião nenhuma (avisa que as datas estão sendo definidas).</p>
+
+    <label class="campo">
+      <span>Link da sala da entrevista (Google Meet)</span>
+      <input type="text" name="link_meet_reuniao" value="${escapeHtml(vaga.link_meet_reuniao || '')}"
+        placeholder="https://meet.google.com/abc-defg-hij">
+    </label>
+    <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
+      Sala onde a entrevista acontece. Vai nos <b>lembretes de WhatsApp</b> (véspera, 2h e 15 min
+      antes) para quem foi convidado. Comece com <b>https://</b>. Sem este link, nenhum lembrete
+      é enviado.</p>
 
     ${linhaReuniao(1, 'Reunião 1')}
     ${linhaReuniao(2, 'Reunião 2 (opcional)')}
