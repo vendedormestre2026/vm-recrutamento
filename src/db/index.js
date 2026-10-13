@@ -266,6 +266,17 @@ module.exports = {
   existePendenciaSequenciaWhatsapp: driver.existePendenciaSequenciaWhatsapp,
   ultimoEnvioSequenciaWhatsapp: driver.ultimoEnvioSequenciaWhatsapp,
 
+  // ── WA3 — lembretes da entrevista em grupo (ver a secao homonima em db/sqlite.js) ──
+  listarVagasParaLembreteEntrevista: driver.listarVagasParaLembreteEntrevista,
+  listarConvitesEntrevistaGrupo: driver.listarConvitesEntrevistaGrupo,
+  registrarReuniaoVistaLembrete: driver.registrarReuniaoVistaLembrete,
+  listarReunioesVistasLembrete: driver.listarReunioesVistasLembrete,
+  reservarLembreteEntrevista: driver.reservarLembreteEntrevista,
+  marcarLembreteEntrevistaEnviado: driver.marcarLembreteEntrevistaEnviado,
+  marcarLembreteEntrevistaTerminal: driver.marcarLembreteEntrevistaTerminal,
+  chavesLembreteEntrevista: driver.chavesLembreteEntrevista,
+  listarLembretesEntrevistaDaVaga: driver.listarLembretesEntrevistaDaVaga,
+
   registrarOptOutWhatsapp: driver.registrarOptOutWhatsapp,
   estaOptOutWhatsapp: driver.estaOptOutWhatsapp,
 

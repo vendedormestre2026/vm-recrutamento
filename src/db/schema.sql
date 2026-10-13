@@ -957,3 +957,60 @@ CREATE INDEX IF NOT EXISTS idx_massa_wa_envios_pendentes
 -- calculado no app). Igualdade em campanha_id + faixa em enviado_em.
 CREATE INDEX IF NOT EXISTS idx_massa_wa_envios_enviado
   ON campanhas_massa_wa_envios(campanha_id, enviado_em);
+
+-- ──────────────────────────────────────────────────────────────
+-- WA3 — LEMBRETES DA ENTREVISTA EM GRUPO (Baileys, transacional)
+-- ──────────────────────────────────────────────────────────────
+--
+-- Nao reaproveita whatsapp_sequencia_envios: o UNIQUE(application_id, etapa) de la impede um
+-- segundo lembrete quando a DATA da reuniao muda, e aqui a data faz parte da identidade.
+--
+-- Uma linha por (vaga, PESSOA, reuniao, tipo, modo). Ela e gravada ANTES do envio (status
+-- 'enviando'): e a RESERVA que garante que dois ciclos nunca mandam o mesmo lembrete. Se o
+-- processo cair entre o envio e a marcacao, a linha fica em 'enviando' para sempre e o lembrete
+-- NAO sai de novo — perder um lembrete e melhor que mandar dois. A tela mostra 'enviando' com
+-- mais de 10 min como "indeterminado".
+--
+-- ── A CHAVE ──
+--   telefone_canonico   a PESSOA (DDI + DDD + ultimos 8), nao a candidatura: duas candidaturas
+--                       ou duas grafias do mesmo celular (com e sem o 9) colapsam numa linha so.
+--                       Mesma identidade de campanhas_massa_wa_envios e do opt-out.
+--   inicio_reuniao_utc  'YYYY-MM-DD HH:MM:SS' UTC, derivado da hora de parede de Brasilia dos
+--                       slots da vaga. Mudou a data -> chave nova -> lembretes novos.
+--   mock                1 = simulacao. Na chave para um teste em mock nao bloquear o envio real.
+CREATE TABLE IF NOT EXISTS lembretes_entrevista_enviados (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id             INTEGER NOT NULL REFERENCES jobs(id),
+  application_id     INTEGER,
+  telefone           TEXT,            -- normalizado (so digitos, com DDI): o numero discado
+  telefone_canonico  TEXT NOT NULL,
+  tipo               TEXT NOT NULL,   -- 'wa3a' (vespera 18h) | 'wa3b' (2h antes) | 'wa3c' (15 min)
+  inicio_reuniao_utc TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'enviando',
+                     -- 'enviando' | 'enviado' | 'falha' | 'pulado' | 'sem_whatsapp' | 'opt_out'
+                     -- Todos menos 'enviando' sao TERMINAIS. 'pulado' leva o motivo
+                     -- (atrasado | convite_depois | fora_janela).
+  motivo             TEXT,
+  mock               INTEGER NOT NULL DEFAULT 0,
+  variacao_indice    INTEGER,
+  enviado_em         TEXT,
+  criado_em          TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (job_id, telefone_canonico, inicio_reuniao_utc, tipo, mock)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lembretes_entrevista_vaga
+  ON lembretes_entrevista_enviados(job_id, inicio_reuniao_utc);
+
+-- Reunioes que o worker do WA3 ja viu, por vaga. Serve a duas regras:
+--   primeira_vez_vista  CARENCIA: nada sai para uma reuniao antes de 10 min da primeira vez
+--                       que ela apareceu (protege contra data digitada errado).
+--   ultima_vez_vista    HISTORICO: uma reuniao que saiu da vaga (slot sobrescrito) mas ainda
+--                       estava cadastrada quando o horario dela chegou ACONTECEU, e continua
+--                       contando para decidir qual reuniao um convite antigo anunciou.
+CREATE TABLE IF NOT EXISTS lembretes_entrevista_reunioes (
+  job_id             INTEGER NOT NULL REFERENCES jobs(id),
+  inicio_reuniao_utc TEXT NOT NULL,
+  primeira_vez_vista TEXT NOT NULL,
+  ultima_vez_vista   TEXT NOT NULL,
+  PRIMARY KEY (job_id, inicio_reuniao_utc)
+);

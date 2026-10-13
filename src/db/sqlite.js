@@ -5274,6 +5274,171 @@ function existePendenciaSequenciaWhatsapp(agora = null) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════
+// WA3 — LEMBRETES DA ENTREVISTA EM GRUPO
+// ══════════════════════════════════════════════════════════════
+//
+// So leitura de FATO e escrita de estado. Quem decide (reuniao anunciada, status do recrutador,
+// opt-out, telefone, cronograma) e o JS: lib/publicoLembreteEntrevista e lib/lembreteEntrevista.
+
+// Vagas ATIVAS candidatas a lembrete: sala do Meet preenchida. As reunioes (slots) sao lidas e
+// validadas no JS — mesma razao de listarCandidaturasVagasAbertas: o que exige parsing nao vai
+// para o SQL.
+function listarVagasParaLembreteEntrevista() {
+  return getDb()
+    .prepare(
+      `SELECT * FROM jobs
+        WHERE ativo = 1
+          AND link_meet_reuniao IS NOT NULL AND TRIM(link_meet_reuniao) <> ''
+        ORDER BY id`,
+    )
+    .all()
+    .map(jobDeLinha);
+}
+
+// Todo CONVITE para a entrevista em grupo que saiu para candidaturas desta vaga, das duas fontes:
+//   wa2    whatsapp_sequencia_envios, etapa wa2, variante 'convite_grupo' (NULL = envio anterior a
+//          coluna, ambiguo, fica fora)
+//   massa  campanhas_massa_wa_envios enviados. Vem com criterios_json para o JS tirar a fonte
+//          'segmento' (que e convite para SE CANDIDATAR, nao para a entrevista).
+// Candidatura arquivada (deleted_at) fica fora. Uma linha por convite: a mesma pessoa pode
+// aparecer varias vezes, e quem colapsa por pessoa e o JS.
+function listarConvitesEntrevistaGrupo(jobId) {
+  return getDb()
+    .prepare(
+      `SELECT a.id AS application_id, a.nome, a.telefone, a.status_recrutador,
+              'wa2' AS origem, s.enviado_em AS convite_em, s.telefone_e164 AS telefone_fila,
+              NULL AS criterios_json
+         FROM whatsapp_sequencia_envios s
+         JOIN applications a ON a.id = s.application_id
+        WHERE a.job_id = @jobId
+          AND a.deleted_at IS NULL
+          AND s.etapa = 'wa2'
+          AND s.status = 'enviado'
+          AND s.variante = 'convite_grupo'
+          AND s.enviado_em IS NOT NULL
+       UNION ALL
+       SELECT a.id, a.nome, a.telefone, a.status_recrutador,
+              'massa', e.enviado_em, e.telefone, c.criterios_json
+         FROM campanhas_massa_wa_envios e
+         JOIN campanhas_massa_wa c ON c.id = e.campanha_id
+         JOIN applications a ON a.id = e.application_id
+        WHERE a.job_id = @jobId
+          AND (e.job_id IS NULL OR e.job_id = a.job_id)
+          AND a.deleted_at IS NULL
+          AND e.status = 'enviado'
+          AND e.enviado_em IS NOT NULL`,
+    )
+    .all({ jobId: Number(jobId) });
+}
+
+// Registra que o worker viu a reuniao agora. Primeira vez: grava as duas colunas. Depois: so
+// avanca ultima_vez_vista. Devolve a linha atual.
+function registrarReuniaoVistaLembrete(jobId, inicioUtc, agoraSql) {
+  const d = getDb();
+  d.prepare(
+    `INSERT INTO lembretes_entrevista_reunioes (job_id, inicio_reuniao_utc, primeira_vez_vista, ultima_vez_vista)
+     VALUES (@jobId, @inicio, @agora, @agora)
+     ON CONFLICT(job_id, inicio_reuniao_utc)
+     DO UPDATE SET ultima_vez_vista = MAX(ultima_vez_vista, excluded.ultima_vez_vista)`,
+  ).run({ jobId: Number(jobId), inicio: inicioUtc, agora: agoraSql });
+  return d
+    .prepare('SELECT * FROM lembretes_entrevista_reunioes WHERE job_id = ? AND inicio_reuniao_utc = ?')
+    .get(Number(jobId), inicioUtc);
+}
+
+function listarReunioesVistasLembrete(jobId) {
+  return getDb()
+    .prepare(
+      `SELECT job_id, inicio_reuniao_utc AS inicio, primeira_vez_vista, ultima_vez_vista
+         FROM lembretes_entrevista_reunioes WHERE job_id = ? ORDER BY inicio_reuniao_utc`,
+    )
+    .all(Number(jobId));
+}
+
+// Grava a linha do lembrete SE a chave ainda nao existe. Devolve o id gravado, ou null quando a
+// chave ja existia (outro ciclo ja reservou, enviou ou pulou) — e null e a resposta "NAO envie".
+//
+// Usado para os dois casos: reserva antes do envio (status 'enviando') e registro direto de
+// lembrete pulado ou suprimido (status terminal + motivo).
+function reservarLembreteEntrevista({
+  jobId, applicationId = null, telefone = null, telefoneCanonico, tipo, inicioUtc,
+  mock = false, status = 'enviando', motivo = null, quando = null,
+}) {
+  const info = getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO lembretes_entrevista_enviados
+         (job_id, application_id, telefone, telefone_canonico, tipo, inicio_reuniao_utc,
+          status, motivo, mock, criado_em)
+       VALUES (@jobId, @applicationId, @telefone, @telefoneCanonico, @tipo, @inicioUtc,
+               @status, @motivo, @mock, COALESCE(@quando, datetime('now')))`,
+    )
+    .run({
+      jobId: Number(jobId),
+      applicationId: applicationId == null ? null : Number(applicationId),
+      telefone,
+      telefoneCanonico,
+      tipo,
+      inicioUtc,
+      status,
+      motivo: motivo == null ? null : String(motivo).slice(0, 300),
+      mock: mock ? 1 : 0,
+      quando,
+    });
+  return info.changes === 1 ? Number(info.lastInsertRowid) : null;
+}
+
+// Fecha uma reserva. Condicional a 'enviando': uma linha terminal nunca muda de estado.
+function marcarLembreteEntrevistaEnviado(id, { variacaoIndice = null, quando = null, telefone = null } = {}) {
+  return getDb()
+    .prepare(
+      `UPDATE lembretes_entrevista_enviados
+          SET status = 'enviado', enviado_em = COALESCE(@quando, datetime('now')),
+              variacao_indice = @variacaoIndice, telefone = COALESCE(@telefone, telefone)
+        WHERE id = @id AND status = 'enviando'`,
+    )
+    .run({ id, variacaoIndice, quando, telefone }).changes;
+}
+
+function marcarLembreteEntrevistaTerminal(id, status, motivo = null) {
+  return getDb()
+    .prepare(
+      `UPDATE lembretes_entrevista_enviados SET status = @status, motivo = @motivo
+        WHERE id = @id AND status = 'enviando'`,
+    )
+    .run({ id, status, motivo: motivo == null ? null : String(motivo).slice(0, 300) }).changes;
+}
+
+// Chaves ja gravadas para uma reuniao, no formato `${telefone_canonico}|${tipo}`. O worker
+// consulta isto UMA vez por reuniao e pula sem tentar o INSERT — a garantia continua sendo o
+// UNIQUE, isto so evita trabalho.
+function chavesLembreteEntrevista(jobId, inicioUtc, mock) {
+  return new Set(
+    getDb()
+      .prepare(
+        `SELECT telefone_canonico || '|' || tipo AS k FROM lembretes_entrevista_enviados
+          WHERE job_id = ? AND inicio_reuniao_utc = ? AND mock = ?`,
+      )
+      .all(Number(jobId), inicioUtc, mock ? 1 : 0)
+      .map((r) => r.k),
+  );
+}
+
+// Lembretes de uma vaga para a tela (mais recentes primeiro). Telefone NAO sai daqui completo
+// para o HTML — quem renderiza mascara.
+function listarLembretesEntrevistaDaVaga(jobId, { limite = 200 } = {}) {
+  const teto = Number.isInteger(limite) && limite > 0 ? limite : 200;
+  return getDb()
+    .prepare(
+      `SELECT l.*, a.nome AS app_nome FROM lembretes_entrevista_enviados l
+         LEFT JOIN applications a ON a.id = l.application_id
+        WHERE l.job_id = ?
+        ORDER BY l.criado_em DESC, l.id DESC
+        LIMIT ?`,
+    )
+    .all(Number(jobId), teto);
+}
+
 module.exports = {
   getDb,
   aplicarSchema,
@@ -5371,6 +5536,16 @@ module.exports = {
   // Prioridade do transacional sobre a fila de massa: as duas dividem UM socket Baileys.
   existePendenciaSequenciaWhatsapp,
   ultimoEnvioSequenciaWhatsapp,
+  // WA3 — lembretes da entrevista em grupo
+  listarVagasParaLembreteEntrevista,
+  listarConvitesEntrevistaGrupo,
+  registrarReuniaoVistaLembrete,
+  listarReunioesVistasLembrete,
+  reservarLembreteEntrevista,
+  marcarLembreteEntrevistaEnviado,
+  marcarLembreteEntrevistaTerminal,
+  chavesLembreteEntrevista,
+  listarLembretesEntrevistaDaVaga,
 
   registrarOptOutWhatsapp,
   estaOptOutWhatsapp,
