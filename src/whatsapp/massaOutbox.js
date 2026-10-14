@@ -166,6 +166,9 @@ const MOTIVO_TAXA_FALHA = 'mais de 40% do lote falhou';
 const MOTIVO_SESSAO_CAIDA = 'sessao do WhatsApp caiu ou foi desconectada (401/logout)';
 const MOTIVO_LIMITACAO = 'sinal de limitacao do WhatsApp';
 const MOTIVO_VARIACOES_INVALIDAS = 'as 7 variacoes nao passam a validacao';
+// Tipo entrevista (2026-10-14, ver "O TEXTO-BASE E A FONTE DA VERDADE" em lib/variacoesMassaWa).
+const MOTIVO_VARIACOES_COM_ERRO = 'as variacoes estao com erro de geracao (ver a tela da campanha)';
+const MOTIVO_VARIACOES_DESATUALIZADAS = 'o texto-base mudou e as variacoes estao desatualizadas';
 
 // Sinais de limitacao/bloqueio na mensagem de erro do Baileys.
 //
@@ -354,8 +357,25 @@ async function processarCampanha(campanha, ctx) {
   // ── 5. AS 7 VARIACOES PRECISAM ESTAR VALIDAS ──
   // Checado no ENVIO, e nao so no save: alguem pode ter editado as variacoes depois de ativar a
   // campanha. Invalidas -> pausa, porque mandar texto com token nao resolvido e pior que nao mandar.
+  //
+  // Tipo entrevista: validadas CONTRA O TEXTO-BASE da campanha, e antes disso a mesma trava da tela
+  // (bloqueioDasVariacoes): erro de geracao registrado ou texto-base editado depois das variacoes
+  // pausam com motivo proprio. Foi o texto-base ignorado que mandou o convite no lugar do lembrete
+  // na campanha 9. O segmento segue como sempre.
   const lista = db.listarVariacoesMassaWa(campanha.id);
-  const valid = variacoes.validarVariacoes(lista.map((v) => v.texto), { tipo });
+  if (!segmento) {
+    const bloqueio = variacoes.bloqueioDasVariacoes(campanha, { temVariacoes: lista.length > 0 });
+    if (bloqueio) {
+      const motivo = bloqueio === 'com_erro' ? MOTIVO_VARIACOES_COM_ERRO : MOTIVO_VARIACOES_DESATUALIZADAS;
+      db.definirStatusCampanhaMassaWa(campanha.id, 'pausada', { motivo });
+      console.error(`[massa-wa] campanha ${campanha.id} PAUSADA: ${motivo}.`);
+      return resumo;
+    }
+  }
+  const valid = variacoes.validarVariacoes(lista.map((v) => v.texto), {
+    tipo,
+    textoBase: segmento ? undefined : variacoes.textoBaseEfetivo(campanha),
+  });
   if (!valid.ok) {
     db.definirStatusCampanhaMassaWa(campanha.id, 'pausada', { motivo: MOTIVO_VARIACOES_INVALIDAS });
     console.error(
@@ -731,5 +751,7 @@ module.exports = {
   MOTIVO_SESSAO_CAIDA,
   MOTIVO_LIMITACAO,
   MOTIVO_VARIACOES_INVALIDAS,
+  MOTIVO_VARIACOES_COM_ERRO,
+  MOTIVO_VARIACOES_DESATUALIZADAS,
   SINAIS_LIMITACAO,
 };
