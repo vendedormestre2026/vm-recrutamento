@@ -33,6 +33,9 @@ const {
   PROBLEMA_LONGA,
   PROBLEMA_DUPLICADA,
   PROBLEMA_QUANTIDADE,
+  LINHA_DESCADASTRO,
+  obrigatoriosDoTextoBase,
+  PROBLEMA_PARECIDA_BASE,
 } = require('../src/lib/variacoesMassaWa');
 
 const PROXIMA = {
@@ -48,6 +51,14 @@ const problema = (r, codigo) => r.problemas.find((p) => p.codigo === codigo);
 // Variacao minima valida, para os testes falarem de UMA regra por vez.
 const OK = 'Oi! Aqui é o {recrutador}. Vaga de {vaga} na {empresa}, entrevista em {data} às {horario}: {link_meet}. Para sair: {link_descadastro}';
 const LINK = 'https://entrevista.vendedormestre.com.br/descadastro-whatsapp/abc.123';
+
+// Texto-base dos testes de validacao (tipo entrevista: a variacao e conferida CONTRA ele — ver
+// variacoesTextoBase.test.js). Mesmos tokens de OK, sem {saudacao}, redacao e tamanho
+// diferentes o bastante para OK ser uma variacao legitima dele.
+const BASE_T = 'Olá! Quem escreve é o {recrutador}, sobre a sua candidatura para {vaga} ({empresa}). A entrevista em grupo fica marcada para {data}, {horario}, neste link: {link_meet}';
+const validar = (textos, opcoes = {}) => validarVariacoes(textos, { exigirTotal: false, textoBase: BASE_T, ...opcoes });
+// O que resolverTexto acrescenta ao fim de toda mensagem do tipo entrevista sem {link_descadastro}.
+const comLinha = (texto, link = LINK) => `${texto}\n\n${LINHA_DESCADASTRO.replace('{link_descadastro}', link)}`;
 
 // ══════════════════ SEED ══════════════════
 
@@ -87,11 +98,12 @@ test('as 7 variacoes fecham o descadastro com formulacoes DIFERENTES', () => {
   assert.ok(new Set(fechos).size >= 5, `poucos fechos distintos: ${new Set(fechos).size}`);
 });
 
-test('o texto base tambem e valido como mensagem', () => {
-  // Ele e semente da tela, mas tambem e o que o operador ve primeiro: se nao passasse as proprias
-  // regras, a primeira coisa que a tela faria era acusar erro no texto que ela mesma sugeriu.
-  const r = validarVariacoes([TEXTO_BASE_PADRAO], { exigirTotal: false });
-  assert.deepEqual(r.problemas, []);
+test('o texto base passa as regras de mensagem — e, copiado como variacao, e recusado por ser o proprio base', () => {
+  // Ele e o que o operador ve primeiro: se nao passasse as regras de mensagem, a primeira coisa
+  // que a tela faria era acusar erro no texto que ela mesma sugeriu. Mas uma "variacao" igual ao
+  // texto-base nao varia nada (decisao D3).
+  const r = validarVariacoes([TEXTO_BASE_PADRAO], { exigirTotal: false, textoBase: TEXTO_BASE_PADRAO });
+  assert.deepEqual(codigos(r), [PROBLEMA_PARECIDA_BASE]);
 });
 
 test('toda variacao do seed tem os tokens obrigatorios, inclusive o link de descadastro', () => {
@@ -131,46 +143,50 @@ test('nenhuma variacao do seed usa a sintaxe {{dupla}} da Meta', () => {
 
 // ══════════════════ VALIDACAO ══════════════════
 
-test('recusa variacao sem cada um dos tokens obrigatorios, um por vez', () => {
-  // {link_descadastro} tem problema proprio (PROBLEMA_SEM_DESCADASTRO), testado abaixo.
-  for (const tok of TOKENS_OBRIGATORIOS.filter((t) => t !== 'link_descadastro')) {
+test('recusa variacao sem cada um dos tokens do texto-base, um por vez', () => {
+  // Desde a decisao D2, obrigatorio e o que o texto-base usa — e {link_descadastro} nunca (e do
+  // sistema; testado abaixo).
+  assert.deepEqual(obrigatoriosDoTextoBase(BASE_T).sort(), ['data', 'empresa', 'horario', 'link_meet', 'recrutador', 'vaga']);
+  for (const tok of obrigatoriosDoTextoBase(BASE_T)) {
     const texto = OK.replace(`{${tok}}`, 'X');
-    const p = problema(validarVariacoes([texto], { exigirTotal: false }), PROBLEMA_TOKEN_FALTANDO);
+    const p = problema(validar([texto]), PROBLEMA_TOKEN_FALTANDO);
     assert.ok(p, `deveria acusar falta de {${tok}}`);
     assert.deepEqual(p.tokens, [tok]);
     assert.equal(p.indice, 1, 'o problema precisa dizer QUAL variacao');
   }
 });
 
-test('{saudacao} NAO e obrigatorio (variacao pode comecar sem cumprimentar)', () => {
-  const r = validarVariacoes([OK], { exigirTotal: false });
+test('{saudacao} so e obrigatorio quando o texto-base usa', () => {
   assert.ok(!tokensDe(OK).includes('saudacao'));
-  assert.deepEqual(r.problemas, []);
+  assert.deepEqual(validar([OK]).problemas, [], 'o base sem {saudacao} nao a exige');
+  const p = problema(validar([OK], { textoBase: `{saudacao} ${BASE_T}` }), PROBLEMA_TOKEN_FALTANDO);
+  assert.deepEqual(p && p.tokens, ['saudacao']);
 });
 
 test('recusa token escrito errado, que sairia literal na mensagem', () => {
   // {horário} com acento e {linkmeet} sem underscore nao resolvem: iriam para o aparelho da
   // pessoa como texto.
-  const r = validarVariacoes([`${OK} {horário} {linkmeet}`], { exigirTotal: false });
+  const r = validar([`${OK} {horário} {linkmeet}`]);
   const p = problema(r, PROBLEMA_TOKEN_DESCONHECIDO);
   assert.ok(p);
   assert.deepEqual(p.tokens.sort(), ['horário', 'linkmeet'].sort());
 });
 
 test('recusa a sintaxe {{dupla}} dos templates da Meta', () => {
-  const r = validarVariacoes([OK.replace('{vaga}', '{{vaga}}')], { exigirTotal: false });
+  const r = validar([OK.replace('{vaga}', '{{vaga}}')]);
   assert.ok(codigos(r).includes(PROBLEMA_CHAVE_DUPLA));
 });
 
-test('recusa variacao sem o link de descadastro', () => {
-  const r = validarVariacoes([OK.replace('Para sair: {link_descadastro}', 'Abraço!')], { exigirTotal: false });
-  assert.ok(codigos(r).includes(PROBLEMA_SEM_DESCADASTRO));
-  assert.ok(!codigos(r).includes(PROBLEMA_TOKEN_FALTANDO), 'o link nao deve ser acusado duas vezes');
+test('tipo entrevista: variacao SEM {link_descadastro} e aceita — o sistema acrescenta a linha (D2)', () => {
+  const r = validar([OK.replace('Para sair: {link_descadastro}', 'Abraço!')]);
+  assert.ok(!codigos(r).includes(PROBLEMA_SEM_DESCADASTRO));
+  assert.ok(!codigos(r).includes(PROBLEMA_TOKEN_FALTANDO));
 });
 
-test('"responda SAIR" NAO substitui o link: sem {link_descadastro} a variacao e recusada', () => {
-  const r = validarVariacoes([OK.replace('Para sair: {link_descadastro}', 'Responda SAIR para sair.')], { exigirTotal: false });
-  assert.ok(codigos(r).includes(PROBLEMA_SEM_DESCADASTRO));
+test('"responda SAIR" nao conta como descadastro: a linha do sistema entra do mesmo jeito', () => {
+  const ctx = montarContexto({ nome: 'Ana', job: JOB, proxima: PROXIMA, linkDescadastro: LINK });
+  const { texto } = resolverTexto(OK.replace('Para sair: {link_descadastro}', 'Responda SAIR para sair.'), ctx);
+  assert.ok(texto.endsWith(LINHA_DESCADASTRO.replace('{link_descadastro}', LINK)));
 });
 
 test('aceita a frase de descadastro reescrita de varias formas', () => {
@@ -181,7 +197,7 @@ test('aceita a frase de descadastro reescrita de varias formas', () => {
   ];
   for (const frase of formas) {
     const texto = OK.replace('Para sair: {link_descadastro}', frase);
-    const r = validarVariacoes([texto], { exigirTotal: false });
+    const r = validar([texto]);
     assert.deepEqual(r.problemas, [], `recusou a frase: ${frase}`);
   }
 });
@@ -300,7 +316,7 @@ test('lista vazia ou so com textos em branco devolve null (nunca uma mensagem va
 // ══════════════════ RESOLUCAO DOS TOKENS ══════════════════
 
 test('resolve os 6 tokens a partir da vaga e da proxima reuniao', () => {
-  const ctx = montarContexto({ nome: 'Maria Souza', job: JOB, proxima: PROXIMA });
+  const ctx = montarContexto({ nome: 'Maria Souza', job: JOB, proxima: PROXIMA, linkDescadastro: LINK });
   const { texto, faltando } = resolverTexto(
     '{saudacao} {vaga} / {empresa} / {data} / {horario} / {link_meet}',
     ctx,
@@ -309,24 +325,24 @@ test('resolve os 6 tokens a partir da vaga e da proxima reuniao', () => {
   assert.deepEqual(faltando, []);
   assert.equal(
     texto,
-    'Olá, Maria! Closer de Vendas / Acme Ltda / quinta-feira, 01/10/2026 / 19:30 / https://meet.google.com/abc-defg-hij',
+    comLinha('Olá, Maria! Closer de Vendas / Acme Ltda / quinta-feira, 01/10/2026 / 19:30 / https://meet.google.com/abc-defg-hij'),
   );
 });
 
 test('{saudacao} sem nome vira "Olá!" — nunca "Olá , "', () => {
   // Reusa saudacao() de lib/whatsappSequencia: duas frases INTEIRAS, e nao um placeholder que
   // fica vazio. "Olá , tudo bem?" e o detalhe que denuncia automacao mal-feita.
-  const comNome = montarContexto({ nome: 'Maria Souza', job: JOB, proxima: PROXIMA });
-  const semNome = montarContexto({ nome: '   ', job: JOB, proxima: PROXIMA });
+  const comNome = montarContexto({ nome: 'Maria Souza', job: JOB, proxima: PROXIMA, linkDescadastro: LINK });
+  const semNome = montarContexto({ nome: '   ', job: JOB, proxima: PROXIMA, linkDescadastro: LINK });
 
-  assert.equal(resolverTexto('{saudacao} texto', comNome).texto, 'Olá, Maria! texto');
-  assert.equal(resolverTexto('{saudacao} texto', semNome).texto, 'Olá! texto');
+  assert.equal(resolverTexto('{saudacao} texto', comNome).texto, comLinha('Olá, Maria! texto'));
+  assert.equal(resolverTexto('{saudacao} texto', semNome).texto, comLinha('Olá! texto'));
 });
 
 test('o mesmo token repetido no texto e resolvido em todas as ocorrencias', () => {
-  const ctx = montarContexto({ nome: 'Ana', job: JOB, proxima: PROXIMA });
+  const ctx = montarContexto({ nome: 'Ana', job: JOB, proxima: PROXIMA, linkDescadastro: LINK });
   const { texto } = resolverTexto('{vaga} e de novo {vaga}', ctx);
-  assert.equal(texto, 'Closer de Vendas e de novo Closer de Vendas');
+  assert.equal(texto, comLinha('Closer de Vendas e de novo Closer de Vendas'));
 });
 
 test('sem reuniao futura: data, horario e link ficam FALTANDO (o worker nao envia)', () => {
@@ -345,7 +361,7 @@ test('vaga SEM empresa cadastrada: {empresa} entra em faltando (nao sai "na .")'
 
 test('token obrigatorio que o texto NAO usa nao entra em faltando', () => {
   // `faltando` e sobre o que a mensagem precisa, nao sobre a lista teorica de tokens.
-  const ctx = montarContexto({ nome: 'Ana', job: { titulo: 'Closer' }, proxima: PROXIMA });
+  const ctx = montarContexto({ nome: 'Ana', job: { titulo: 'Closer' }, proxima: PROXIMA, linkDescadastro: LINK });
   const { faltando } = resolverTexto('Vaga de {vaga} em {data}, {horario}: {link_meet}.', ctx);
   assert.deepEqual(faltando, [], 'o texto nao usa {empresa}, entao a falta dela e irrelevante');
 });
@@ -353,9 +369,9 @@ test('token obrigatorio que o texto NAO usa nao entra em faltando', () => {
 test('token desconhecido fica LITERAL em vez de virar vazio', () => {
   // Apagar esconderia o erro. O validador ja recusa isso antes de a campanha poder disparar, e se
   // um chegasse aqui, ele aparece — e aparecer e o que faz alguem consertar.
-  const ctx = montarContexto({ nome: 'Ana', job: JOB, proxima: PROXIMA });
+  const ctx = montarContexto({ nome: 'Ana', job: JOB, proxima: PROXIMA, linkDescadastro: LINK });
   const { texto } = resolverTexto('{vaga} {horário}', ctx);
-  assert.equal(texto, 'Closer de Vendas {horário}');
+  assert.equal(texto, comLinha('Closer de Vendas {horário}'));
 });
 
 test('resolverTexto nao lanca com entrada nula', () => {

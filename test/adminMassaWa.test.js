@@ -287,7 +287,8 @@ test('variacao invalida e SALVA, mas a tela lista o problema em portugues', asyn
     const html = await get(base, `/admin/massa-wa/${id}`);
     assert.match(html, /Pendências/);
     assert.match(html, /Variação 3: falta/);
-    assert.match(html, /falta o link de descadastro/);
+    // Decisao D2: no tipo entrevista o descadastro e acrescentado pelo sistema, nao cobrado.
+    assert.doesNotMatch(html, /falta o link de descadastro/);
     // O texto ruim continua no campo, para o operador corrigir.
     assert.ok(html.includes('Oi {vaga}, sem mais nada.'));
   });

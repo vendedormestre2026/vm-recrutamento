@@ -50,13 +50,18 @@
 
 const { saudacao } = require('./whatsappSequencia');
 const { textoEmpresa, primeiroNomeDe, RECRUTADOR_PADRAO } = require('./whatsapp');
+const { normalizarTextoBase, hashTextoBase } = require('./hashTextoBase');
 
 // Tokens reconhecidos. Ordem estavel (usada em mensagem de erro e na tela de ajuda).
 const TOKENS = Object.freeze([
   'saudacao', 'recrutador', 'vaga', 'empresa', 'data', 'horario', 'link_meet', 'link_descadastro',
 ]);
 
-// Tokens que TODA variacao precisa ter.
+// Tokens que nao podem ficar VAZIOS no envio (resolverTexto: usado e sem valor -> `faltando`, e o
+// item nao sai). Ate 2026-10-14 esta era tambem a lista que TODA variacao do convite de entrevista
+// precisava conter; desde a decisao D2 (ver "O TEXTO-BASE E A FONTE DA VERDADE", abaixo) o que a
+// variacao do tipo entrevista precisa conter e o que o TEXTO-BASE da campanha contem. A lista
+// continua valendo inteira para o segmento (OBRIGATORIOS_POR_TIPO) e para o envio.
 //
 // {saudacao} fica de fora de proposito: uma variacao pode legitimamente comecar sem cumprimentar.
 // Os demais, nao — sem eles a mensagem deixa de ser um convite (some a data, o horario ou a sala),
@@ -433,13 +438,169 @@ const PROBLEMA_SEM_DESCADASTRO = 'sem_descadastro';
 const PROBLEMA_LONGA = 'longa';
 const PROBLEMA_DUPLICADA = 'duplicada';
 const PROBLEMA_QUANTIDADE = 'quantidade';
+// Contra o texto-base (so tipo entrevista — ver abaixo).
+const PROBLEMA_TOKEN_INVENTADO = 'token_inventado';
+const PROBLEMA_URL = 'url_alterada';
+const PROBLEMA_PARECIDA = 'parecida';
+const PROBLEMA_PARECIDA_BASE = 'parecida_com_base';
+const PROBLEMA_TAMANHO_BASE = 'tamanho_fora_do_base';
+
+// ══════════════════════════════════════════════════════════════
+// O TEXTO-BASE E A FONTE DA VERDADE (2026-10-14)
+// ══════════════════════════════════════════════════════════════
+//
+// ── O BUG QUE ISTO CORRIGE ──
+// A campanha 9 ("Lembrete Entrevista em Grupo Deandhela") tinha um texto-base de LEMBRETE ("e daqui
+// a pouco as 14h", com o link da sala escrito por extenso), mas as 7 variacoes que sairam eram as
+// sementes do CONVITE (VARIACOES_SEED): a criacao gravava as sementes sem olhar o texto-base, e o
+// "Sugerir com IA" fazia o mesmo. 46 pessoas receberam um convite com o Calendly no lugar do
+// lembrete com a sala.
+//
+// ── A REGRA, PARA O TIPO ENTREVISTA ──
+// Cada variacao e uma REDACAO do texto-base: os mesmos tokens (nem um a menos, nem um inventado),
+// as mesmas URLs escritas por extenso, tamanho parecido, e diferente o bastante do texto-base e
+// das outras variacoes para cumprir a funcao de variacao (ver o topo do arquivo). {data},
+// {horario} e {link_meet} so sao exigidos se o texto-base os usa: um lembrete com a hora escrita a
+// mao e legitimo (a tela avisa do risco — ver avisosDoTextoBase).
+//
+// O SEGMENTO NAO PASSA POR AQUI: o texto-base dele e fixo (TEXTO_BASE_CONVITE, sem campo na
+// tela) e as sementes do convite sao as derivacoes aprovadas dele. Ele segue com as regras de
+// sempre (OBRIGATORIOS_POR_TIPO, inclusive o {link_descadastro} na propria variacao).
+//
+// ── O DESCADASTRO E DO SISTEMA, NAO DO TEXTO (decisao D2) ──
+// No tipo entrevista, nem o texto-base nem a variacao precisam ter {link_descadastro}: no ENVIO (e
+// na previa, que usa a mesma funcao) resolverTexto acrescenta LINHA_DESCADASTRO ao fim, com o link
+// do destinatario. Se a variacao ja tiver o token (as sementes tem), nada e acrescentado — a
+// mensagem nunca leva dois links de saida. A linha nunca passa pelo LLM: o gerador e instruido a
+// nao escrever descadastro, e a linha so existe aqui. A redacao e a do TEXTO_BASE_PADRAO.
+const LINHA_DESCADASTRO = 'Para não receber mais mensagens nossas, acesse: {link_descadastro}';
+
+// Limiares (decisao D3). Jaccard sobre o CONJUNTO de palavras (depois da `assinatura`: sem acento,
+// sem pontuacao, minusculo). 0,85 = 85% das palavras distintas em comum — nesse ponto a variacao so
+// trocou uma ou outra palavra e, para o WhatsApp, e o mesmo texto. Referencia: as sementes atuais
+// ficam entre 0,45 e 0,68 contra o TEXTO_BASE_PADRAO e no maximo 0,58 entre si.
+const SIMILARIDADE_MAXIMA = 0.85;
+// Tamanho da variacao relativo ao texto-base, em caracteres. Fora de 0,6x a 1,6x a variacao
+// cortou informacao ou inventou conteudo. As sementes ficam entre 0,83x e 0,99x do padrao.
+const FATOR_TAMANHO_MIN = 0.6;
+const FATOR_TAMANHO_MAX = 1.6;
+
+// O texto-base que vale para validar uma campanha do tipo entrevista. Campanha antiga sem texto-base
+// gravado foi criada a partir do padrao (o formulario sempre veio com ele preenchido).
+function textoBaseEfetivo(campanha) {
+  return normalizarTextoBase(campanha && campanha.texto_base) || TEXTO_BASE_PADRAO;
+}
+
+// O texto-base E o padrao? So nesse caso as sementes sao derivacoes legitimas dele.
+function ehTextoBasePadrao(texto) {
+  return normalizarTextoBase(texto) === normalizarTextoBase(TEXTO_BASE_PADRAO);
+}
+
+// As variacoes gravadas foram feitas a partir do texto-base ATUAL? O carimbo e gravado junto com
+// as variacoes (db.salvarVariacoesMassaWa). Sem carimbo (campanha anterior a esta regra) conta como
+// desatualizada: nao ha como saber de que texto elas vieram.
+function variacoesDesatualizadas(campanha) {
+  if (!campanha) return false;
+  return campanha.variacoes_base_hash !== hashTextoBase(campanha.texto_base);
+}
+
+// URLs escritas por extenso, na ordem. Pontuacao colada no fim ("...txh." ou "(link)") nao e parte
+// do link.
+function urlsDe(texto) {
+  const achadas = String(texto == null ? '' : texto).match(/https?:\/\/[^\s<>"]+/gi) || [];
+  return achadas.map((u) => u.replace(/[.,;:!?)\]]+$/, ''));
+}
+
+function palavrasDe(texto) {
+  return new Set(assinatura(texto).split(' ').filter(Boolean));
+}
+
+// Jaccard de palavras, 0..1.
+function similaridade(a, b) {
+  const pa = palavrasDe(a);
+  const pb = palavrasDe(b);
+  let comum = 0;
+  for (const p of pa) if (pb.has(p)) comum += 1;
+  const uniao = pa.size + pb.size - comum;
+  return uniao ? comum / uniao : 0;
+}
+
+// Tokens que a variacao TEM que manter: os conhecidos que o texto-base usa, menos o descadastro
+// (que e do sistema).
+function obrigatoriosDoTextoBase(textoBase, tipo = TIPO_ENTREVISTA_GRUPO) {
+  const { tokens: conhecidos } = tokensDoTipo(tipo);
+  return [...new Set(tokensDe(textoBase))].filter((t) => conhecidos.includes(t) && t !== TOKEN_DESCADASTRO);
+}
+
+// Confere UMA variacao contra o texto-base. Lista de problemas (vazia = ok). Nao repete o que
+// validarVariacao ja cobre (vazia, longa, {{dupla}}, token desconhecido).
+function validarContraTextoBase(texto, textoBase, indice) {
+  const t = String(texto == null ? '' : texto).trim();
+  const base = normalizarTextoBase(textoBase);
+  const problemas = [];
+  if (!t || !base) return problemas;
+
+  const presentes = new Set(tokensDe(t));
+  const doBase = new Set(tokensDe(base));
+  const faltando = obrigatoriosDoTextoBase(base).filter((tok) => !presentes.has(tok));
+  if (faltando.length) problemas.push({ indice, codigo: PROBLEMA_TOKEN_FALTANDO, tokens: faltando });
+
+  // Token conhecido que o texto-base nao usa: a variacao acrescentou informacao (uma {data} num
+  // lembrete que diz "daqui a pouco"). O descadastro e a excecao — e do sistema.
+  const inventados = [...presentes].filter(
+    (tok) => TOKENS.includes(tok) && tok !== TOKEN_DESCADASTRO && !doBase.has(tok),
+  );
+  if (inventados.length) problemas.push({ indice, codigo: PROBLEMA_TOKEN_INVENTADO, tokens: inventados });
+
+  // URL literal: comparacao EXATA. Um caractere a menos no link da sala e uma sala que nao abre.
+  const urlsDaVariacao = new Set(urlsDe(t));
+  const perdidas = [...new Set(urlsDe(base))].filter((u) => !urlsDaVariacao.has(u));
+  if (perdidas.length) problemas.push({ indice, codigo: PROBLEMA_URL, urls: perdidas });
+
+  const fator = t.length / base.length;
+  if (fator < FATOR_TAMANHO_MIN || fator > FATOR_TAMANHO_MAX) {
+    problemas.push({
+      indice, codigo: PROBLEMA_TAMANHO_BASE, tamanho: t.length, base: base.length,
+      min: FATOR_TAMANHO_MIN, max: FATOR_TAMANHO_MAX,
+    });
+  }
+
+  const s = similaridade(t, base);
+  if (s >= SIMILARIDADE_MAXIMA) {
+    problemas.push({ indice, codigo: PROBLEMA_PARECIDA_BASE, similaridade: s, limite: SIMILARIDADE_MAXIMA });
+  }
+  return problemas;
+}
+
+// Acrescenta a linha de descadastro do sistema, uma vez. Texto vazio fica vazio: a linha sozinha
+// nao e mensagem.
+function comLinhaDescadastro(texto) {
+  const t = String(texto == null ? '' : texto);
+  if (!t.trim() || tokensDe(t).includes(TOKEN_DESCADASTRO)) return t;
+  return `${t.replace(/\s+$/, '')}\n\n${LINHA_DESCADASTRO}`;
+}
+
+// Avisos (nao bloqueiam) sobre o texto-base: link ou horario escritos a mao SEM {data}. Funciona no
+// dia; numa campanha de varios dias a mensagem anuncia um horario que ja passou. Com {data} o
+// texto acompanha a proxima reuniao e o literal e, no maximo, redundante.
+function avisosDoTextoBase(textoBase) {
+  const base = normalizarTextoBase(textoBase);
+  if (!base || tokensDe(base).includes('data')) return { urls: [], horas: [] };
+  const semUrls = base.replace(/https?:\/\/[^\s<>"]+/gi, ' ');
+  const horas = semUrls.match(/\b(?:[01]?\d|2[0-3])(?::[0-5]\d|h(?:[0-5]\d)?)(?![\p{L}\d])/giu) || [];
+  return { urls: urlsDe(base), horas: [...new Set(horas)] };
+}
 
 // Valida UMA variacao. Devolve lista de problemas (vazia = ok).
 //
 // Cada problema traz `indice` (1-based, o mesmo da tabela) e o que for necessario para a tela
 // escrever a frase — nunca a frase em si: o texto de erro mora na camada de apresentacao.
-function validarVariacao(texto, indice, { tipo = TIPO_ENTREVISTA_GRUPO } = {}) {
+//
+// `textoBase` so vale para o tipo entrevista (ver "O TEXTO-BASE E A FONTE DA VERDADE"). Ausente,
+// vale o TEXTO_BASE_PADRAO — o mesmo de textoBaseEfetivo para campanha sem texto gravado.
+function validarVariacao(texto, indice, { tipo = TIPO_ENTREVISTA_GRUPO, textoBase } = {}) {
   const { tokens: conhecidos, obrigatorios } = tokensDoTipo(tipo);
+  const contraBase = tipo === TIPO_ENTREVISTA_GRUPO;
   const problemas = [];
   const t = String(texto == null ? '' : texto).trim();
 
@@ -457,8 +618,10 @@ function validarVariacao(texto, indice, { tipo = TIPO_ENTREVISTA_GRUPO } = {}) {
   if (/\{\{|\}\}/.test(t)) problemas.push({ indice, codigo: PROBLEMA_CHAVE_DUPLA });
 
   const presentes = new Set(tokensDe(t));
-  const faltando = obrigatorios.filter((tok) => tok !== TOKEN_DESCADASTRO && !presentes.has(tok));
-  if (faltando.length) problemas.push({ indice, codigo: PROBLEMA_TOKEN_FALTANDO, tokens: faltando });
+  if (!contraBase) {
+    const faltando = obrigatorios.filter((tok) => tok !== TOKEN_DESCADASTRO && !presentes.has(tok));
+    if (faltando.length) problemas.push({ indice, codigo: PROBLEMA_TOKEN_FALTANDO, tokens: faltando });
+  }
 
   // Token escrito errado ({horário}, {linkmeet}) nao resolve e sai literal na mensagem.
   const desconhecidos = [...presentes].filter((tok) => !conhecidos.includes(tok));
@@ -466,14 +629,18 @@ function validarVariacao(texto, indice, { tipo = TIPO_ENTREVISTA_GRUPO } = {}) {
     problemas.push({ indice, codigo: PROBLEMA_TOKEN_DESCONHECIDO, tokens: desconhecidos });
   }
 
-  if (!presentes.has(TOKEN_DESCADASTRO)) problemas.push({ indice, codigo: PROBLEMA_SEM_DESCADASTRO });
+  if (contraBase) {
+    problemas.push(...validarContraTextoBase(t, normalizarTextoBase(textoBase) || TEXTO_BASE_PADRAO, indice));
+  } else if (!presentes.has(TOKEN_DESCADASTRO)) {
+    problemas.push({ indice, codigo: PROBLEMA_SEM_DESCADASTRO });
+  }
 
   return problemas;
 }
 
 // Valida o CONJUNTO. `exigirTotal` (default true) cobra as 7 — a tela de edicao pode passar
 // false para nao gritar enquanto o operador ainda esta escrevendo.
-function validarVariacoes(textos, { exigirTotal = true, tipo = TIPO_ENTREVISTA_GRUPO } = {}) {
+function validarVariacoes(textos, { exigirTotal = true, tipo = TIPO_ENTREVISTA_GRUPO, textoBase } = {}) {
   const lista = Array.isArray(textos) ? textos : [];
   const problemas = [];
 
@@ -486,7 +653,7 @@ function validarVariacoes(textos, { exigirTotal = true, tipo = TIPO_ENTREVISTA_G
   }
 
   lista.forEach((texto, i) => {
-    problemas.push(...validarVariacao(texto, i + 1, { tipo }));
+    problemas.push(...validarVariacao(texto, i + 1, { tipo, textoBase }));
   });
 
   // Duplicatas: compara por assinatura, e reporta no indice da SEGUNDA ocorrencia (a primeira
@@ -501,6 +668,24 @@ function validarVariacoes(textos, { exigirTotal = true, tipo = TIPO_ENTREVISTA_G
       vistas.set(a, i + 1);
     }
   });
+
+  // Quase-duplicatas (tipo entrevista): Jaccard >= SIMILARIDADE_MAXIMA com uma variacao ANTERIOR.
+  // A duplicata exata ja foi reportada acima e nao e reportada de novo.
+  if (tipo === TIPO_ENTREVISTA_GRUPO) {
+    lista.forEach((texto, i) => {
+      const a = assinatura(texto);
+      if (!a || vistas.get(a) !== i + 1) return;
+      for (let j = 0; j < i; j += 1) {
+        const b = assinatura(lista[j]);
+        if (!b || vistas.get(b) !== j + 1) continue;
+        const s = similaridade(texto, lista[j]);
+        if (s >= SIMILARIDADE_MAXIMA) {
+          problemas.push({ indice: i + 1, codigo: PROBLEMA_PARECIDA, igualA: j + 1, similaridade: s, limite: SIMILARIDADE_MAXIMA });
+          break;
+        }
+      }
+    });
+  }
 
   return { ok: problemas.length === 0, problemas };
 }
@@ -645,6 +830,11 @@ function resolverTexto(texto, contexto = {}, { tipo = TIPO_ENTREVISTA_GRUPO } = 
   // explicitamente, e esta funcao roda dentro do laco de envio — uma excecao aqui derrubaria o
   // ciclo inteiro por causa de UM destinatario. Um teste pegou.
   const ctx = contexto || {};
+  // Tipo entrevista: a linha de descadastro do sistema entra AQUI, e so aqui — envio, teste e
+  // previa passam por esta funcao, entao nenhum deles mostra uma mensagem diferente da que sai.
+  // Como ela traz {link_descadastro}, um link que nao pode ser montado vira `faltando` e o item
+  // nao sai, igual a antes.
+  if (tipo === TIPO_ENTREVISTA_GRUPO) texto = comLinhaDescadastro(texto);
   const usados = new Set(tokensDe(texto));
   const faltando = [...usados].filter(
     (tok) => obrigatorios.includes(tok) && !String(ctx[tok] || '').trim(),
@@ -701,4 +891,22 @@ module.exports = {
   PROBLEMA_LONGA,
   PROBLEMA_DUPLICADA,
   PROBLEMA_QUANTIDADE,
+  PROBLEMA_TOKEN_INVENTADO,
+  PROBLEMA_URL,
+  PROBLEMA_PARECIDA,
+  PROBLEMA_PARECIDA_BASE,
+  PROBLEMA_TAMANHO_BASE,
+  LINHA_DESCADASTRO,
+  SIMILARIDADE_MAXIMA,
+  FATOR_TAMANHO_MIN,
+  FATOR_TAMANHO_MAX,
+  textoBaseEfetivo,
+  ehTextoBasePadrao,
+  variacoesDesatualizadas,
+  urlsDe,
+  similaridade,
+  obrigatoriosDoTextoBase,
+  validarContraTextoBase,
+  comLinhaDescadastro,
+  avisosDoTextoBase,
 };
