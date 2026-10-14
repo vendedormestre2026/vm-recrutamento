@@ -40,6 +40,8 @@ const { pertenceVendedorMestre, extrairBotoes } = require('../lib/templatesWhats
 // supressao da tabela whatsapp_optout — quem grava e quem le passam por ele, sempre, para
 // as duas pontas usarem literalmente a mesma chave (ver o cabecalho de la).
 const { chaveCanonicaTelefone } = require('../lib/chaveTelefone');
+// Carimbo das variacoes do disparo em massa (ver salvarVariacoesMassaWa).
+const { hashTextoBase } = require('../lib/hashTextoBase');
 
 let _db = null;
 
@@ -4746,11 +4748,22 @@ function zerarErrosConsecutivosMassaWa(id) {
 // DELETE + INSERT, e nao UPSERT por indice: salvar 5 variacoes onde havia 7 tem que DEIXAR 5.
 // Um UPSERT deixaria as duas ultimas orfas, e o sorteio continuaria entregando um texto que o
 // operador acredita ter apagado — o pior tipo de divergencia, porque a tela mostraria 5.
+//
+// ── O CARIMBO (2026-10-14) ──
+// Na MESMA transacao, a campanha guarda o hash do texto-base de agora (variacoes_base_hash) e
+// perde o erro de geracao (variacoes_erro). Todo caminho que grava variacoes passa por aqui —
+// sementes na criacao, geracao por IA, edicao manual —, entao nenhum deles esquece de carimbar.
+// O texto-base e lido do proprio banco, e nao recebido por parametro: o carimbo e sempre do
+// texto que esta gravado, nunca do que o chamador acha que esta.
 function salvarVariacoesMassaWa(campanhaId, textos = []) {
   const db = getDb();
   const apagar = db.prepare('DELETE FROM campanhas_massa_wa_variacoes WHERE campanha_id = ?');
   const inserir = db.prepare(
     'INSERT INTO campanhas_massa_wa_variacoes (campanha_id, indice, texto) VALUES (?, ?, ?)',
+  );
+  const lerBase = db.prepare('SELECT texto_base FROM campanhas_massa_wa WHERE id = ?');
+  const carimbar = db.prepare(
+    'UPDATE campanhas_massa_wa SET variacoes_base_hash = ?, variacoes_erro = NULL WHERE id = ?',
   );
   const gravar = db.transaction(() => {
     apagar.run(campanhaId);
@@ -4761,9 +4774,21 @@ function salvarVariacoesMassaWa(campanhaId, textos = []) {
       inserir.run(campanhaId, i + 1, t);
       n += 1;
     });
+    const linha = lerBase.get(campanhaId);
+    if (linha) carimbar.run(hashTextoBase(linha.texto_base), campanhaId);
     return n;
   });
   return gravar();
+}
+
+// Registra (ou limpa, com null) o erro da geracao das variacoes por IA. NAO mexe nas variacoes:
+// uma geracao que falhou nao apaga o que ja estava gravado — so impede que aquilo saia enquanto
+// o erro estiver na tela (materializar, ativar e o worker checam variacoes_erro).
+function registrarErroVariacoesMassaWa(campanhaId, mensagem) {
+  const m = mensagem == null ? null : String(mensagem).trim() || null;
+  return getDb()
+    .prepare('UPDATE campanhas_massa_wa SET variacoes_erro = ? WHERE id = ?')
+    .run(m, campanhaId).changes;
 }
 
 function listarVariacoesMassaWa(campanhaId) {
@@ -5520,6 +5545,7 @@ module.exports = {
   incrementarErrosConsecutivosMassaWa,
   zerarErrosConsecutivosMassaWa,
   salvarVariacoesMassaWa,
+  registrarErroVariacoesMassaWa,
   listarVariacoesMassaWa,
   materializarCampanhaMassaWa,
   recebedoresDisparoMassaWa,

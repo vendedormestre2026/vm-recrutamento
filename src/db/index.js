@@ -239,6 +239,7 @@ module.exports = {
   incrementarErrosConsecutivosMassaWa: driver.incrementarErrosConsecutivosMassaWa,
   zerarErrosConsecutivosMassaWa: driver.zerarErrosConsecutivosMassaWa,
   salvarVariacoesMassaWa: driver.salvarVariacoesMassaWa,
+  registrarErroVariacoesMassaWa: driver.registrarErroVariacoesMassaWa,
   listarVariacoesMassaWa: driver.listarVariacoesMassaWa,
   materializarCampanhaMassaWa: driver.materializarCampanhaMassaWa,
   recebedoresDisparoMassaWa: driver.recebedoresDisparoMassaWa,

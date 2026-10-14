@@ -683,6 +683,18 @@ function migrar() {
     }
   }
 
+  // Disparo em massa — de que texto-base as variacoes vieram (2026-10-14, ver "O TEXTO-BASE E A
+  // FONTE DA VERDADE" em lib/variacoesMassaWa).
+  //   variacoes_base_hash  hash do texto-base no momento em que as variacoes foram gravadas
+  //                        (lib/hashTextoBase). Diferente do texto atual = variacoes
+  //                        desatualizadas: a tela avisa, materializar/ativar recusam, o worker
+  //                        pausa. NULL nas campanhas anteriores (todas encerradas em producao).
+  //   variacoes_erro       ultima falha da geracao por IA (ou "IA desligada"), em portugues, para
+  //                        a tela. Enquanto houver, a campanha nao materializa, nao ativa e nao
+  //                        envia. Limpo quando as variacoes sao gravadas de novo.
+  adicionarColunaSeFaltar('campanhas_massa_wa', 'variacoes_base_hash', 'TEXT');
+  adicionarColunaSeFaltar('campanhas_massa_wa', 'variacoes_erro', 'TEXT');
+
   // Indices ficam aqui (e nao no schema.sql) porque dependem de colunas adicionadas
   // acima, que em bancos antigos so passam a existir depois do ADD COLUMN.
   const db = getDb();

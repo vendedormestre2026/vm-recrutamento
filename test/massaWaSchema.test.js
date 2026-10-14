@@ -34,6 +34,8 @@ const assert = require('node:assert/strict');
 
 const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
+const { hashTextoBase } = require('../src/lib/hashTextoBase');
+const { variacoesDesatualizadas } = require('../src/lib/variacoesMassaWa');
 
 migrar();
 
@@ -262,6 +264,47 @@ test('variacoes sao por campanha: uma nao ve as da outra', () => {
   db.salvarVariacoesMassaWa(b, ['B1']);
   assert.equal(db.listarVariacoesMassaWa(a).length, 2);
   assert.deepEqual(db.listarVariacoesMassaWa(b).map((v) => v.texto), ['B1']);
+});
+
+// ── Carimbo do texto-base (2026-10-14) ──
+
+test('migracao aditiva: variacoes_base_hash e variacoes_erro existem e nascem NULL', () => {
+  const cols = db.getDb().prepare('PRAGMA table_info(campanhas_massa_wa)').all().map((c) => c.name);
+  assert.ok(cols.includes('variacoes_base_hash'));
+  assert.ok(cols.includes('variacoes_erro'));
+  const c = db.obterCampanhaMassaWa(novaCampanha({ textoBase: 'Base {vaga}' }));
+  assert.equal(c.variacoes_base_hash, null);
+  assert.equal(c.variacoes_erro, null);
+});
+
+test('salvar variacoes CARIMBA o hash do texto-base gravado e limpa o erro de geracao', () => {
+  const id = novaCampanha({ textoBase: 'Base {vaga}' });
+  db.registrarErroVariacoesMassaWa(id, 'Geração por IA desligada');
+  assert.equal(db.obterCampanhaMassaWa(id).variacoes_erro, 'Geração por IA desligada');
+
+  db.salvarVariacoesMassaWa(id, ['A']);
+  const c = db.obterCampanhaMassaWa(id);
+  assert.equal(c.variacoes_base_hash, hashTextoBase('Base {vaga}'));
+  assert.equal(c.variacoes_erro, null);
+});
+
+test('editar o texto-base NAO recarimba: as variacoes ficam desatualizadas ate serem gravadas de novo', () => {
+  const id = novaCampanha({ textoBase: 'Base {vaga}' });
+  db.salvarVariacoesMassaWa(id, ['A']);
+  const c = db.obterCampanhaMassaWa(id);
+  db.atualizarCampanhaMassaWa(id, { nome: c.nome, textoBase: 'Outra base {vaga}', criterios: {} });
+  assert.equal(variacoesDesatualizadas(db.obterCampanhaMassaWa(id)), true);
+  db.salvarVariacoesMassaWa(id, ['B']);
+  assert.equal(variacoesDesatualizadas(db.obterCampanhaMassaWa(id)), false);
+});
+
+test('registrar erro NAO apaga as variacoes (falha de geracao nao destroi o que havia)', () => {
+  const id = novaCampanha({ textoBase: 'Base' });
+  db.salvarVariacoesMassaWa(id, ['A', 'B']);
+  db.registrarErroVariacoesMassaWa(id, 'falhou');
+  assert.equal(db.listarVariacoesMassaWa(id).length, 2);
+  db.registrarErroVariacoesMassaWa(id, '   ');
+  assert.equal(db.obterCampanhaMassaWa(id).variacoes_erro, null, 'vazio limpa');
 });
 
 // ══════════════════ FILA: IDEMPOTENCIA ══════════════════
