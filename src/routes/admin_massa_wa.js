@@ -128,7 +128,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     sugerido: ['alerta', 'Campos preenchidos com os textos-semente. A sugestão por IA está desligada (ver a nota abaixo).'],
     gerado: ['ok', 'As 7 variações foram geradas pela IA a partir do texto-base e passaram na validação. Confira a prévia antes de materializar.'],
     criada_gerada: ['ok', 'Campanha criada como rascunho, com as 7 variações geradas pela IA a partir do texto-base. Confira a prévia e o público.'],
-    salva_desatualizada: ['alerta', 'Configuração salva. O texto-base mudou: as variações ficaram <b>desatualizadas</b> e a campanha não materializa, não ativa nem envia até você regenerar ou revisar e salvar as 7.'],
+    salva_regenerada: ['ok', 'Configuração salva. As 7 variações foram refeitas a partir do texto-base atual e passaram na validação. Confira a prévia.'],
     materializada: ['ok', 'Público congelado na fila. Revise e ative quando quiser começar.'],
     ativada: ['ok', 'Campanha ATIVA. O envio respeita a cadência, a janela de horário e o teto diário.'],
     pausada: ['ok', 'Campanha pausada. Ela não volta sozinha.'],
@@ -397,6 +397,18 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     db.salvarVariacoesMassaWa(campanha.id, r.variacoes);
     console.log(`[massa-wa] campanha ${campanha.id}: 7 variacoes geradas a partir do texto-base (${r.tentativas} tentativa(s)).`);
     return null;
+  }
+
+  // As variacoes ACOMPANHAM o texto-base: le o texto-base gravado AGORA e preenche as 7 a partir
+  // dele. Texto padrao -> as sementes (sao redacoes dele, sem custo); qualquer outro -> IA. Usado na
+  // criacao e sempre que o texto-base muda. Mesmo retorno de gerarESalvarVariacoes.
+  async function preencherVariacoesDoTextoBase(campanhaId) {
+    const atual = db.obterCampanhaMassaWa(campanhaId);
+    if (variacoesLib.ehTextoBasePadrao(variacoesLib.textoBaseEfetivo(atual))) {
+      db.salvarVariacoesMassaWa(campanhaId, [...variacoesLib.VARIACOES_SEED]);
+      return null;
+    }
+    return gerarESalvarVariacoes(atual);
   }
 
   const ROTULO_CANAL = { meta: 'Meta/Central Whats', email: 'e-mail', massa: 'massa (Baileys)', n8n: 'n8n por praça' };
@@ -1134,8 +1146,8 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
           <textarea name="texto_base" rows="10">${escapeHtml(dados.texto_base || variacoesLib.TEXTO_BASE_PADRAO)}</textarea></label>
         <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
           As 7 variações são <b>redações deste texto</b>: mesmos fatos, links e tokens, outras palavras. O que sai no
-          envio é sempre uma delas. Mudar este texto depois deixa as variações <b>desatualizadas</b> até você
-          regenerar ou revisar e salvar as 7. A linha de descadastro é acrescentada pelo sistema — não precisa
+          envio é sempre uma delas. Ao salvar um texto diferente, as 7 são <b>refeitas automaticamente</b> a partir
+          dele (com a geração por IA ligada). A linha de descadastro é acrescentada pelo sistema — não precisa
           escrever. Tokens disponíveis: ${variacoesLib.TOKENS.map((t) => `<code>{${t}}</code>`).join(' ')}.</p>
 
 ${camposCadencia(c)}
@@ -1254,12 +1266,9 @@ ${camposCadencia(c)}
     // As sementes so entram quando o texto-base E o padrao: so entao elas sao derivacoes dele.
     // Qualquer outro texto vai para a geracao por IA; desligada ou com falha, a campanha nasce SEM
     // variacoes e com o erro na tela — nunca com as sementes do convite (o bug da campanha 9).
-    if (variacoesLib.ehTextoBasePadrao(textoBase)) {
-      db.salvarVariacoesMassaWa(id, [...variacoesLib.VARIACOES_SEED]);
-      return res.redirect(`/admin/massa-wa/${id}?ok=criada`);
-    }
-    const erro = await gerarESalvarVariacoes(db.obterCampanhaMassaWa(id));
-    return res.redirect(`/admin/massa-wa/${id}?${erro ? `erro=${erro}` : 'ok=criada_gerada'}`);
+    const erro = await preencherVariacoesDoTextoBase(id);
+    if (erro) return res.redirect(`/admin/massa-wa/${id}?erro=${erro}`);
+    return res.redirect(`/admin/massa-wa/${id}?ok=${variacoesLib.ehTextoBasePadrao(textoBase) ? 'criada' : 'criada_gerada'}`);
   });
 
   // ══════════════════ DETALHE ══════════════════
@@ -1423,6 +1432,17 @@ ${camposCadencia(c)}
         ${problemas.length
           ? `<div class="aviso-alerta"><b>Pendências:</b><ul style="margin:.4rem 0 0 1rem;">${problemas.map((p) => `<li>${p}</li>`).join('')}</ul></div>`
           : '<p class="aviso-ok">As 7 variações passam na validação contra o texto-base.</p>'}
+        <form method="POST" action="/admin/massa-wa/${campanha.id}/sugerir" style="margin:.6rem 0 0;"${lista.length
+          ? ` data-confirm="Substituir as variações atuais por 7 novas, geradas a partir do texto-base? O que você editou nelas se perde."
+              data-confirm-titulo="Regenerar as variações?" data-confirm-texto="Regenerar"` : ''}>
+          <button type="submit" class="btn">${lista.length ? 'Regenerar variações com IA' : 'Gerar variações com IA'}</button>
+        </form>
+        <p style="color:var(--cinza);font-size:.8rem;margin:.4rem 0 0;">
+          ${iaLigada
+            ? 'Gera as 7 a partir do texto-base e só grava se todas passarem na validação (até 3 tentativas). Se falhar, nada é gravado e o motivo aparece aqui.'
+            : `A geração por IA está <b>desligada</b>: para as variações saírem sozinhas do texto-base, defina
+              <code>${geradorVariacoes.ENV_ATIVO}=true</code> nas variáveis do Railway. Enquanto isso o botão recusa,
+              nenhum texto padrão é colocado no lugar e as 7 precisam ser escritas nas caixas abaixo.`}</p>
         <details style="margin:.4rem 0 .6rem;"><summary>Texto-base desta campanha (a fonte das variações)</summary>
           <pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(base))}</pre></details>
         <p style="color:var(--cinza);font-size:.85rem;">
@@ -1445,15 +1465,6 @@ ${camposCadencia(c)}
           </div>
         </form>
 
-        <form method="POST" action="/admin/massa-wa/${campanha.id}/sugerir" style="margin-top:.6rem;"${lista.length
-          ? ` data-confirm="Substituir as variações atuais por 7 novas, geradas a partir do texto-base? O que você editou nelas se perde."
-              data-confirm-titulo="Regenerar as variações?" data-confirm-texto="Regenerar"` : ''}>
-          <button type="submit" class="btn btn--ghost">${lista.length ? 'Regenerar variações com IA' : 'Gerar variações com IA'}</button>
-        </form>
-        <p style="color:var(--cinza);font-size:.8rem;margin:.4rem 0 0;">
-          ${iaLigada
-            ? 'Gera as 7 a partir do texto-base e só grava se todas passarem na validação (até 3 tentativas). Se falhar, nada é gravado e o motivo aparece aqui.'
-            : `A geração por IA está <b>desligada</b> (<code>${geradorVariacoes.ENV_ATIVO}</code>): o botão recusa e nenhum texto padrão é colocado no lugar. Escreva as 7 variações manualmente.`}</p>
       </section>`;
   }
 
@@ -1719,7 +1730,7 @@ ${camposCadencia(c)}
     return res.send(paginaAdmin({ titulo: campanha.nome, conteudo }));
   });
 
-  router.post('/:id', (req, res) => {
+  router.post('/:id', async (req, res) => {
     const id = Number(req.params.id);
     const campanha = db.obterCampanhaMassaWa(id);
     if (!campanha) return res.status(404).send(paginaAdmin({ titulo: 'Campanha', conteudo: '<h1>Campanha não encontrada.</h1>' }));
@@ -1755,12 +1766,18 @@ ${camposCadencia(c)}
       totalEstimado: campanha.total_estimado,
       cadencia: d.cadencia,
     });
-    // Texto-base mudou: as variacoes ficam desatualizadas (o carimbo nao bate mais) e a tela diz.
-    // NAO regenera sozinho (decisao D4): substituir o que o operador revisou exige um clique dele.
+    // ── AS VARIACOES ACOMPANHAM O TEXTO-BASE (pedido do Rafael, 2026-10-14) ──
+    // Texto-base mudou -> as 7 sao refeitas AGORA, a partir do texto NOVO (lido do banco depois do
+    // UPDATE), substituindo as anteriores. Tambem refaz quando ainda nao ha variacoes, ou elas
+    // estao com erro ou desatualizadas: salvar e o momento de colocar a campanha em dia. Se a IA
+    // estiver desligada ou falhar, nada e gravado, o erro fica na tela e a campanha nao envia.
     const depois = db.obterCampanhaMassaWa(id);
     const mudou = normalizarTextoBase(depois.texto_base) !== normalizarTextoBase(campanha.texto_base);
-    if (mudou && db.listarVariacoesMassaWa(id).length) return res.redirect(`/admin/massa-wa/${id}?ok=salva_desatualizada`);
-    return res.redirect(`/admin/massa-wa/${id}?ok=salva`);
+    const temVariacoes = db.listarVariacoesMassaWa(id).length > 0;
+    const pendente = !temVariacoes || variacoesLib.bloqueioDasVariacoes(depois, { temVariacoes }) !== null;
+    if (!mudou && !pendente) return res.redirect(`/admin/massa-wa/${id}?ok=salva`);
+    const erro = await preencherVariacoesDoTextoBase(id);
+    return res.redirect(`/admin/massa-wa/${id}?${erro ? `erro=${erro}` : 'ok=salva_regenerada'}`);
   });
 
   // ══════════════════ VARIACOES ══════════════════

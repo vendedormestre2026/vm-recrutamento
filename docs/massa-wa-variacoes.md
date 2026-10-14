@@ -65,16 +65,25 @@ Interruptor: `MASSA_WA_LLM_ATIVO` (variável de ambiente, **nasce desligada**).
   erro fica em `campanhas_massa_wa.variacoes_erro` e aparece na tela. A campanha não materializa,
   não ativa nem envia. Nunca cai nas sementes.
 
-## Variações desatualizadas
+## As variações acompanham o texto-base
 
 Toda gravação de variações (sementes, IA ou edição manual) guarda o hash do texto-base daquele
-momento em `campanhas_massa_wa.variacoes_base_hash`. Se o texto-base for editado depois, o hash
-deixa de bater e as variações ficam **desatualizadas**: a tela avisa; materializar, ativar e o
-teste recusam; o worker pausa a campanha ativa. Nada regenera sozinho. É preciso clicar em
-"Regenerar variações com IA" ou revisar e salvar as 7. Campanhas anteriores ao carimbo contam como
-desatualizadas.
+momento em `campanhas_massa_wa.variacoes_base_hash`.
 
-Motivos de pausa novos no worker: `MOTIVO_VARIACOES_COM_ERRO` e `MOTIVO_VARIACOES_DESATUALIZADAS`.
+Ao **salvar a configuração com um texto-base diferente**, o sistema relê o texto novo do banco e
+**refaz as 7 na hora**, substituindo as anteriores. Isso não depende de clique; foi pedido do
+Rafael em 2026-10-14 e substitui a regra anterior, que só marcava as variações como desatualizadas.
+Salvar também refaz quando a campanha ainda não tem variações, ou quando elas estão com erro ou
+desatualizadas. É o caminho para uma campanha criada com a IA desligada: ligue a IA e salve.
+
+- Texto-base padrão: as sementes, sem IA.
+- Outro texto, com a IA ligada: geração a partir dele.
+- IA desligada ou falha: nada é gravado e o erro aparece na tela. As variações antigas ficam
+  desatualizadas: materializar, ativar e o teste recusam, e o worker pausa uma campanha ativa
+  (`MOTIVO_VARIACOES_COM_ERRO` / `MOTIVO_VARIACOES_DESATUALIZADAS`).
+
+O botão "Gerar / Regenerar variações com IA" fica no topo do bloco "As 7 variações", antes da
+prévia e das caixas.
 
 ## Segmento
 
@@ -104,7 +113,7 @@ texto-base. A 7 e a 8 usaram as sementes com um texto-base de convite parecido.
    - aparece o aviso de horário/link escritos à mão.
 4. Ver quantas chamadas foram feitas e quanto custaram: tabela `api_usage`, `origem = 'massa-wa'`.
    Não há tela para isso; consultar somente leitura via `railway ssh`.
-5. Editar uma frase do texto-base e salvar: aviso de desatualizadas; "Materializar" recusa.
-   Clicar em "Regenerar" e conferir que as novas refletem a frase editada.
+5. Editar uma frase do texto-base e salvar: as 7 devem ser refeitas sozinhas e refletir a frase
+   editada.
 6. "Teste para 1 número" em mock: o texto completo sai no log do Railway.
 7. Excluir o rascunho. Decidir se `MASSA_WA_LLM_ATIVO` fica ligada.

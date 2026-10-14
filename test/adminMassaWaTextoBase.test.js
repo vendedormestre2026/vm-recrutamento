@@ -200,32 +200,74 @@ test('salvar as 7 a mao limpa o erro (o caminho com a IA desligada)', async () =
 
 // ══════════════════ TEXTO-BASE EDITADO ══════════════════
 
-test('editar o texto-base deixa as variacoes DESATUALIZADAS: tela avisa, materializar/ativar recusam; regenerar resolve', async () => {
+test('editar o texto-base REFAZ as 7 automaticamente a partir do texto NOVO (IA ligada)', async () => {
   const jobId = criarVaga();
   criarCandidatura(jobId);
   await comServidor(async (base) => {
     await comIa([json([...REDACOES_LEMBRETE])], () => criarLembrete(base, jobId));
     const id = ultimaCampanha().id;
-
     const novoBase = BASE_LEMBRETE.replace('Te espero lá.', 'Te espero lá, combinado?');
-    const res = await post(base, `/admin/massa-wa/${id}`, { nome: 'Lembrete', job_id: String(jobId), status: ['sem_decisao'], texto_base: novoBase });
-    assert.match(local(res), /ok=salva_desatualizada/);
-    assert.equal(v.variacoesDesatualizadas(ultimaCampanha()), true);
-    assert.deepEqual(textosDe(id), [...REDACOES_LEMBRETE], 'nao regenera sozinho (D4)');
+    const novas = REDACOES_LEMBRETE.map((t) => t.replace(/[.!]$/, '. Combinado?'));
 
-    const html = await get(base, `/admin/massa-wa/${id}?ok=salva_desatualizada`);
-    assert.match(html, /Variações desatualizadas:/);
-    assert.match(html, /Regenerar variações com IA/);
-
-    assert.match(local(await post(base, `/admin/massa-wa/${id}/materializar`, {})), /erro=variacoes_desatualizadas/);
-    assert.match(local(await post(base, `/admin/massa-wa/${id}/status`, { status: 'ativa' })), /erro=nao_materializada|erro=variacoes_desatualizadas/);
-
-    await comIa([json([...REDACOES_LEMBRETE])], async (chamadas) => {
-      assert.match(local(await post(base, `/admin/massa-wa/${id}/sugerir`, {})), /ok=gerado/);
-      assert.ok(chamadas[0].find((m) => m.papel === 'user').conteudo.includes('Te espero lá, combinado?'), 'gera do texto NOVO');
+    await comIa([json(novas)], async (chamadas) => {
+      const res = await post(base, `/admin/massa-wa/${id}`, { nome: 'Lembrete', job_id: String(jobId), status: ['sem_decisao'], texto_base: novoBase });
+      assert.match(local(res), /ok=salva_regenerada/);
+      assert.equal(chamadas.length, 1, 'uma geracao, sem clique');
+      assert.ok(chamadas[0].find((m) => m.papel === 'user').conteudo.includes('Te espero lá, combinado?'), 'le o texto NOVO');
     });
-    assert.equal(v.variacoesDesatualizadas(ultimaCampanha()), false);
+    assert.deepEqual(textosDe(id), novas, 'as anteriores foram substituidas');
+    const c = ultimaCampanha();
+    assert.equal(v.variacoesDesatualizadas(c), false);
+    assert.equal(c.variacoes_erro, null);
     assert.match(local(await post(base, `/admin/massa-wa/${id}/materializar`, {})), /ok=materializada/);
+  });
+});
+
+test('editar o texto-base com a IA DESLIGADA: nada e gravado, o erro fica na tela e a campanha nao avanca', async () => {
+  const jobId = criarVaga();
+  criarCandidatura(jobId);
+  await comServidor(async (base) => {
+    await comIa([json([...REDACOES_LEMBRETE])], () => criarLembrete(base, jobId));
+    const id = ultimaCampanha().id;
+    const res = await post(base, `/admin/massa-wa/${id}`, {
+      nome: 'Lembrete', job_id: String(jobId), status: ['sem_decisao'], texto_base: `${BASE_LEMBRETE}\nAté!`,
+    });
+    assert.match(local(res), /erro=ia_desligada/);
+    assert.deepEqual(textosDe(id), [...REDACOES_LEMBRETE], 'nenhum texto padrao no lugar');
+    assert.equal(v.variacoesDesatualizadas(ultimaCampanha()), true);
+    assert.match(local(await post(base, `/admin/massa-wa/${id}/materializar`, {})), /erro=variacoes_com_erro/);
+  });
+});
+
+test('campanha criada com a IA desligada: depois de ligar, SALVAR a configuracao ja gera as 7 (sem mudar o texto)', async () => {
+  // O caso de uso: criou com a IA desligada, ficou "Variações com erro". Ligou a IA, salvou.
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await criarLembrete(base, jobId);
+    const id = ultimaCampanha().id;
+    assert.equal(textosDe(id).length, 0);
+    await comIa([json([...REDACOES_LEMBRETE])], async (chamadas) => {
+      const res = await post(base, `/admin/massa-wa/${id}`, {
+        nome: 'Lembrete', job_id: String(jobId), status: ['sem_decisao'], texto_base: BASE_LEMBRETE,
+      });
+      assert.match(local(res), /ok=salva_regenerada/);
+      assert.equal(chamadas.length, 1);
+    });
+    assert.deepEqual(textosDe(id), [...REDACOES_LEMBRETE]);
+    assert.equal(ultimaCampanha().variacoes_erro, null);
+  });
+});
+
+test('o botao "Gerar/Regenerar variações com IA" fica ANTES das caixas das variacoes', async () => {
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await criarLembrete(base, jobId);
+    const html = await get(base, `/admin/massa-wa/${ultimaCampanha().id}`);
+    const botao = html.indexOf('Gerar variações com IA');
+    assert.ok(botao > 0);
+    assert.ok(botao < html.indexOf('name="variacao_1"'), 'antes da primeira caixa');
+    assert.ok(botao < html.indexOf('Prévia das 7 variações'), 'antes da previa');
+    assert.match(html, /MASSA_WA_LLM_ATIVO=true<\/code> nas variáveis do Railway/);
   });
 });
 
@@ -242,7 +284,7 @@ test('salvar a configuracao SEM mudar o texto-base (mesmo com \\r\\n) nao desatu
   });
 });
 
-test('campanha ativa cujo texto-base e editado nao pode ser reativada sem regenerar', async () => {
+test('campanha pausada cujo texto-base e editado com a IA desligada nao pode ser reativada', async () => {
   const jobId = criarVaga();
   criarCandidatura(jobId);
   await comServidor(async (base) => {
@@ -251,7 +293,7 @@ test('campanha ativa cujo texto-base e editado nao pode ser reativada sem regene
     await post(base, `/admin/massa-wa/${id}/materializar`, {});
     await post(base, `/admin/massa-wa/${id}/status`, { status: 'pausada' });
     await post(base, `/admin/massa-wa/${id}`, { nome: 'Lembrete', job_id: String(jobId), status: ['sem_decisao'], texto_base: `${BASE_LEMBRETE}\nAté!` });
-    assert.match(local(await post(base, `/admin/massa-wa/${id}/status`, { status: 'ativa' })), /erro=variacoes_desatualizadas/);
+    assert.match(local(await post(base, `/admin/massa-wa/${id}/status`, { status: 'ativa' })), /erro=variacoes_com_erro/);
   });
 });
 
