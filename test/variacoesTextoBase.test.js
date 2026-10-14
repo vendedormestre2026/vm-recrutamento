@@ -13,28 +13,9 @@ const assert = require('node:assert/strict');
 const v = require('../src/lib/variacoesMassaWa');
 const { hashTextoBase, normalizarTextoBase } = require('../src/lib/hashTextoBase');
 
-// O texto-base REAL da campanha 9 (como o Rafael digitou).
-const BASE_LEMBRETE = [
-  '{saudacao} Aqui é o {recrutador}, da *Vendedor Mestre*.',
-  '',
-  'Estou passando aqui só pra lembrar que a entrevista ONLINE em grupo para a vaga *{vaga}* na *{empresa}* é daqui a pouco às 14h. Já tem o link da entrevista? Se não, então salva o meu contato e salva o link abaixo:',
-  '',
-  '🔗 Link direto para entrevista às 14h: https://meet.google.com/qeu-emje-txh?pli=1',
-  '',
-  'A entrevista acontece pelo Google Meet. Te espero lá.',
-].join('\n');
-const URL_SALA = 'https://meet.google.com/qeu-emje-txh?pli=1';
-
-// Uma redacao legitima do lembrete: mesmos fatos, tokens e link; outras palavras.
-const VARIACAO_BOA = [
-  '{saudacao} Quem fala é o {recrutador}, da *Vendedor Mestre*. 😊',
-  '',
-  'Só um lembrete rápido: hoje, às 14h, tem a nossa entrevista ONLINE em grupo da vaga *{vaga}* na *{empresa}*, e já está chegando a hora. Ainda não tem o link? Guarde meu número e anote o endereço da sala:',
-  '',
-  '👉 Sala da entrevista das 14h: https://meet.google.com/qeu-emje-txh?pli=1',
-  '',
-  'Vai ser pelo Google Meet. Até daqui a pouco!',
-].join('\n');
+// O texto-base REAL da campanha 9 e uma redacao legitima dele (mesmos fatos, tokens e link).
+const { BASE_LEMBRETE, REDACOES_LEMBRETE, URL_SALA } = require('./fixtures/variacoesLembreteMassaWa');
+const VARIACAO_BOA = REDACOES_LEMBRETE[0];
 
 const codigos = (problemas) => problemas.map((p) => p.codigo);
 const contra = (texto, base = BASE_LEMBRETE) => v.validarContraTextoBase(texto, base, 1);
