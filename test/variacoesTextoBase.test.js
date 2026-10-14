@@ -205,3 +205,12 @@ test('textoBaseEfetivo e ehTextoBasePadrao', () => {
   assert.equal(v.ehTextoBasePadrao(v.TEXTO_BASE_PADRAO.replace(/\n/g, '\r\n')), true);
   assert.equal(v.ehTextoBasePadrao(BASE_LEMBRETE), false);
 });
+
+test('bloqueioDasVariacoes: erro de geracao > desatualizadas > liberado; sem variacoes nao ha desatualizacao', () => {
+  const ok = { texto_base: BASE_LEMBRETE, variacoes_base_hash: hashTextoBase(BASE_LEMBRETE), variacoes_erro: null };
+  assert.equal(v.bloqueioDasVariacoes(ok), null);
+  assert.equal(v.bloqueioDasVariacoes({ ...ok, variacoes_erro: 'IA desligada' }), 'com_erro');
+  assert.equal(v.bloqueioDasVariacoes({ ...ok, variacoes_erro: 'x', variacoes_base_hash: null }), 'com_erro');
+  assert.equal(v.bloqueioDasVariacoes({ ...ok, texto_base: 'outro' }), 'desatualizadas');
+  assert.equal(v.bloqueioDasVariacoes({ ...ok, texto_base: 'outro' }, { temVariacoes: false }), null);
+});

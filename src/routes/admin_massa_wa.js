@@ -19,8 +19,8 @@
 // que vai concluir a coisa errada sobre o que aconteceu.
 //
 // ── O QUE ESTAS TELAS NAO FAZEM ──
-// Nao chamam o LLM de verdade (ver POST /:id/sugerir). Nao retomam campanha pausada
-// automaticamente. Nao remarcam item terminal. Nao reenviam nada.
+// So chamam o LLM com MASSA_WA_LLM_ATIVO=true (ver gerarESalvarVariacoes). Nao retomam campanha
+// pausada automaticamente. Nao remarcam item terminal. Nao reenviam nada.
 
 const express = require('express');
 
@@ -30,6 +30,8 @@ const worker = require('../whatsapp/massaOutbox');
 const { varianteSemNono } = require('../whatsapp/sequenciaOutbox');
 const cadencia = require('../lib/cadenciaMassaWa');
 const variacoesLib = require('../lib/variacoesMassaWa');
+const geradorVariacoes = require('../lib/gerarVariacoesMassaWa');
+const { normalizarTextoBase } = require('../lib/hashTextoBase');
 const publico = require('../lib/publicoMassaWhatsapp');
 const segLib = require('../lib/publicoSegmentoMassaWa');
 const cidadesLib = require('../lib/cidades');
@@ -93,6 +95,16 @@ function frasesDosProblemas(problemas, escapeHtml) {
         return `${onde}tem ${p.tamanho} caracteres (o teto é ${p.teto}).`;
       case variacoesLib.PROBLEMA_DUPLICADA:
         return `${onde}é igual à variação ${p.igualA} (ignorando pontuação e acentos).`;
+      case variacoesLib.PROBLEMA_TOKEN_INVENTADO:
+        return `${onde}usa ${p.tokens.map((t) => `{${escapeHtml(t)}}`).join(', ')}, que o texto-base não tem — a variação acrescentou informação.`;
+      case variacoesLib.PROBLEMA_URL:
+        return `${onde}perdeu ou alterou o link ${p.urls.map((u) => `<code>${escapeHtml(u)}</code>`).join(', ')} do texto-base.`;
+      case variacoesLib.PROBLEMA_PARECIDA:
+        return `${onde}está parecida demais com a variação ${p.igualA} (${Math.round(p.similaridade * 100)}% das palavras iguais; o limite é ${Math.round(p.limite * 100)}%).`;
+      case variacoesLib.PROBLEMA_PARECIDA_BASE:
+        return `${onde}está parecida demais com o texto-base (${Math.round(p.similaridade * 100)}% das palavras iguais; o limite é ${Math.round(p.limite * 100)}%).`;
+      case variacoesLib.PROBLEMA_TAMANHO_BASE:
+        return `${onde}tem ${p.tamanho} caracteres; o texto-base tem ${p.base}, e a variação precisa ficar entre ${Math.ceil(p.base * p.min)} e ${Math.floor(p.base * p.max)}.`;
       default:
         return `${onde}${escapeHtml(p.codigo)}`;
     }
@@ -112,7 +124,11 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     criada: ['ok', 'Campanha criada como rascunho. Agora escreva as variações e confira o público.'],
     salva: ['ok', 'Configuração salva.'],
     variacoes: ['ok', 'Variações salvas.'],
+    // Segmento: inalterado (o texto-base dele e fixo; "sugerir" restaura as sementes do convite).
     sugerido: ['alerta', 'Campos preenchidos com os textos-semente. A sugestão por IA está desligada (ver a nota abaixo).'],
+    gerado: ['ok', 'As 7 variações foram geradas pela IA a partir do texto-base e passaram na validação. Confira a prévia antes de materializar.'],
+    criada_gerada: ['ok', 'Campanha criada como rascunho, com as 7 variações geradas pela IA a partir do texto-base. Confira a prévia e o público.'],
+    salva_desatualizada: ['alerta', 'Configuração salva. O texto-base mudou: as variações ficaram <b>desatualizadas</b> e a campanha não materializa, não ativa nem envia até você regenerar ou revisar e salvar as 7.'],
     materializada: ['ok', 'Público congelado na fila. Revise e ative quando quiser começar.'],
     ativada: ['ok', 'Campanha ATIVA. O envio respeita a cadência, a janela de horário e o teto diário.'],
     pausada: ['ok', 'Campanha pausada. Ela não volta sozinha.'],
@@ -129,6 +145,10 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
       + `${cadencia.PISO.pausaLoteMinS / 60} minutos entre lotes e no máximo ${cadencia.PISO.loteMax} mensagens por lote. Nada foi salvo.`,
     status: 'Selecione ao menos um status do recrutador para o público.',
     variacoes_invalidas: 'As variações não passaram na validação — corrija os pontos listados.',
+    ia_desligada: `${geradorVariacoes.ERRO_IA_DESLIGADA}. Nenhum texto padrão foi colocado no lugar.`,
+    geracao_falhou: 'A geração das variações por IA falhou (o motivo está no bloco “As 7 variações”). Nada foi gravado.',
+    variacoes_com_erro: 'As variações estão com erro de geração (ver o bloco “As 7 variações”). Gere de novo ou escreva e salve as 7.',
+    variacoes_desatualizadas: 'As variações foram feitas para um texto-base anterior. Regenere ou revise e salve as 7 antes de continuar.',
     sem_variacoes: 'Escreva e salve as 7 variações antes de materializar o público.',
     sem_publico: 'O público está vazio com estes filtros — nada a materializar.',
     ja_materializada: 'Esta campanha já tem fila materializada.',
@@ -299,7 +319,9 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     return {
       nome: String(b.nome || '').trim(),
       jobId: b.job_id ? Number(b.job_id) : null,
-      textoBase: String(b.texto_base || '').trim() || null,
+      // Normalizado (\r\n do <textarea> -> \n). Vazio = null; quem chama decide o que isso
+      // significa (na criacao, o padrao; na edicao, manter o atual).
+      textoBase: normalizarTextoBase(b.texto_base) || null,
       statusList: publico.sanearStatusList([].concat(b.status || [])),
       cadencia: {
         loteMin: num(b.lote_min),
@@ -332,6 +354,50 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
   // Atributo do fragmento da previa ao vivo: a tela so troca o painel se ele vier (senao e o login).
   const MARCA_PREVIA = 'data-previa-segmento';
   const tipoDaCampanha = (campanha) => variacoesLib.tipoPorFonte(publico.fonteDaCampanhaMassaWa(campanha));
+
+  // Validacao das variacoes de UMA campanha: no tipo entrevista, contra o texto-base DELA (ver "O
+  // TEXTO-BASE E A FONTE DA VERDADE" em lib/variacoesMassaWa). Toda checagem desta tela passa por
+  // aqui, e o worker faz a mesma conta.
+  const validarDaCampanha = (campanha, textos) => {
+    const tipo = tipoDaCampanha(campanha);
+    return variacoesLib.validarVariacoes(textos, {
+      tipo,
+      textoBase: tipo === variacoesLib.TIPO_ENTREVISTA_GRUPO ? variacoesLib.textoBaseEfetivo(campanha) : undefined,
+    });
+  };
+
+  // Trava ALEM da validacao (so tipo entrevista): erro de geracao registrado, ou variacoes feitas
+  // para um texto-base que ja mudou. Codigo de ERROS, ou null.
+  const bloqueioDasVariacoes = (campanha) => {
+    if (ehSegmento(campanha)) return null;
+    const b = variacoesLib.bloqueioDasVariacoes(campanha, { temVariacoes: db.listarVariacoesMassaWa(campanha.id).length > 0 });
+    return b ? `variacoes_${b}` : null;
+  };
+
+  // Gera as 7 variacoes a partir do texto-base e grava (carimbando o hash). Com a IA desligada ou
+  // numa falha, registra o erro na campanha e NAO grava nada — nunca cai nas sementes (decisao D1).
+  // Devolve o codigo para o redirect: null (gerou), 'ia_desligada' ou 'geracao_falhou'.
+  async function gerarESalvarVariacoes(campanha) {
+    if (!geradorVariacoes.iaLigada()) {
+      db.registrarErroVariacoesMassaWa(campanha.id, geradorVariacoes.ERRO_IA_DESLIGADA);
+      return 'ia_desligada';
+    }
+    let r;
+    try {
+      r = await geradorVariacoes.gerarVariacoes(variacoesLib.textoBaseEfetivo(campanha));
+    } catch (err) {
+      // gerarVariacoes nao lanca; isto e a rede de seguranca para nao virar 500 sem registro.
+      r = { ok: false, erro: `Falha inesperada na geração (${err.message}).` };
+    }
+    if (!r.ok) {
+      db.registrarErroVariacoesMassaWa(campanha.id, r.erro);
+      console.warn(`[massa-wa] campanha ${campanha.id}: geracao de variacoes falhou: ${r.erro}`);
+      return 'geracao_falhou';
+    }
+    db.salvarVariacoesMassaWa(campanha.id, r.variacoes);
+    console.log(`[massa-wa] campanha ${campanha.id}: 7 variacoes geradas a partir do texto-base (${r.tentativas} tentativa(s)).`);
+    return null;
+  }
 
   const ROTULO_CANAL = { meta: 'Meta/Central Whats', email: 'e-mail', massa: 'massa (Baileys)', n8n: 'n8n por praça' };
   const textoPorCanal = (porCanal) => Object.entries(porCanal || {})
@@ -1064,11 +1130,13 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
             desmarcados de propósito — marque só se tiver certeza.</p>
         </fieldset>
 
-        <label class="campo"><span>Texto base (semente das variações)</span>
+        <label class="campo"><span>Texto base (a fonte das 7 variações)</span>
           <textarea name="texto_base" rows="10">${escapeHtml(dados.texto_base || variacoesLib.TEXTO_BASE_PADRAO)}</textarea></label>
         <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
-          Não é o que sai no envio — o que sai é sempre uma das 7 variações. Tokens disponíveis:
-          ${variacoesLib.TOKENS.map((t) => `<code>{${t}}</code>`).join(' ')}.</p>
+          As 7 variações são <b>redações deste texto</b>: mesmos fatos, links e tokens, outras palavras. O que sai no
+          envio é sempre uma delas. Mudar este texto depois deixa as variações <b>desatualizadas</b> até você
+          regenerar ou revisar e salvar as 7. A linha de descadastro é acrescentada pelo sistema — não precisa
+          escrever. Tokens disponíveis: ${variacoesLib.TOKENS.map((t) => `<code>{${t}}</code>`).join(' ')}.</p>
 
 ${camposCadencia(c)}
 
@@ -1147,7 +1215,7 @@ ${camposCadencia(c)}
     res.send(paginaAdmin({ titulo: 'Nova campanha', conteudo }));
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', async (req, res) => {
     if ((req.body || {}).fonte === 'segmento') {
       const lido = lerSegmentoDoCorpo(req.body, { vagaAlvoId: Number(req.body.vaga_alvo_id) || null });
       const v = validarSegmento(lido);
@@ -1171,16 +1239,27 @@ ${camposCadencia(c)}
     if (!d.statusList.length) return res.redirect('/admin/massa-wa/nova?erro=status');
     if (cadenciaAbaixoDoPiso(d.cadencia)) return res.redirect('/admin/massa-wa/nova?erro=cadencia_piso');
 
+    // Texto-base vazio = o padrao (o formulario sempre vem com ele preenchido; so um POST sem o
+    // campo chega aqui vazio).
+    const textoBase = d.textoBase || variacoesLib.TEXTO_BASE_PADRAO;
     const id = db.criarCampanhaMassaWa({
       nome: d.nome,
       jobId: d.jobId,
-      textoBase: d.textoBase,
+      textoBase,
       criterios: { statusList: d.statusList },
       cadencia: d.cadencia,
     });
-    // As 7 sementes ja entram: a campanha nasce pronta para revisao, e nao com sete campos vazios.
-    db.salvarVariacoesMassaWa(id, [...variacoesLib.VARIACOES_SEED]);
-    return res.redirect(`/admin/massa-wa/${id}?ok=criada`);
+
+    // ── AS VARIACOES SAEM DO TEXTO-BASE (2026-10-14) ──
+    // As sementes so entram quando o texto-base E o padrao: so entao elas sao derivacoes dele.
+    // Qualquer outro texto vai para a geracao por IA; desligada ou com falha, a campanha nasce SEM
+    // variacoes e com o erro na tela — nunca com as sementes do convite (o bug da campanha 9).
+    if (variacoesLib.ehTextoBasePadrao(textoBase)) {
+      db.salvarVariacoesMassaWa(id, [...variacoesLib.VARIACOES_SEED]);
+      return res.redirect(`/admin/massa-wa/${id}?ok=criada`);
+    }
+    const erro = await gerarESalvarVariacoes(db.obterCampanhaMassaWa(id));
+    return res.redirect(`/admin/massa-wa/${id}?${erro ? `erro=${erro}` : 'ok=criada_gerada'}`);
   });
 
   // ══════════════════ DETALHE ══════════════════
@@ -1257,15 +1336,46 @@ ${camposCadencia(c)}
   }
 
   function blocoVariacoes(campanha, req) {
+    if (ehSegmento(campanha)) return blocoVariacoesSegmento(campanha);
+
+    // ── TIPO ENTREVISTA: o texto-base e a fonte da verdade (2026-10-14) ──
     const lista = db.listarVariacoesMassaWa(campanha.id);
     const textos = Array.from({ length: variacoesLib.TOTAL_VARIACOES }, (_, i) => {
       const v = lista.find((x) => x.indice === i + 1);
       return v ? v.texto : '';
     });
-    const tipo = tipoDaCampanha(campanha);
-    const { tokens: tokensTipo, obrigatorios: obrigatoriosTipo } = variacoesLib.tokensDoTipo(tipo);
-    const valid = variacoesLib.validarVariacoes(textos, { tipo });
+    const base = variacoesLib.textoBaseEfetivo(campanha);
+    const valid = validarDaCampanha(campanha, textos);
     const problemas = frasesDosProblemas(valid.problemas, escapeHtml);
+    const bloqueio = variacoesLib.bloqueioDasVariacoes(campanha, { temVariacoes: lista.length > 0 });
+    const avisos = variacoesLib.avisosDoTextoBase(base);
+    const obrig = variacoesLib.obrigatoriosDoTextoBase(base);
+    const urls = [...new Set(variacoesLib.urlsDe(base))];
+    const iaLigada = geradorVariacoes.iaLigada();
+
+    const alertas = [];
+    if (bloqueio === 'com_erro') {
+      alertas.push(`<div class="aviso-alerta"><b>Variações com erro — a campanha não materializa, não ativa nem envia:</b>
+        ${escapeHtml(campanha.variacoes_erro)}</div>`);
+    }
+    if (bloqueio === 'desatualizadas') {
+      alertas.push(`<div class="aviso-alerta"><b>Variações desatualizadas:</b> elas foram feitas para um texto-base
+        anterior. Clique em “Regenerar variações com IA” ou revise e salve as 7. Até lá a campanha não materializa,
+        não ativa nem envia.</div>`);
+    }
+    if (!lista.length && !bloqueio) {
+      alertas.push('<p class="aviso-alerta">Ainda não há variações: gere com IA a partir do texto-base ou escreva as 7.</p>');
+    }
+    if (avisos.urls.length || avisos.horas.length) {
+      const itens = [
+        ...avisos.horas.map((h) => `horário <b>${escapeHtml(h)}</b>`),
+        ...avisos.urls.map((u) => `link <code>${escapeHtml(u)}</code>`),
+      ];
+      alertas.push(`<div class="aviso-alerta"><b>Atenção:</b> o texto-base tem ${itens.join(', ')} escrito(s) à mão e não usa
+        <code>{data}</code>. Isso vale para um dia só: se a campanha continuar enviando depois, a mensagem vai anunciar
+        um horário ou uma sala que já passaram. Para acompanhar a próxima reunião da vaga, use
+        <code>{data}</code>, <code>{horario}</code> e <code>{link_meet}</code>.</div>`);
+    }
 
     const campos = textos
       .map(
@@ -1275,9 +1385,10 @@ ${camposCadencia(c)}
       )
       .join('');
 
-    const preview = ehSegmento(campanha) ? previaConvite(campanha, textos[0] || '') : (() => {
-      // Preview com dados REAIS da vaga da campanha (ou a primeira aberta com data), para o
-      // operador ver a mensagem como ela vai chegar — inclusive a data e o link de verdade.
+    // Previa das 7, com um destinatario FICTICIO (Maria Souza) e os dados REAIS da vaga da campanha
+    // (ou a primeira aberta com data): o operador ve a mensagem como ela vai chegar, inclusive a
+    // linha de descadastro que o sistema acrescenta.
+    const previas = (() => {
       const vaga = campanha.job_id
         ? db.obterVaga(campanha.job_id)
         : db.listarVagas().filter((v) => v.ativo).find((v) => temEntrevistaGrupoFutura(v));
@@ -1287,6 +1398,7 @@ ${camposCadencia(c)}
           não tem entrevista em grupo futura com link. Cadastre o link de confirmação (Calendly) e as datas na vaga —
           sem isso, <b>nenhum destinatário</b> recebe mensagem (cada item vira “Vaga sem data”).</p>`;
       }
+      if (!lista.length) return '<p style="color:var(--cinza);font-size:.85rem;">Sem variações para mostrar.</p>';
       // O link de descadastro e por destinatario; na previa vai um exemplo, nao um token valido.
       const ctx = variacoesLib.montarContexto({
         nome: 'Maria Souza',
@@ -1295,9 +1407,75 @@ ${camposCadencia(c)}
         linkDescadastro: `${config.baseUrl}/descadastro-whatsapp/(link-de-cada-destinatario)`,
         recrutador: db.obterConfig('recrutador_nome', ''),
       });
-      const { texto } = variacoesLib.resolverTexto(textos[0] || '', ctx);
-      return `<pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(texto))}</pre>`;
+      return textos.map((t, i) => {
+        if (!String(t).trim()) return '';
+        const { texto } = variacoesLib.resolverTexto(t, ctx);
+        return `<details${i === 0 ? ' open' : ''} style="margin:0 0 .5rem;"><summary>Variação ${i + 1}</summary>
+          <pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(texto))}</pre></details>`;
+      }).join('');
     })();
+
+    const nBase = base.length;
+    return `
+      <section class="rel-sec">
+        <h2>As 7 variações</h2>
+        ${alertas.join('')}
+        ${problemas.length
+          ? `<div class="aviso-alerta"><b>Pendências:</b><ul style="margin:.4rem 0 0 1rem;">${problemas.map((p) => `<li>${p}</li>`).join('')}</ul></div>`
+          : '<p class="aviso-ok">As 7 variações passam na validação contra o texto-base.</p>'}
+        <details style="margin:.4rem 0 .6rem;"><summary>Texto-base desta campanha (a fonte das variações)</summary>
+          <pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(base))}</pre></details>
+        <p style="color:var(--cinza);font-size:.85rem;">
+          Cada variação é uma <b>redação</b> do texto-base: mantém
+          ${obrig.length ? obrig.map((t) => `<code>{${escapeHtml(t)}}</code>`).join(' ') : 'os mesmos fatos'}${urls.length ? ` e o(s) link(s) ${urls.map((u) => `<code>${escapeHtml(u)}</code>`).join(' ')} exatamente como estão` : ''},
+          não usa token que o texto-base não tem, fica entre ${Math.ceil(nBase * variacoesLib.FATOR_TAMANHO_MIN)} e
+          ${Math.floor(nBase * variacoesLib.FATOR_TAMANHO_MAX)} caracteres e não repete mais de
+          ${Math.round(variacoesLib.SIMILARIDADE_MAXIMA * 100)}% das palavras do texto-base nem de outra variação.
+          O sistema acrescenta ao fim de cada mensagem a linha
+          <code>${escapeHtml(variacoesLib.LINHA_DESCADASTRO)}</code>, com o link de cada destinatário
+          (a não ser que a variação já tenha <code>{link_descadastro}</code>).</p>
+
+        <h3 style="font-size:.95rem;margin:1rem 0 .3rem;">Prévia das 7 variações (destinatário fictício, dados reais da vaga)</h3>
+        ${previas}
+
+        <form method="POST" action="/admin/massa-wa/${campanha.id}/variacoes">
+          ${campos}
+          <div class="acoes-linha">
+            <button type="submit" class="btn">Salvar variações</button>
+          </div>
+        </form>
+
+        <form method="POST" action="/admin/massa-wa/${campanha.id}/sugerir" style="margin-top:.6rem;"${lista.length
+          ? ` data-confirm="Substituir as variações atuais por 7 novas, geradas a partir do texto-base? O que você editou nelas se perde."
+              data-confirm-titulo="Regenerar as variações?" data-confirm-texto="Regenerar"` : ''}>
+          <button type="submit" class="btn btn--ghost">${lista.length ? 'Regenerar variações com IA' : 'Gerar variações com IA'}</button>
+        </form>
+        <p style="color:var(--cinza);font-size:.8rem;margin:.4rem 0 0;">
+          ${iaLigada
+            ? 'Gera as 7 a partir do texto-base e só grava se todas passarem na validação (até 3 tentativas). Se falhar, nada é gravado e o motivo aparece aqui.'
+            : `A geração por IA está <b>desligada</b> (<code>${geradorVariacoes.ENV_ATIVO}</code>): o botão recusa e nenhum texto padrão é colocado no lugar. Escreva as 7 variações manualmente.`}</p>
+      </section>`;
+  }
+
+  // Segmento: inalterado (texto-base fixo, sementes do convite, descadastro na propria variacao).
+  function blocoVariacoesSegmento(campanha) {
+    const lista = db.listarVariacoesMassaWa(campanha.id);
+    const textos = Array.from({ length: variacoesLib.TOTAL_VARIACOES }, (_, i) => {
+      const v = lista.find((x) => x.indice === i + 1);
+      return v ? v.texto : '';
+    });
+    const tipo = tipoDaCampanha(campanha);
+    const { tokens: tokensTipo, obrigatorios: obrigatoriosTipo } = variacoesLib.tokensDoTipo(tipo);
+    const valid = validarDaCampanha(campanha, textos);
+    const problemas = frasesDosProblemas(valid.problemas, escapeHtml);
+
+    const campos = textos
+      .map(
+        (t, i) => `
+        <label class="campo"><span>Variação ${i + 1}</span>
+          <textarea name="variacao_${i + 1}" rows="14">${escapeHtml(t)}</textarea></label>`,
+      )
+      .join('');
 
     return `
       <section class="rel-sec">
@@ -1310,7 +1488,7 @@ ${camposCadencia(c)}
           (o link de descadastro de cada destinatário). Tokens: ${tokensTipo.map((t) => `<code>{${t}}</code>`).join(' ')}.</p>
 
         <h3 style="font-size:.95rem;margin:1rem 0 .3rem;">Prévia da variação 1, com dados reais</h3>
-        ${preview}
+        ${previaConvite(campanha, textos[0] || '')}
 
         <form method="POST" action="/admin/massa-wa/${campanha.id}/variacoes">
           ${campos}
@@ -1570,12 +1748,18 @@ ${camposCadencia(c)}
     db.atualizarCampanhaMassaWa(id, {
       nome: d.nome,
       jobId: d.jobId,
-      textoBase: d.textoBase,
+      // Campo vazio ou ausente MANTEM o texto-base atual: apagar o texto nao e um texto novo.
+      textoBase: d.textoBase || campanha.texto_base,
       // Mescla, e nao substitui: o registro da materializacao mora no mesmo JSON.
       criterios: { ...criteriosDaCampanha(campanha), statusList: d.statusList },
       totalEstimado: campanha.total_estimado,
       cadencia: d.cadencia,
     });
+    // Texto-base mudou: as variacoes ficam desatualizadas (o carimbo nao bate mais) e a tela diz.
+    // NAO regenera sozinho (decisao D4): substituir o que o operador revisou exige um clique dele.
+    const depois = db.obterCampanhaMassaWa(id);
+    const mudou = normalizarTextoBase(depois.texto_base) !== normalizarTextoBase(campanha.texto_base);
+    if (mudou && db.listarVariacoesMassaWa(id).length) return res.redirect(`/admin/massa-wa/${id}?ok=salva_desatualizada`);
     return res.redirect(`/admin/massa-wa/${id}?ok=salva`);
   });
 
@@ -1594,24 +1778,26 @@ ${camposCadencia(c)}
     return res.redirect(`/admin/massa-wa/${id}?ok=variacoes`);
   });
 
-  // "Sugerir com IA".
+  // "Gerar / Regenerar variações com IA" (a rota manteve o nome antigo, /sugerir).
   //
-  // ⚠️ NAO CHAMA O LLM. A chamada real depende de autorizacao explicita (MASSA_WA_LLM_ATIVO), e
-  // enquanto ela nao existe o botao preenche os campos com as sementes — que e o mesmo ponto de
-  // partida, sem custo e sem chamada externa. O aviso na tela diz isso ao operador; deixar o botao
-  // "funcionando" sem avisar seria pior que nao ter botao.
-  router.post('/:id/sugerir', (req, res) => {
+  // Tipo entrevista: gera as 7 A PARTIR DO TEXTO-BASE (lib/gerarVariacoesMassaWa) e so grava se as
+  // 7 passarem na validacao. Ate 2026-10-14 esta rota gravava as sementes do convite, qualquer que
+  // fosse o texto-base — a causa da campanha 9. Com MASSA_WA_LLM_ATIVO desligado (o padrao) ela
+  // RECUSA com erro na tela e nao grava nada (decisao D1).
+  //
+  // Segmento: inalterado. O texto-base dele e fixo e as sementes do convite sao as derivacoes
+  // aprovadas dele, entao "sugerir" continua sendo restaurar as sementes.
+  router.post('/:id/sugerir', async (req, res) => {
     const id = Number(req.params.id);
     const campanhaSug = db.obterCampanhaMassaWa(id);
     if (!campanhaSug) return res.status(404).send(paginaAdmin({ titulo: 'Campanha', conteudo: '<h1>Campanha não encontrada.</h1>' }));
 
-    if (String(process.env.MASSA_WA_LLM_ATIVO || '').toLowerCase() === 'true') {
-      // Mesmo com a chave ligada, este caminho ainda nao existe: a integracao sera escrita quando
-      // autorizada. Falhar dizendo isso e melhor que fingir.
-      console.warn('[massa-wa] MASSA_WA_LLM_ATIVO ligado, mas a geracao por IA ainda nao foi implementada.');
+    if (ehSegmento(campanhaSug)) {
+      db.salvarVariacoesMassaWa(id, [...variacoesLib.sementesDoTipo(tipoDaCampanha(campanhaSug))]);
+      return res.redirect(`/admin/massa-wa/${id}?ok=sugerido`);
     }
-    db.salvarVariacoesMassaWa(id, [...variacoesLib.sementesDoTipo(tipoDaCampanha(campanhaSug))]);
-    return res.redirect(`/admin/massa-wa/${id}?ok=sugerido`);
+    const erro = await gerarESalvarVariacoes(campanhaSug);
+    return res.redirect(`/admin/massa-wa/${id}?${erro ? `erro=${erro}` : 'ok=gerado'}`);
   });
 
   // ══════════════════ MATERIALIZAR ══════════════════
@@ -1624,8 +1810,10 @@ ${camposCadencia(c)}
     const ja = db.resumoCampanhaMassaWa(id).reduce((a, l) => a + l.n, 0);
     if (ja > 0) return res.redirect(`/admin/massa-wa/${id}?erro=ja_materializada`);
 
+    const bloqueio = bloqueioDasVariacoes(campanha);
+    if (bloqueio) return res.redirect(`/admin/massa-wa/${id}?erro=${bloqueio}`);
     const lista = db.listarVariacoesMassaWa(id);
-    if (!variacoesLib.validarVariacoes(lista.map((v) => v.texto), { tipo: tipoDaCampanha(campanha) }).ok) {
+    if (!validarDaCampanha(campanha, lista.map((v) => v.texto)).ok) {
       return res.redirect(`/admin/massa-wa/${id}?erro=variacoes_invalidas`);
     }
 
@@ -1719,8 +1907,10 @@ ${camposCadencia(c)}
       // checagens da mesma regra, nos tres momentos em que ela pode ter mudado.
       const ja = db.resumoCampanhaMassaWa(id).reduce((a, l) => a + l.n, 0);
       if (!ja) return res.redirect(`/admin/massa-wa/${id}?erro=nao_materializada`);
+      const bloqueio = bloqueioDasVariacoes(campanha);
+      if (bloqueio) return res.redirect(`/admin/massa-wa/${id}?erro=${bloqueio}`);
       const lista = db.listarVariacoesMassaWa(id);
-      if (!variacoesLib.validarVariacoes(lista.map((v) => v.texto), { tipo: tipoDaCampanha(campanha) }).ok) {
+      if (!validarDaCampanha(campanha, lista.map((v) => v.texto)).ok) {
         return res.redirect(`/admin/massa-wa/${id}?erro=variacoes_invalidas`);
       }
     }
@@ -1758,8 +1948,10 @@ ${camposCadencia(c)}
     const telefone = normalizarTelefoneWhatsapp(String((req.body && req.body.telefone) || ''));
     if (!telefone) return res.redirect(`/admin/massa-wa/${id}?erro=telefone`);
 
+    const bloqueio = bloqueioDasVariacoes(campanha);
+    if (bloqueio) return res.redirect(`/admin/massa-wa/${id}?erro=${bloqueio}`);
     const lista = db.listarVariacoesMassaWa(id);
-    if (!variacoesLib.validarVariacoes(lista.map((v) => v.texto), { tipo: tipoDaCampanha(campanha) }).ok) {
+    if (!validarDaCampanha(campanha, lista.map((v) => v.texto)).ok) {
       return res.redirect(`/admin/massa-wa/${id}?erro=variacoes_invalidas`);
     }
 

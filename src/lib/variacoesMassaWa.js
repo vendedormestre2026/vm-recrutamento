@@ -504,6 +504,19 @@ function variacoesDesatualizadas(campanha) {
   return campanha.variacoes_base_hash !== hashTextoBase(campanha.texto_base);
 }
 
+// A trava das variacoes ALEM da validacao (tipo entrevista; o segmento nao passa por aqui). A tela
+// (materializar, ativar, teste) e o worker usam esta mesma funcao — a regra nao pode divergir.
+//   'com_erro'       a ultima geracao falhou, ou a IA estava desligada (variacoes_erro)
+//   'desatualizadas' ha variacoes, mas de um texto-base que ja mudou (decisao D4)
+//   null             liberado (a validacao ainda decide)
+// Sem variacoes nao ha o que estar desatualizado: quem barra e a validacao (faltam as 7).
+function bloqueioDasVariacoes(campanha, { temVariacoes = true } = {}) {
+  if (!campanha) return null;
+  if (String(campanha.variacoes_erro || '').trim()) return 'com_erro';
+  if (temVariacoes && variacoesDesatualizadas(campanha)) return 'desatualizadas';
+  return null;
+}
+
 // URLs escritas por extenso, na ordem. Pontuacao colada no fim ("...txh." ou "(link)") nao e parte
 // do link.
 function urlsDe(texto) {
@@ -903,6 +916,7 @@ module.exports = {
   textoBaseEfetivo,
   ehTextoBasePadrao,
   variacoesDesatualizadas,
+  bloqueioDasVariacoes,
   urlsDe,
   similaridade,
   obrigatoriosDoTextoBase,

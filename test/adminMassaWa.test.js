@@ -33,7 +33,7 @@ const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const { criarApp } = require('../src/server');
-const { VARIACOES_SEED, TOTAL_VARIACOES } = require('../src/lib/variacoesMassaWa');
+const { VARIACOES_SEED, TEXTO_BASE_PADRAO } = require('../src/lib/variacoesMassaWa');
 
 migrar();
 
@@ -148,7 +148,8 @@ test('a tela diz, no topo, se o disparo esta ligado, se e mock e se o socket est
 
 // ══════════════════ CRIAR ══════════════════
 
-test('cria a campanha como RASCUNHO, com as 7 sementes ja salvas', async () => {
+test('cria a campanha como RASCUNHO; com o texto-base PADRAO, as 7 sementes ja entram', async () => {
+  // As sementes sao redacoes do TEXTO_BASE_PADRAO — so por isso podem entrar sem geracao.
   limpar();
   const jobId = criarVaga();
   await comServidor(async (base) => {
@@ -157,7 +158,7 @@ test('cria a campanha como RASCUNHO, com as 7 sementes ja salvas', async () => {
       nome: 'Convite outubro',
       job_id: String(jobId),
       status: ['sem_decisao', 'em_analise'],
-      texto_base: 'base',
+      texto_base: TEXTO_BASE_PADRAO.replace(/\n/g, '\r\n'), // como o <textarea> devolve
     });
     assert.ok(res.status < 400);
 
@@ -166,7 +167,25 @@ test('cria a campanha como RASCUNHO, com as 7 sementes ja salvas', async () => {
     assert.equal(c.status, 'rascunho', 'nunca nasce ativa');
     assert.equal(c.job_id, jobId);
     assert.deepEqual(JSON.parse(c.criterios_json).statusList.sort(), ['em_analise', 'sem_decisao']);
-    assert.equal(db.listarVariacoesMassaWa(c.id).length, TOTAL_VARIACOES);
+    assert.deepEqual(db.listarVariacoesMassaWa(c.id).map((v) => v.texto), [...VARIACOES_SEED]);
+    assert.equal(c.variacoes_erro, null);
+  });
+});
+
+test('regressao campanha 9: texto-base PROPRIO nunca recebe as sementes (IA desligada: nasce sem variacoes e com erro)', async () => {
+  // Era o bug: texto_base 'base' (ou um lembrete) e, mesmo assim, as 7 sementes do convite.
+  limpar();
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await autenticar(base);
+    const res = await post(base, '/admin/massa-wa', {
+      nome: 'Lembrete', job_id: String(jobId), status: ['sem_decisao'], texto_base: '{saudacao} base {vaga}',
+    });
+    assert.match(res.headers.get('location') || '', /erro=ia_desligada/);
+    const c = ultimaCampanha();
+    assert.equal(c.texto_base, '{saudacao} base {vaga}');
+    assert.equal(db.listarVariacoesMassaWa(c.id).length, 0, 'nenhuma semente gravada');
+    assert.equal(c.variacoes_erro, 'Geração por IA desligada: escreva as 7 variações manualmente');
   });
 });
 
@@ -302,7 +321,7 @@ test('a tela mostra a previa da mensagem com dados REAIS da vaga', async () => {
     await post(base, '/admin/massa-wa', { nome: 'C', job_id: String(jobId), status: ['sem_decisao'] });
     const html = await get(base, `/admin/massa-wa/${ultimaCampanha().id}`);
 
-    assert.match(html, /Prévia da variação 1, com dados reais/);
+    assert.match(html, /Prévia das 7 variações \(destinatário fictício, dados reais da vaga\)/);
     assert.ok(html.includes(LINK_MEET), 'a previa tem que mostrar o link de verdade');
     assert.match(html, /Acme Ltda/);
     assert.match(html, /19:30/);
@@ -327,9 +346,9 @@ test('vaga SEM data: a tela avisa que ninguem receberia mensagem', async () => {
   });
 });
 
-test('"Sugerir com IA" preenche com as sementes e AVISA que a IA esta desligada', async () => {
-  // Nenhuma chamada ao LLM acontece. Deixar o botao "funcionando" sem avisar seria pior que nao ter
-  // botao — o operador acreditaria que os textos vieram de um modelo.
+test('"Gerar com IA" com a IA DESLIGADA recusa com erro claro e NAO grava sementes (D1)', async () => {
+  // Ate 2026-10-14 este botao gravava as sementes do convite, qualquer que fosse o texto-base.
+  // Nenhuma chamada ao LLM acontece com MASSA_WA_LLM_ATIVO desligado (o padrao).
   limpar();
   const jobId = criarVaga();
   await comServidor(async (base) => {
@@ -340,11 +359,12 @@ test('"Sugerir com IA" preenche com as sementes e AVISA que a IA esta desligada'
     assert.equal(db.listarVariacoesMassaWa(id).length, 1);
 
     const res = await post(base, `/admin/massa-wa/${id}/sugerir`, {});
-    assert.match(res.headers.get('location') || '', /ok=sugerido/);
-    assert.equal(db.listarVariacoesMassaWa(id).length, TOTAL_VARIACOES);
+    assert.match(res.headers.get('location') || '', /erro=ia_desligada/);
+    assert.deepEqual(db.listarVariacoesMassaWa(id).map((v) => v.texto), ['so uma'], 'nada substituido');
 
-    const html = await get(base, `/admin/massa-wa/${id}?ok=sugerido`);
-    assert.match(html, /sugestão por IA está desligada|A geração por IA está <b>desligada<\/b>/);
+    const html = await get(base, `/admin/massa-wa/${id}?erro=ia_desligada`);
+    assert.match(html, /Geração por IA desligada: escreva as 7 variações manualmente/);
+    assert.match(html, /A geração por IA está <b>desligada<\/b>/);
   });
 });
 
