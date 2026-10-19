@@ -266,7 +266,7 @@ test('o botao "Gerar/Regenerar variações com IA" fica ANTES das caixas das var
     const botao = html.indexOf('Gerar variações com IA');
     assert.ok(botao > 0);
     assert.ok(botao < html.indexOf('name="variacao_1"'), 'antes da primeira caixa');
-    assert.ok(botao < html.indexOf('Prévia das 7 variações'), 'antes da previa');
+    assert.ok(botao < html.indexOf('id="previa-variacao_1"'), 'antes da previa');
     assert.match(html, /MASSA_WA_LLM_ATIVO=true<\/code> nas variáveis do Railway/);
   });
 });
@@ -304,11 +304,12 @@ test('previa das 7 com destinatario ficticio; a linha de descadastro do sistema 
   await comServidor(async (base) => {
     await comIa([json([...REDACOES_LEMBRETE])], () => criarLembrete(base, jobId));
     const html = await get(base, `/admin/massa-wa/${ultimaCampanha().id}`);
-    assert.match(html, /Prévia das 7 variações \(destinatário fictício, dados reais da vaga\)/);
-    for (let i = 1; i <= 7; i += 1) assert.match(html, new RegExp(`<summary>Variação ${i}</summary>`));
-    assert.equal(html.split('Olá, Maria!').length - 1, 7, 'as 7 com o mesmo destinatario ficticio');
-    const linha = 'Para não receber mais mensagens nossas, acesse: ';
-    assert.equal(html.split(`${linha}https://`).length - 1, 7, 'uma linha resolvida por variacao, nunca duas');
+    // Um balao embaixo de cada caixa: as 7 variacoes e o texto-base (na configuracao) = 8.
+    for (let i = 1; i <= 7; i += 1) assert.ok(html.includes(`id="previa-variacao_${i}"`), `balao da variacao ${i}`);
+    assert.ok(html.includes('id="previa-texto_base"'));
+    assert.equal(html.split('Olá, Maria!').length - 1, 8, 'os 8 baloes com o mesmo destinatario ficticio');
+    const linha = 'Para não receber mais mensagens nossas, acesse: <span class="wa-sub"><a href="https://';
+    assert.equal(html.split(linha).length - 1, 8, 'uma linha resolvida por balao, nunca duas');
     assert.ok(html.includes(URL_SALA));
   });
 });
@@ -384,5 +385,115 @@ test('variacoes salvas a mao: \\r\\n vira \\n no banco e a achatada aparece nas 
     for (const t of textosDe(c.id)) assert.ok(!t.includes('\r'), 'sem \\r gravado');
     const html = await get(base, `/admin/massa-wa/${c.id}`);
     assert.match(html, /Variação 2: perdeu os parágrafos: tem 0 quebra\(s\) de linha/);
+  });
+});
+
+// ══════════════════ PREVIA EM BALAO AO VIVO (2026-10-19) ══════════════════
+
+const { formatarWhatsappHtml, MARCA_INICIO, MARCA_FIM } = require('../src/lib/formatoWhatsapp');
+const { MARCA_BALAO, PROXIMA_EXEMPLO } = require('../src/routes/admin_massa_wa');
+
+// Estado que a previa NAO pode mexer: campanhas, variacoes, custo de API.
+const fotografia = () => JSON.stringify([
+  db.getDb().prepare('SELECT * FROM campanhas_massa_wa ORDER BY id').all(),
+  db.getDb().prepare('SELECT * FROM campanhas_massa_wa_variacoes ORDER BY campanha_id, indice').all(),
+  db.getDb().prepare('SELECT COUNT(*) n FROM api_usage').get(),
+]);
+async function semLlm(fn) {
+  const original = providerLlm.completar;
+  let chamadas = 0;
+  providerLlm.completar = async () => { chamadas += 1; throw new Error('a previa nao pode chamar o LLM'); };
+  try { await fn(); } finally { providerLlm.completar = original; }
+  return chamadas;
+}
+
+test('POST /:id/previa: balao formatado com os dados reais da vaga, sem gravar nada e sem LLM', async () => {
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await comIa([json([...REDACOES_LEMBRETE])], () => criarLembrete(base, jobId));
+    const id = ultimaCampanha().id;
+    const antes = fotografia();
+    let res;
+    const chamadas = await semLlm(async () => {
+      res = await post(base, `/admin/massa-wa/${id}/previa`, { texto: '{saudacao}\n\n*{vaga}* na _{empresa}_\n<script>x</script>' });
+    });
+    assert.equal(chamadas, 0);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    const html = await res.text();
+    assert.ok(html.includes(MARCA_BALAO));
+    assert.match(html, /<span class="wa-sub">Olá, Maria!<\/span>\n\n<b><span class="wa-sub">Closer \d+<\/span><\/b> na <i><span class="wa-sub">Acme Ltda<\/span><\/i>/);
+    assert.ok(html.includes('&lt;script&gt;x&lt;/script&gt;') && !html.includes('<script>'), 'escapado');
+    assert.match(html, /Para não receber mais mensagens nossas, acesse:/, 'a linha do sistema, como no envio');
+    assert.doesNotMatch(html, /exemplo/);
+    assert.equal(fotografia(), antes, 'nada gravado');
+  });
+});
+
+test('POST /previa (criacao) com vaga sem entrevista futura: data/horario/link de EXEMPLO, marcados', async () => {
+  seq += 1;
+  const semData = db.criarVaga({ slug: `vaga-sem-data-${seq}`, titulo: 'Sem Data', perfil: 'CLOSER', empresa: 'Acme Ltda', ativo: true });
+  await comServidor(async (base) => {
+    const res = await post(base, '/admin/massa-wa/previa', { texto: '📅 *{data}* ⏰ {horario}\n🔗 {link_meet}', job_id: String(semData) });
+    const html = await res.text();
+    assert.match(html, /Exemplo: a vaga não tem entrevista em\s+grupo futura/);
+    assert.ok(html.includes(PROXIMA_EXEMPLO.dataTexto) && html.includes(PROXIMA_EXEMPLO.horaTexto));
+    assert.ok(html.includes(`<a href="${PROXIMA_EXEMPLO.linkMeet}"`));
+    assert.match(html, /📅 <b><span class="wa-sub">/);
+  });
+});
+
+test('POST /previa exige o login do painel; campanha inexistente da 404', async () => {
+  await comServidor(async (base) => {
+    const anonimo = await fetch(`${base}/admin/massa-wa/previa`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'texto=oi', redirect: 'manual',
+    });
+    assert.ok([302, 303, 401].includes(anonimo.status), `status ${anonimo.status}`);
+    assert.ok(!(await anonimo.text()).includes(MARCA_BALAO));
+    const inexistente = await post(base, '/admin/massa-wa/999999/previa', { texto: 'oi' });
+    assert.equal(inexistente.status, 404);
+  });
+});
+
+test('a tela abre com um balao embaixo de cada caixa e o script de atualizacao ao digitar', async () => {
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await comIa([json([...REDACOES_LEMBRETE])], () => criarLembrete(base, jobId));
+    const id = ultimaCampanha().id;
+    const html = await get(base, `/admin/massa-wa/${id}`);
+    for (let i = 1; i <= 7; i += 1) {
+      const caixa = html.indexOf(`name="variacao_${i}"`);
+      assert.ok(caixa > 0 && caixa < html.indexOf(`id="previa-variacao_${i}"`), `balao depois da caixa ${i}`);
+      assert.ok(html.includes(`data-previa-url="/admin/massa-wa/${id}/previa" data-previa-alvo="previa-variacao_${i}"`));
+    }
+    assert.ok(html.includes('data-previa-alvo="previa-texto_base"'));
+    assert.match(html, /\.wa-balao \{ white-space:pre-wrap;/);
+    assert.match(html, /setTimeout\(atualizar, 500\)/);
+    assert.doesNotMatch(html, /#(?:00|33|66)[0-9a-f]{2}ff|linear-gradient/i, 'sem azul/gradiente');
+    const nova = await get(base, '/admin/massa-wa/nova');
+    assert.ok(nova.includes('data-previa-url="/admin/massa-wa/previa"'));
+  });
+});
+
+test('previa e envio usam a MESMA resolverTexto: tirando as marcas, o texto e identico ao enviado', async () => {
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await comIa([json([...REDACOES_LEMBRETE])], () => criarLembrete(base, jobId));
+    const original = v.resolverTexto;
+    const chamadas = [];
+    v.resolverTexto = (...args) => { chamadas.push(args); return original(...args); };
+    try {
+      await post(base, `/admin/massa-wa/${ultimaCampanha().id}/previa`, { texto: REDACOES_LEMBRETE[0] });
+    } finally {
+      v.resolverTexto = original;
+    }
+    assert.equal(chamadas.length, 1, 'a previa passa pela resolverTexto da lib');
+    const [texto, ctx, opcoes] = chamadas[0];
+    assert.equal(opcoes.marcar, true);
+    const marcado = original(texto, ctx, { marcar: true }).texto;
+    const enviado = original(texto, ctx).texto;
+    assert.equal(marcado.replace(new RegExp(`[${MARCA_INICIO}${MARCA_FIM}]`, 'g'), ''), enviado);
+    assert.ok(!enviado.includes(MARCA_INICIO), 'o envio nunca leva marca');
+    assert.ok(formatarWhatsappHtml(marcado).includes('<span class="wa-sub">'));
   });
 });

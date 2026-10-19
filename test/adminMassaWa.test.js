@@ -321,13 +321,13 @@ test('a tela mostra a previa da mensagem com dados REAIS da vaga', async () => {
     await post(base, '/admin/massa-wa', { nome: 'C', job_id: String(jobId), status: ['sem_decisao'] });
     const html = await get(base, `/admin/massa-wa/${ultimaCampanha().id}`);
 
-    assert.match(html, /Prévia das 7 variações \(destinatário fictício, dados reais da vaga\)/);
+    assert.match(html, /Prévia no WhatsApp \(Maria Souza é fictícia;/);
     assert.ok(html.includes(LINK_MEET), 'a previa tem que mostrar o link de verdade');
     assert.match(html, /Acme Ltda/);
     assert.match(html, /19:30/);
     assert.match(html, /Olá, Maria!/);
     // O *negrito* do WhatsApp aparece como negrito na previa, e nao com asteriscos.
-    assert.match(html, /<b>Acme Ltda<\/b>/);
+    assert.match(html, /<b><span class="wa-sub">Acme Ltda<\/span><\/b>/);
     assert.match(html, /\/descadastro-whatsapp\//, 'a previa mostra onde vai o link de descadastro');
   });
 });

@@ -37,6 +37,7 @@ const segLib = require('../lib/publicoSegmentoMassaWa');
 const cidadesLib = require('../lib/cidades');
 const { normalizarTelefoneWhatsapp } = require('../lib/whatsapp');
 const { proximaEntrevistaGrupo, temEntrevistaGrupoFutura } = require('../lib/entrevistaGrupo');
+const { formatarWhatsappHtml } = require('../lib/formatoWhatsapp');
 const { config } = require('../config');
 const { partesBrasilia, paraTextoSqlUtc, inicioDoDiaBrasiliaUtc } = require('../lib/fusoBrasilia');
 
@@ -113,11 +114,85 @@ function frasesDosProblemas(problemas, escapeHtml) {
   });
 }
 
-// *negrito* do WhatsApp como <b> na previa, para o operador ver a mensagem como ela chega. Recebe
-// texto JA escapado. So o negrito: e o unico marcador que as seeds usam (ver TEXTO_BASE_PADRAO).
-function negritoWhatsapp(html) {
-  return String(html).replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
-}
+// ── Previa em balao (2026-10-19) ──
+//
+// A previa mostra a mensagem como ela chega: tokens trocados pelo MESMO resolverTexto do envio
+// (com `marcar`, so para destacar o que veio do cadastro) e a formatacao do WhatsApp por
+// lib/formatoWhatsapp, que escapa o HTML antes de tudo. O <textarea> continua com o texto cru.
+
+// Sem entrevista em grupo futura, a previa usa estes dados — e diz que sao exemplo, na propria
+// mensagem e num aviso acima dela. Nunca chegam a um envio: so a previa os usa.
+const PROXIMA_EXEMPLO = Object.freeze({
+  dataTexto: 'quinta-feira, 03/12/2026 (exemplo)',
+  horaTexto: '14:00 (exemplo)',
+  linkMeet: 'https://calendly.com/exemplo',
+});
+
+// Marca do fragmento devolvido por POST /previa: sem ela, a resposta e outra coisa (o login, com
+// a sessao expirada) e o script nao a coloca na tela.
+const MARCA_BALAO = 'data-previa-wa';
+
+const ESTILO_PREVIA_WA = `
+  <style>
+    .wa-previa { margin:-.6rem 0 1.2rem; }
+    .wa-previa-rotulo { font-size:.78rem; color:var(--cinza); margin:0 0 .3rem; }
+    .wa-previa-exemplo { font-size:.78rem; color:var(--laranja); font-weight:700; margin:0 0 .3rem; }
+    .wa-balao { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--branco); color:var(--preto);
+      border:1px solid var(--linha); border-radius:12px 12px 12px 2px; padding:.7rem .9rem; max-width:34rem;
+      font:inherit; font-size:.92rem; line-height:1.45; margin:0; }
+    .wa-balao a { color:var(--preto); text-decoration:underline; }
+    .wa-balao .wa-sub { border-bottom:1px dotted var(--laranja); }
+    .wa-balao .wa-mono { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:.85rem; }
+    .wa-previa[aria-busy="true"] .wa-balao { opacity:.55; }
+  </style>`;
+
+// Atualiza o balao 500 ms depois da ultima tecla no <textarea data-previa-url>; cada pedido novo
+// cancela o anterior. So le: o endpoint nao grava nada nem chama o LLM.
+const SCRIPT_PREVIA_WA = `
+  <script>
+  (function () {
+    if (!window.fetch || !window.URLSearchParams) return;
+    Array.prototype.forEach.call(document.querySelectorAll('textarea[data-previa-url]'), function (campo) {
+      var alvo = document.getElementById(campo.getAttribute('data-previa-alvo'));
+      if (!alvo) return;
+      var timer = null;
+      var controle = null;
+      function atualizar() {
+        if (controle) controle.abort();
+        controle = window.AbortController ? new AbortController() : null;
+        var dados = new URLSearchParams();
+        dados.set('texto', campo.value);
+        var vaga = campo.form && campo.form.elements.job_id;
+        if (vaga) dados.set('job_id', vaga.value);
+        alvo.setAttribute('aria-busy', 'true');
+        fetch(campo.getAttribute('data-previa-url'), {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: dados.toString(),
+          signal: controle ? controle.signal : undefined,
+        })
+          .then(function (r) { return r.text(); })
+          .then(function (html) {
+            alvo.removeAttribute('aria-busy');
+            if (html.indexOf('${MARCA_BALAO}') === -1) {
+              alvo.innerHTML = '<p class="wa-previa-rotulo">Sessão expirada: entre de novo no painel para ver a prévia.</p>';
+              return;
+            }
+            alvo.innerHTML = html;
+          })
+          .catch(function (e) {
+            if (e && e.name === 'AbortError') return;
+            alvo.removeAttribute('aria-busy');
+          });
+      }
+      function agendar() { clearTimeout(timer); timer = setTimeout(atualizar, 500); }
+      campo.addEventListener('input', agendar);
+      var vaga = campo.form && campo.form.elements.job_id;
+      if (vaga) vaga.addEventListener('change', agendar);
+    });
+  })();
+  </script>`;
 
 function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora }) {
   const router = express.Router();
@@ -924,6 +999,22 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
     return res.status(status).type('html').send(html);
   });
 
+  // Previa em balao de UM texto (texto-base ou variacao), para a atualizacao ao digitar. So le:
+  // nao grava nada, nao chama o LLM e nao envia. Auth e protecao herdadas do router.use(adminAuth)
+  // de admin.js, como todas as rotas daqui. '/previa' (sem id) serve a tela de criacao; com id, a
+  // vaga da campanha vale quando o formulario nao manda job_id.
+  router.post(['/previa', '/:id/previa'], (req, res) => {
+    const corpo = req.body || {};
+    let jobId = Number(corpo.job_id) || null;
+    if (req.params.id !== undefined) {
+      const campanha = db.obterCampanhaMassaWa(Number(req.params.id));
+      if (!campanha || ehSegmento(campanha)) return res.status(404).type('text').send('Campanha não encontrada.');
+      if (corpo.job_id === undefined) jobId = campanha.job_id || null;
+    }
+    res.set('Cache-Control', 'no-store');
+    return res.type('html').send(balaoPrevia(String(corpo.texto || '').slice(0, 20000), contextoDaPrevia(jobId)));
+  });
+
   router.get('/:id/conferencia', (req, res) => {
     const campanha = db.obterCampanhaMassaWa(Number(req.params.id));
     if (!campanha || !ehSegmento(campanha)) {
@@ -1125,6 +1216,7 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
 
   function formCampanha(dados, { acao, rotuloBotao }) {
     const c = cadencia.resolverCadencia(dados);
+    const urlPrevia = dados.id ? `/admin/massa-wa/${dados.id}/previa` : '/admin/massa-wa/previa';
     return `
       <form method="POST" action="${acao}">
         <label class="campo"><span>Nome da campanha</span>
@@ -1144,8 +1236,11 @@ function criarRouterMassaWa({ paginaAdmin, escapeHtml, fmtInt, formatarDataHora 
             desmarcados de propósito — marque só se tiver certeza.</p>
         </fieldset>
 
-        <label class="campo"><span>Texto base (a fonte das 7 variações)</span>
-          <textarea name="texto_base" rows="10">${escapeHtml(dados.texto_base || variacoesLib.TEXTO_BASE_PADRAO)}</textarea></label>
+        ${campoComPrevia({
+          nome: 'texto_base', rotulo: 'Texto base (a fonte das 7 variações)', linhas: 10, urlPrevia,
+          texto: dados.texto_base || variacoesLib.TEXTO_BASE_PADRAO,
+          info: contextoDaPrevia(Number(dados.job_id) || null),
+        })}
         <p style="color:var(--cinza);font-size:.8rem;margin:-.5rem 0 1.2rem;">
           As 7 variações são <b>redações deste texto</b>: mesmos fatos, links e tokens, outras palavras. O que sai no
           envio é sempre uma delas. Ao salvar um texto diferente, as 7 são <b>refeitas automaticamente</b> a partir
@@ -1225,7 +1320,8 @@ ${camposCadencia(c)}
       <h1>Nova campanha de disparo em massa</h1>
       ${seletorFonte('vagas_abertas')}
       ${flash(req)}
-      ${formCampanha({}, { acao: '/admin/massa-wa', rotuloBotao: 'Criar rascunho' })}`;
+      ${formCampanha({}, { acao: '/admin/massa-wa', rotuloBotao: 'Criar rascunho' })}
+      ${ESTILO_PREVIA_WA}${SCRIPT_PREVIA_WA}`;
     res.send(paginaAdmin({ titulo: 'Nova campanha', conteudo }));
   });
 
@@ -1342,8 +1438,50 @@ ${camposCadencia(c)}
       linkDescadastro: `${config.baseUrl}/descadastro-whatsapp/(link-de-cada-destinatario)`,
       recrutador: db.obterConfig('recrutador_nome', ''),
     });
-    const r = variacoesLib.resolverTexto(texto, ctx, { tipo: variacoesLib.TIPO_CONVITE_CANDIDATURA });
-    return `<pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(r.texto))}</pre>`;
+    const r = variacoesLib.resolverTexto(texto, ctx, { tipo: variacoesLib.TIPO_CONVITE_CANDIDATURA, marcar: true });
+    return `<div class="wa-balao">${formatarWhatsappHtml(r.texto)}</div>`;
+  }
+
+  // Contexto da previa do tipo entrevista: destinatario FICTICIO (Maria Souza) e os dados REAIS da
+  // vaga (a escolhida, ou a primeira aberta com data). Sem entrevista futura, PROXIMA_EXEMPLO —
+  // e `exemplo: true`, para a tela dizer.
+  function contextoDaPrevia(jobId) {
+    const vaga = jobId
+      ? db.obterVaga(jobId)
+      : db.listarVagas().filter((v) => v.ativo).find((v) => temEntrevistaGrupoFutura(v));
+    const real = vaga ? proximaEntrevistaGrupo(vaga) : null;
+    // O link de descadastro e por destinatario; na previa vai um exemplo, nao um token valido.
+    const ctx = variacoesLib.montarContexto({
+      nome: 'Maria Souza',
+      job: vaga || { titulo: 'Cargo de exemplo', empresa: '' },
+      proxima: real || PROXIMA_EXEMPLO,
+      linkDescadastro: `${config.baseUrl}/descadastro-whatsapp/(link-de-cada-destinatario)`,
+      recrutador: db.obterConfig('recrutador_nome', ''),
+    });
+    return { ctx, exemplo: !real, vaga };
+  }
+
+  // Conteudo do balao (o que POST /previa devolve e o que a tela abre ja renderizado).
+  function balaoPrevia(texto, { ctx, exemplo, vaga }) {
+    if (!String(texto == null ? '' : texto).trim()) {
+      return `<div ${MARCA_BALAO}><p class="wa-previa-rotulo">Sem texto para mostrar.</p></div>`;
+    }
+    const { texto: resolvido } = variacoesLib.resolverTexto(texto, ctx, { marcar: true });
+    const aviso = exemplo
+      ? `<p class="wa-previa-exemplo">Exemplo: ${vaga ? 'a vaga' : 'nenhuma vaga aberta'} não tem entrevista em
+          grupo futura — data, horário e link abaixo são de exemplo e nenhum destinatário recebe assim.</p>`
+      : '';
+    return `<div ${MARCA_BALAO}>${aviso}<p class="wa-previa-rotulo">Prévia no WhatsApp (Maria Souza é fictícia;
+      os trechos sublinhados vêm do cadastro):</p><div class="wa-balao">${formatarWhatsappHtml(resolvido)}</div></div>`;
+  }
+
+  // <textarea> com o balao embaixo, atualizado ao digitar.
+  function campoComPrevia({ nome, rotulo, texto, linhas, urlPrevia, info }) {
+    const alvo = `previa-${nome}`;
+    return `
+        <label class="campo"><span>${rotulo}</span>
+          <textarea name="${nome}" rows="${linhas}" data-previa-url="${urlPrevia}" data-previa-alvo="${alvo}">${escapeHtml(texto)}</textarea></label>
+        <div class="wa-previa" id="${alvo}" aria-live="polite">${balaoPrevia(texto, info)}</div>`;
   }
 
   function blocoVariacoes(campanha, req) {
@@ -1388,43 +1526,22 @@ ${camposCadencia(c)}
         <code>{data}</code>, <code>{horario}</code> e <code>{link_meet}</code>.</div>`);
     }
 
+    // Cada variacao com o balao da previa embaixo: destinatario FICTICIO (Maria Souza), dados
+    // REAIS da vaga da campanha e a linha de descadastro que o sistema acrescenta — a mensagem como
+    // ela chega. O balao acompanha a digitacao (POST /:id/previa).
+    const info = contextoDaPrevia(campanha.job_id);
+    if (info.exemplo) {
+      alertas.push(`<p class="aviso-alerta">${info.vaga ? 'Esta vaga' : 'Nenhuma vaga aberta'}
+        não tem entrevista em grupo futura com link: a prévia usa data, horário e link de <b>exemplo</b>.
+        Cadastre o link de confirmação (Calendly) e as datas na vaga — sem isso, <b>nenhum destinatário</b>
+        recebe mensagem (cada item vira “Vaga sem data”).</p>`);
+    }
     const campos = textos
-      .map(
-        (t, i) => `
-        <label class="campo"><span>Variação ${i + 1}</span>
-          <textarea name="variacao_${i + 1}" rows="14">${escapeHtml(t)}</textarea></label>`,
-      )
+      .map((t, i) => campoComPrevia({
+        nome: `variacao_${i + 1}`, rotulo: `Variação ${i + 1}`, linhas: 14, texto: t,
+        urlPrevia: `/admin/massa-wa/${campanha.id}/previa`, info,
+      }))
       .join('');
-
-    // Previa das 7, com um destinatario FICTICIO (Maria Souza) e os dados REAIS da vaga da campanha
-    // (ou a primeira aberta com data): o operador ve a mensagem como ela vai chegar, inclusive a
-    // linha de descadastro que o sistema acrescenta.
-    const previas = (() => {
-      const vaga = campanha.job_id
-        ? db.obterVaga(campanha.job_id)
-        : db.listarVagas().filter((v) => v.ativo).find((v) => temEntrevistaGrupoFutura(v));
-      const proxima = vaga ? proximaEntrevistaGrupo(vaga) : null;
-      if (!proxima) {
-        return `<p class="aviso-alerta">Sem prévia da mensagem: ${vaga ? 'esta vaga' : 'nenhuma vaga aberta'}
-          não tem entrevista em grupo futura com link. Cadastre o link de confirmação (Calendly) e as datas na vaga —
-          sem isso, <b>nenhum destinatário</b> recebe mensagem (cada item vira “Vaga sem data”).</p>`;
-      }
-      if (!lista.length) return '<p style="color:var(--cinza);font-size:.85rem;">Sem variações para mostrar.</p>';
-      // O link de descadastro e por destinatario; na previa vai um exemplo, nao um token valido.
-      const ctx = variacoesLib.montarContexto({
-        nome: 'Maria Souza',
-        job: vaga,
-        proxima,
-        linkDescadastro: `${config.baseUrl}/descadastro-whatsapp/(link-de-cada-destinatario)`,
-        recrutador: db.obterConfig('recrutador_nome', ''),
-      });
-      return textos.map((t, i) => {
-        if (!String(t).trim()) return '';
-        const { texto } = variacoesLib.resolverTexto(t, ctx);
-        return `<details${i === 0 ? ' open' : ''} style="margin:0 0 .5rem;"><summary>Variação ${i + 1}</summary>
-          <pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(texto))}</pre></details>`;
-      }).join('');
-    })();
 
     const nBase = base.length;
     return `
@@ -1446,7 +1563,7 @@ ${camposCadencia(c)}
               <code>${geradorVariacoes.ENV_ATIVO}=true</code> nas variáveis do Railway. Enquanto isso o botão recusa,
               nenhum texto padrão é colocado no lugar e as 7 precisam ser escritas nas caixas abaixo.`}</p>
         <details style="margin:.4rem 0 .6rem;"><summary>Texto-base desta campanha (a fonte das variações)</summary>
-          <pre style="white-space:pre-wrap;background:var(--campo);border:1px solid var(--linha);border-radius:8px;padding:.8rem;font:inherit;">${negritoWhatsapp(escapeHtml(base))}</pre></details>
+          <div class="wa-balao">${formatarWhatsappHtml(base)}</div></details>
         <p style="color:var(--cinza);font-size:.85rem;">
           Cada variação é uma <b>redação</b> do texto-base: mantém
           ${obrig.length ? obrig.map((t) => `<code>{${escapeHtml(t)}}</code>`).join(' ') : 'os mesmos fatos'}${urls.length ? ` e o(s) link(s) ${urls.map((u) => `<code>${escapeHtml(u)}</code>`).join(' ')} exatamente como estão` : ''},
@@ -1456,9 +1573,6 @@ ${camposCadencia(c)}
           O sistema acrescenta ao fim de cada mensagem a linha
           <code>${escapeHtml(variacoesLib.LINHA_DESCADASTRO)}</code>, com o link de cada destinatário
           (a não ser que a variação já tenha <code>{link_descadastro}</code>).</p>
-
-        <h3 style="font-size:.95rem;margin:1rem 0 .3rem;">Prévia das 7 variações (destinatário fictício, dados reais da vaga)</h3>
-        ${previas}
 
         <form method="POST" action="/admin/massa-wa/${campanha.id}/variacoes">
           ${campos}
@@ -1727,7 +1841,8 @@ ${camposCadencia(c)}
         ${ehSegmento(campanha)
           ? formSegmentoDaCampanha(campanha)
           : formCampanha(campanha, { acao: `/admin/massa-wa/${campanha.id}`, rotuloBotao: 'Salvar configuração' })}
-      </section>`;
+      </section>
+      ${ESTILO_PREVIA_WA}${ehSegmento(campanha) ? '' : SCRIPT_PREVIA_WA}`;
 
     return res.send(paginaAdmin({ titulo: campanha.nome, conteudo }));
   });
@@ -2030,4 +2145,4 @@ ${camposCadencia(c)}
   return router;
 }
 
-module.exports = { criarRouterMassaWa, ROTULO_STATUS, ROTULO_ENVIO, frasesDosProblemas, negritoWhatsapp };
+module.exports = { criarRouterMassaWa, ROTULO_STATUS, ROTULO_ENVIO, frasesDosProblemas, PROXIMA_EXEMPLO, MARCA_BALAO };

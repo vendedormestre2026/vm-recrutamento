@@ -51,6 +51,7 @@
 const { saudacao } = require('./whatsappSequencia');
 const { textoEmpresa, primeiroNomeDe, RECRUTADOR_PADRAO } = require('./whatsapp');
 const { normalizarTextoBase, hashTextoBase } = require('./hashTextoBase');
+const { MARCA_INICIO, MARCA_FIM } = require('./formatoWhatsapp');
 
 // Tokens reconhecidos. Ordem estavel (usada em mensagem de erro e na tela de ajuda).
 const TOKENS = Object.freeze([
@@ -858,7 +859,11 @@ function linkDescadastroPara(telefone, montarUrl) {
 // sairia "na ." — e o candidato receberia uma frase quebrada. Devolver `faltando` deixa a decisao
 // com o worker, que marca o item e segue para o proximo destinatario, sem derrubar o ciclo nem
 // mandar texto defeituoso.
-function resolverTexto(texto, contexto = {}, { tipo = TIPO_ENTREVISTA_GRUPO } = {}) {
+//
+// `marcar` (so a PREVIA do painel usa): cerca cada valor substituido com as marcas de
+// lib/formatoWhatsapp, que viram destaque na tela. O envio nunca passa `marcar` — o texto que sai
+// e o mesmo de sempre; a previa e o envio passam pela MESMA funcao e so diferem nesse cercado.
+function resolverTexto(texto, contexto = {}, { tipo = TIPO_ENTREVISTA_GRUPO, marcar = false } = {}) {
   const { tokens: conhecidos, obrigatorios } = tokensDoTipo(tipo);
   // `contexto || {}` e nao so o default do parametro: o default nao cobre quem passa `null`
   // explicitamente, e esta funcao roda dentro do laco de envio — uma excecao aqui derrubaria o
@@ -868,6 +873,7 @@ function resolverTexto(texto, contexto = {}, { tipo = TIPO_ENTREVISTA_GRUPO } = 
   // previa passam por esta funcao, entao nenhum deles mostra uma mensagem diferente da que sai.
   // Como ela traz {link_descadastro}, um link que nao pode ser montado vira `faltando` e o item
   // nao sai, igual a antes.
+  if (marcar) texto = String(texto == null ? '' : texto).replace(/[\uE000\uE001]/g, '');
   if (tipo === TIPO_ENTREVISTA_GRUPO) texto = comLinhaDescadastro(texto);
   const usados = new Set(tokensDe(texto));
   const faltando = [...usados].filter(
@@ -879,7 +885,8 @@ function resolverTexto(texto, contexto = {}, { tipo = TIPO_ENTREVISTA_GRUPO } = 
     // Token desconhecido fica LITERAL de proposito: apagar esconderia o erro, e o validador ja
     // recusa isso antes de a campanha poder disparar.
     if (!conhecidos.includes(chave)) return inteiro;
-    return String(ctx[chave] == null ? '' : ctx[chave]);
+    const valor = String(ctx[chave] == null ? '' : ctx[chave]);
+    return marcar && valor ? `${MARCA_INICIO}${valor}${MARCA_FIM}` : valor;
   });
 
   return { texto: resolvido, faltando };

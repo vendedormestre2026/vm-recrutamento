@@ -177,3 +177,17 @@ test('o texto que sai preserva as quebras de linha e o *negrito* da variacao', a
     assert.match(texto, /\*[^*\n]+\*/);
   }
 });
+
+test('o worker resolve pela MESMA resolverTexto da previa, sem marcas', async () => {
+  limpar();
+  criarCampanha(criarVaga());
+  const original = v.resolverTexto;
+  const opcoes = [];
+  v.resolverTexto = (t, c, o) => { opcoes.push(o || {}); return original(t, c, o); };
+  let enviados;
+  try { enviados = await rodar(); } finally { v.resolverTexto = original; }
+  assert.ok(enviados.length > 0);
+  assert.ok(opcoes.length >= enviados.length);
+  assert.ok(opcoes.every((o) => !o.marcar), 'o envio nunca pede marcas');
+  for (const { texto } of enviados) assert.doesNotMatch(texto, /[-]/);
+});
