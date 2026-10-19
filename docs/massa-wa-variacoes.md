@@ -26,6 +26,7 @@ ativar, no teste e no worker. Ela é recusada se:
 | repete ≥ 85% das palavras do texto-base (Jaccard) | `parecida_com_base` |
 | repete ≥ 85% das palavras de outra variação | `parecida` |
 | tem menos de 0,6× ou mais de 1,6× o tamanho do texto-base | `tamanho_fora_do_base` |
+| tem menos da metade das quebras de linha do texto-base (mínimo 1) | `sem_quebras` |
 
 `{data}`, `{horario}` e `{link_meet}` só são exigidos se o texto-base os usa. Quando o texto-base
 tem horário ou link escritos à mão e não usa `{data}`, a tela mostra um aviso, sem bloquear: numa
@@ -37,6 +38,57 @@ tamanho dele.
 
 **As sementes** só entram sozinhas quando o texto-base é exatamente o `TEXTO_BASE_PADRAO`, porque só
 nesse caso elas são redações dele.
+
+### Parágrafos (`sem_quebras`, 2026-10-19)
+
+As 7 variações geradas pela IA nas campanhas 10 e 11 vieram numa linha só: 0 quebras, contra 11 e
+12 do texto-base. O validador aceitou, e a campanha 10 enviou 13 mensagens como um bloco corrido.
+Nenhum ponto do código removia `\n`: o prompt não pedia parágrafos.
+
+- **Regra:** a variação precisa de pelo menos metade das quebras do texto-base, arredondada para
+  cima, com mínimo de 1. Texto-base de uma linha não exige nada. Juntar duas linhas curtas passa;
+  achatar tudo não. Funções: `contarQuebras` e `minimoDeQuebras`.
+- **Prompt:** pede a mesma divisão em parágrafos, escrita como `\n` na string JSON, e informa o
+  mínimo. Uma variação recusada volta ao modelo com o motivo, dentro das mesmas 3 tentativas;
+  esgotadas, nada é gravado e o erro aparece na tela.
+- **Gravação:** o `\r\n` do `<textarea>` vira `\n`.
+- **Variação achatada já gravada** aparece nas pendências; materializar e ativar recusam, e o
+  worker pausa a campanha (`MOTIVO_VARIACOES_INVALIDAS`). Para corrigir, use "Regenerar variações
+  com IA" ou reescreva as caixas. Nada é regenerado sozinho em produção.
+
+## Prévia em balão
+
+Abaixo de cada `<textarea>` (o texto-base e cada uma das 7 variações) aparece a mensagem como ela
+chega no WhatsApp. O `<textarea>` continua com o texto cru, que é o que vai ao envio.
+
+- **Tokens:** são trocados pela mesma `resolverTexto` do envio, com destinatário fictício
+  (Maria Souza) e os dados reais da vaga. A opção `marcar`, usada só na prévia, sublinha de leve o
+  que veio do cadastro; sem as marcas, o texto é idêntico ao enviado, e um teste trava isso.
+- **Descadastro:** a linha do sistema aparece no fim, uma vez.
+- **Ao vivo:** 500 ms depois da última tecla, `POST /admin/massa-wa/:id/previa` (ou
+  `/admin/massa-wa/previa`, na tela de criação) devolve o balão. A rota só lê: não grava, não chama
+  o LLM e não envia, e exige o login do painel como as demais.
+- **Sem entrevista em grupo futura:** a prévia usa data, horário e link de exemplo, escritos
+  "(exemplo)", com um aviso acima do balão. Nenhum envio usa esses valores.
+
+### Formatação suportada (`src/lib/formatoWhatsapp.js`)
+
+| Texto | Prévia |
+|---|---|
+| `*negrito*` | **negrito** |
+| `_itálico_` | *itálico* |
+| `~riscado~` | ~~riscado~~ |
+| ```` ```mono``` ```` | `mono` (sem formatação nem link dentro) |
+| `\n` | quebra de linha; linhas em branco preservadas (`white-space: pre-wrap`) |
+| `https://...` | link clicável só na tela; pontuação, aspas e marcador colados ficam fora |
+
+Como no WhatsApp: o marcador de abertura vem no início ou depois de algo que não é letra ou número,
+e é seguido de algo que não é espaço; o de fechamento vem depois de algo que não é espaço e antes do
+fim ou de algo que não é letra ou número; tudo na mesma linha. `2*3*4`, `nome_do_arquivo`,
+`* solto*` e marcador sem par ficam literais. Os marcadores podem ser aninhados (`*_a_*`).
+
+O HTML é escapado antes de qualquer formatação: `<script>` e `&` aparecem como texto. Emojis
+passam intactos. Nada disso altera a string enviada: quem formata é o aparelho de quem recebe.
 
 ## O descadastro é do sistema
 
@@ -82,8 +134,8 @@ desatualizadas. É o caminho para uma campanha criada com a IA desligada: ligue 
   desatualizadas: materializar, ativar e o teste recusam, e o worker pausa uma campanha ativa
   (`MOTIVO_VARIACOES_COM_ERRO` / `MOTIVO_VARIACOES_DESATUALIZADAS`).
 
-O botão "Gerar / Regenerar variações com IA" fica no topo do bloco "As 7 variações", antes da
-prévia e das caixas.
+O botão "Gerar / Regenerar variações com IA" fica no topo do bloco "As 7 variações", antes das
+caixas e dos balões de prévia.
 
 ## Segmento
 
@@ -109,7 +161,8 @@ texto-base. A 7 e a 8 usaram as sementes com um texto-base de convite parecido.
    - as 7 variações passam;
    - todas têm a sala `https://meet.google.com/...` idêntica e "14h";
    - nenhuma tem "confirme presença" nem `{data}`;
-   - a prévia das 7 termina com a linha de descadastro, uma vez;
+   - cada balão de prévia tem os parágrafos do texto-base e termina com a linha de descadastro,
+     uma vez;
    - aparece o aviso de horário/link escritos à mão.
 4. Ver quantas chamadas foram feitas e quanto custaram: tabela `api_usage`, `origem = 'massa-wa'`.
    Não há tela para isso; consultar somente leitura via `railway ssh`.
