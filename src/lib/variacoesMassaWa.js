@@ -444,6 +444,7 @@ const PROBLEMA_URL = 'url_alterada';
 const PROBLEMA_PARECIDA = 'parecida';
 const PROBLEMA_PARECIDA_BASE = 'parecida_com_base';
 const PROBLEMA_TAMANHO_BASE = 'tamanho_fora_do_base';
+const PROBLEMA_SEM_QUEBRAS = 'sem_quebras';
 
 // ══════════════════════════════════════════════════════════════
 // O TEXTO-BASE E A FONTE DA VERDADE (2026-10-14)
@@ -538,6 +539,17 @@ function similaridade(a, b) {
   return uniao ? comum / uniao : 0;
 }
 
+function contarQuebras(texto) {
+  return (String(texto == null ? '' : texto).replace(/\r\n?/g, '\n').match(/\n/g) || []).length;
+}
+
+// Quebras de linha que uma variacao precisa ter: metade das do texto-base, arredondada para
+// cima, minimo 1. Texto-base de uma linha so nao exige nada (0).
+function minimoDeQuebras(textoBase) {
+  const n = contarQuebras(textoBase);
+  return n ? Math.max(1, Math.ceil(n / 2)) : 0;
+}
+
 // Tokens que a variacao TEM que manter: os conhecidos que o texto-base usa, menos o descadastro
 // (que e do sistema).
 function obrigatoriosDoTextoBase(textoBase, tipo = TIPO_ENTREVISTA_GRUPO) {
@@ -576,6 +588,15 @@ function validarContraTextoBase(texto, textoBase, indice) {
       indice, codigo: PROBLEMA_TAMANHO_BASE, tamanho: t.length, base: base.length,
       min: FATOR_TAMANHO_MIN, max: FATOR_TAMANHO_MAX,
     });
+  }
+
+  // Paragrafos (2026-10-19): o LLM devolveu as 7 da campanha 11 (e da 10, que ENVIOU 13) numa
+  // linha so — a mensagem chegou como um bloco corrido. A variacao precisa de pelo menos metade
+  // das quebras do texto-base (minimo 1): junta duas linhas curtas, tudo bem; achata tudo, nao.
+  const minimo = minimoDeQuebras(base);
+  const quebras = contarQuebras(t);
+  if (minimo && quebras < minimo) {
+    problemas.push({ indice, codigo: PROBLEMA_SEM_QUEBRAS, quebras, minimo, base: contarQuebras(base) });
   }
 
   const s = similaridade(t, base);
@@ -909,6 +930,9 @@ module.exports = {
   PROBLEMA_PARECIDA,
   PROBLEMA_PARECIDA_BASE,
   PROBLEMA_TAMANHO_BASE,
+  PROBLEMA_SEM_QUEBRAS,
+  contarQuebras,
+  minimoDeQuebras,
   LINHA_DESCADASTRO,
   SIMILARIDADE_MAXIMA,
   FATOR_TAMANHO_MIN,

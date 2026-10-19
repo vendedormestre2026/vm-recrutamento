@@ -153,3 +153,27 @@ test('campanha do texto-base PADRAO com as sementes continua enviando (nada muda
   }
   assert.equal(db.obterCampanhaMassaWa(id).status, 'ativa');
 });
+
+// ══════════════════ PARAGRAFOS (2026-10-19) ══════════════════
+
+test('regressao campanha 10: variacoes achatadas numa linha so PAUSAM, sem enviar', async () => {
+  limpar();
+  const id = criarCampanha(criarVaga(), { variacoes: REDACOES_LEMBRETE.map((t) => t.replace(/\s*\n+\s*/g, ' ')) });
+  const enviados = await rodar();
+  assert.equal(enviados.length, 0);
+  const c = db.obterCampanhaMassaWa(id);
+  assert.equal(c.status, 'pausada');
+  assert.equal(c.pausada_motivo, worker.MOTIVO_VARIACOES_INVALIDAS);
+});
+
+test('o texto que sai preserva as quebras de linha e o *negrito* da variacao', async () => {
+  limpar();
+  criarCampanha(criarVaga());
+  const enviados = await rodar();
+  assert.ok(enviados.length > 0);
+  for (const { texto } of enviados) {
+    assert.ok(v.contarQuebras(texto) >= v.minimoDeQuebras(BASE_LEMBRETE), 'quebras preservadas');
+    assert.match(texto, /\n\n/);
+    assert.match(texto, /\*[^*\n]+\*/);
+  }
+});

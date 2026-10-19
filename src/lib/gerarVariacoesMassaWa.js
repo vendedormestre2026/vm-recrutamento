@@ -75,6 +75,7 @@ function descreverProblema(p) {
     case variacoes.PROBLEMA_URL: return `perdeu ou alterou o link ${p.urls.join(', ')}`;
     case variacoes.PROBLEMA_TAMANHO_BASE: return `ficou com ${p.tamanho} caracteres (o texto-base tem ${p.base}; precisa ficar entre ${Math.ceil(p.base * p.min)} e ${Math.floor(p.base * p.max)})`;
     case variacoes.PROBLEMA_PARECIDA_BASE: return 'ficou parecida demais com o texto-base';
+    case variacoes.PROBLEMA_SEM_QUEBRAS: return `perdeu os paragrafos: tem ${p.quebras} quebra(s) de linha, precisa de pelo menos ${p.minimo} (o texto-base tem ${p.base}; use \\n dentro da string JSON)`;
     case variacoes.PROBLEMA_PARECIDA:
     case variacoes.PROBLEMA_DUPLICADA: return 'ficou parecida demais com outra variação';
     case variacoes.PROBLEMA_CHAVE_DUPLA: return 'usou {{chave dupla}}';
@@ -95,6 +96,7 @@ function montarMensagensVariacoes(textoBase, { quantidade = variacoes.TOTAL_VARI
   const urls = [...new Set(variacoes.urlsDe(base))];
   const min = Math.ceil(base.length * variacoes.FATOR_TAMANHO_MIN);
   const max = Math.floor(base.length * variacoes.FATOR_TAMANHO_MAX);
+  const minQuebras = variacoes.minimoDeQuebras(base);
 
   const system = [
     'Voce reescreve uma mensagem de WhatsApp de um recrutador em VARIAS redacoes diferentes, para',
@@ -122,6 +124,11 @@ function montarMensagensVariacoes(textoBase, { quantidade = variacoes.TOTAL_VARI
     '- cada link (URL) exatamente como esta, caractere por caractere, sem ponto ou asterisco colado;',
     '- o *negrito* do WhatsApp (texto entre asteriscos) nos mesmos trechos. Nao use _italico_.',
     '',
+    'PARAGRAFOS E QUEBRAS DE LINHA: mantenha a MESMA divisao em paragrafos e linhas do texto-base',
+    '(linha em branco entre paragrafos, uma informacao por linha onde o texto-base faz isso, como',
+    'data, horario e link). NUNCA junte tudo numa linha so: a mensagem chega como bloco corrido. Dentro',
+    'da string JSON, cada quebra de linha e escrita como \\n (e a linha em branco como \\n\\n).',
+    '',
     'NAO ESCREVA DESCADASTRO. Nada de "para nao receber mais mensagens", "responda SAIR" ou link de',
     'saida: o sistema acrescenta a linha de descadastro ao fim de cada mensagem, sozinho.',
     '',
@@ -131,6 +138,9 @@ function montarMensagensVariacoes(textoBase, { quantidade = variacoes.TOTAL_VARI
   const linhas = [
     `Escreva ${quantidade} variacao(oes) do texto-base abaixo.`,
     `Tamanho de cada uma: entre ${min} e ${max} caracteres (o texto-base tem ${base.length}).`,
+    ...(minQuebras
+      ? [`Quebras de linha de cada uma: pelo menos ${minQuebras} (o texto-base tem ${variacoes.contarQuebras(base)}), escritas como \\n na string JSON.`]
+      : []),
     tokens.length
       ? `Tokens que TODA variacao deve conter, cada um pelo menos uma vez: ${tokens.map((t) => `{${t}}`).join(' ')}.`
       : 'O texto-base nao tem tokens entre chaves: nao use nenhum.',

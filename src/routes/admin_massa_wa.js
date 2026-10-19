@@ -105,6 +105,8 @@ function frasesDosProblemas(problemas, escapeHtml) {
         return `${onde}está parecida demais com o texto-base (${Math.round(p.similaridade * 100)}% das palavras iguais; o limite é ${Math.round(p.limite * 100)}%).`;
       case variacoesLib.PROBLEMA_TAMANHO_BASE:
         return `${onde}tem ${p.tamanho} caracteres; o texto-base tem ${p.base}, e a variação precisa ficar entre ${Math.ceil(p.base * p.min)} e ${Math.floor(p.base * p.max)}.`;
+      case variacoesLib.PROBLEMA_SEM_QUEBRAS:
+        return `${onde}perdeu os parágrafos: tem ${p.quebras} quebra(s) de linha e precisa de pelo menos ${p.minimo} (o texto-base tem ${p.base}). Sairia como um bloco corrido no WhatsApp.`;
       default:
         return `${onde}${escapeHtml(p.codigo)}`;
     }

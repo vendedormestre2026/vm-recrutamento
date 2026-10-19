@@ -214,3 +214,42 @@ test('bloqueioDasVariacoes: erro de geracao > desatualizadas > liberado; sem var
   assert.equal(v.bloqueioDasVariacoes({ ...ok, texto_base: 'outro' }), 'desatualizadas');
   assert.equal(v.bloqueioDasVariacoes({ ...ok, texto_base: 'outro' }, { temVariacoes: false }), null);
 });
+
+// ══════════════════ PARAGRAFOS (2026-10-19) ══════════════════
+//
+// Regressao das campanhas 10 e 11: o LLM devolveu as 7 numa linha so e o validador aceitou — a
+// campanha 10 enviou 13 mensagens como um bloco corrido.
+
+const achatar = (t) => t.replace(/\s*\n+\s*/g, ' ');
+
+test('regressao campanha 11: variacao achatada numa linha so acusa sem_quebras', () => {
+  const p = contra(achatar(VARIACAO_BOA)).find((x) => x.codigo === v.PROBLEMA_SEM_QUEBRAS);
+  assert.ok(p, 'achatada deveria acusar sem_quebras');
+  assert.equal(p.quebras, 0);
+  assert.equal(p.base, v.contarQuebras(BASE_LEMBRETE));
+  assert.equal(p.minimo, Math.ceil(v.contarQuebras(BASE_LEMBRETE) / 2));
+});
+
+test('sem_quebras: metade das quebras do texto-base (para cima) basta; uma a menos nao', () => {
+  const base = 'A {vaga}\nB\nC\nD\nE';
+  assert.equal(v.minimoDeQuebras(base), 2);
+  assert.ok(!codigos(contra('X {vaga} aa\nY bb cc\nZ dd', base)).includes(v.PROBLEMA_SEM_QUEBRAS));
+  assert.ok(codigos(contra('X {vaga} aa Y\nbb cc Z dd', base)).includes(v.PROBLEMA_SEM_QUEBRAS));
+});
+
+test('sem_quebras: minimo 1 com uma quebra so; texto-base de uma linha nao exige nada', () => {
+  assert.equal(v.minimoDeQuebras('Oi {vaga}\ntchau'), 1);
+  assert.equal(v.minimoDeQuebras('Oi {vaga}, tchau'), 0);
+  assert.ok(!codigos(contra('Ola {vaga}, ate logo', 'Oi {vaga}, tchau')).includes(v.PROBLEMA_SEM_QUEBRAS));
+});
+
+test('sem_quebras: \\r\\n conta como uma quebra (texto vindo do <textarea>)', () => {
+  assert.equal(v.contarQuebras('a\r\nb\r\n\r\nc'), 3);
+  assert.equal(v.contarQuebras(BASE_LEMBRETE.replace(/\n/g, '\r\n')), v.contarQuebras(BASE_LEMBRETE));
+});
+
+test('as sementes passam em sem_quebras contra o texto-base padrao', () => {
+  for (const [i, s] of v.VARIACOES_SEED.entries()) {
+    assert.ok(!codigos(v.validarContraTextoBase(s, v.TEXTO_BASE_PADRAO, i + 1)).includes(v.PROBLEMA_SEM_QUEBRAS), `semente ${i + 1}`);
+  }
+});

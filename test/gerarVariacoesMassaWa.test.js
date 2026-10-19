@@ -179,3 +179,34 @@ test('iaLigada: so com MASSA_WA_LLM_ATIVO=true', () => {
   assert.equal(g.iaLigada({ MASSA_WA_LLM_ATIVO: ' TRUE ' }), true);
   assert.equal(g.ERRO_IA_DESLIGADA, 'Geração por IA desligada: escreva as 7 variações manualmente');
 });
+
+// ══════════════════ PARAGRAFOS (2026-10-19) ══════════════════
+
+const achatar = (t) => t.replace(/\s*\n+\s*/g, ' ');
+
+test('regressao campanha 11: LLM que devolve as 7 numa linha so — recusa tudo, NAO devolve texto achatado', async () => {
+  const llm = llmEmSequencia(json(REDACOES_LEMBRETE.map(achatar)));
+  const r = await g.gerarVariacoes(BASE_LEMBRETE, { llm, db: dbDuble() });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.variacoes, []);
+  assert.equal(llm.chamadas.length, g.MAX_TENTATIVAS, 'tentativas limitadas');
+  assert.match(r.erro, /perdeu os paragrafos/);
+  assert.match(usuario(llm.chamadas[1]), /perdeu os paragrafos: tem 0 quebra\(s\) de linha/);
+});
+
+test('achatada na 1a tentativa, com paragrafos na 2a: aceita as da 2a', async () => {
+  const llm = llmEmSequencia(json(REDACOES_LEMBRETE.map(achatar)), json([...REDACOES_LEMBRETE]));
+  const r = await g.gerarVariacoes(BASE_LEMBRETE, { llm, db: dbDuble() });
+  assert.equal(r.ok, true, r.erro);
+  assert.equal(r.tentativas, 2);
+  assert.deepEqual(r.variacoes, [...REDACOES_LEMBRETE]);
+  for (const t of r.variacoes) assert.ok(v.contarQuebras(t) >= v.minimoDeQuebras(BASE_LEMBRETE));
+});
+
+test('o prompt manda manter paragrafos e quebras, escritas como \\n no JSON, com o minimo', () => {
+  const [sys, user] = g.montarMensagensVariacoes(BASE_LEMBRETE);
+  assert.match(sys.conteudo, /PARAGRAFOS E QUEBRAS DE LINHA/);
+  assert.match(sys.conteudo, /NUNCA junte tudo numa linha so/);
+  assert.ok(sys.conteudo.includes('escrita como \\n'));
+  assert.ok(user.conteudo.includes(`pelo menos ${v.minimoDeQuebras(BASE_LEMBRETE)} (o texto-base tem ${v.contarQuebras(BASE_LEMBRETE)})`));
+});

@@ -4769,7 +4769,8 @@ function salvarVariacoesMassaWa(campanhaId, textos = []) {
     apagar.run(campanhaId);
     let n = 0;
     textos.forEach((texto, i) => {
-      const t = String(texto == null ? '' : texto).trim();
+      // \r\n do <textarea> vira \n: o texto gravado e o que sai, igual em qualquer origem.
+      const t = String(texto == null ? '' : texto).replace(/\r\n?/g, '\n').trim();
       if (!t) return; // variacao vazia nao entra: o sorteio nunca pode devolver ''
       inserir.run(campanhaId, i + 1, t);
       n += 1;

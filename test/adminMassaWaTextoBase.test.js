@@ -352,3 +352,37 @@ test('segmento: "Sugerir" continua restaurando as sementes do convite (sem LLM)'
     assert.deepEqual(textosDe(id), [...v.VARIACOES_SEED_CONVITE]);
   });
 });
+
+// ══════════════════ PARAGRAFOS (2026-10-19) ══════════════════
+
+test('regressao campanha 11: LLM devolvendo uma linha so — nada e gravado e a tela explica o motivo', async () => {
+  const jobId = criarVaga();
+  const achatar = (t) => t.replace(/\s*\n+\s*/g, ' ');
+  await comServidor(async (base) => {
+    await comIa([json(REDACOES_LEMBRETE.map(achatar))], async (chamadas) => {
+      const res = await criarLembrete(base, jobId);
+      assert.match(local(res), /erro=geracao_falhou/);
+      assert.equal(chamadas.length, 3);
+    });
+    const c = ultimaCampanha();
+    assert.equal(textosDe(c.id).length, 0, 'nenhuma variacao achatada gravada');
+    assert.match(c.variacoes_erro, /perdeu os paragrafos/);
+    const html = await get(base, `/admin/massa-wa/${c.id}?erro=geracao_falhou`);
+    assert.match(html, /Variações com erro/);
+    assert.match(html, /perdeu os paragrafos/);
+  });
+});
+
+test('variacoes salvas a mao: \\r\\n vira \\n no banco e a achatada aparece nas pendencias', async () => {
+  const jobId = criarVaga();
+  await comServidor(async (base) => {
+    await comIa([json([...REDACOES_LEMBRETE])], async () => { await criarLembrete(base, jobId); });
+    const c = ultimaCampanha();
+    const textos = [...REDACOES_LEMBRETE];
+    textos[1] = textos[1].replace(/\s*\n+\s*/g, ' ');
+    await post(base, `/admin/massa-wa/${c.id}/variacoes`, variacoesDoCorpo(textos.map((t) => t.replace(/\n/g, '\r\n'))));
+    for (const t of textosDe(c.id)) assert.ok(!t.includes('\r'), 'sem \\r gravado');
+    const html = await get(base, `/admin/massa-wa/${c.id}`);
+    assert.match(html, /Variação 2: perdeu os parágrafos: tem 0 quebra\(s\) de linha/);
+  });
+});
