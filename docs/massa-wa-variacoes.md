@@ -116,6 +116,12 @@ Interruptor: `MASSA_WA_LLM_ATIVO` (variável de ambiente, **nasce desligada**).
 - **Falha** (LLM fora, JSON inválido, resposta cortada, variações recusadas): nada é gravado, o
   erro fica em `campanhas_massa_wa.variacoes_erro` e aparece na tela. A campanha não materializa,
   não ativa nem envia. Nunca cai nas sementes.
+- **Erro do provedor na tela** (2026-10-22): a falha HTTP traz o status e a mensagem do provedor,
+  por exemplo "provedor retornou 401 (chave inválida ou revogada: User not found.)", com o corpo
+  cortado e sem a chave (`descreverFalhaLLM`). Motivo: a chave foi trocada no Railway sem
+  redeploy, o processo seguiu com a antiga, e a tela só dizia "falha na chamada ao modelo".
+  **Trocar uma variável no Railway só vale depois do redeploy:** `config.js` lê o ambiente uma
+  vez, quando o processo sobe.
 
 ## As variações acompanham o texto-base
 
