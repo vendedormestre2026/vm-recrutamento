@@ -43,6 +43,17 @@ function normalizarUso(usage) {
   };
 }
 
+// Corpo de erro do OpenRouter: { "error": { "message": "User not found.", "code": 401 } }.
+function extrairMensagemProvedor(corpo) {
+  try {
+    const j = JSON.parse(corpo);
+    if (j && j.error && typeof j.error.message === 'string') return j.error.message.trim();
+  } catch (_) {
+    // corpo nao e JSON (pagina de erro do proxy etc.): vai cru, cortado por quem chama
+  }
+  return String(corpo || '').trim();
+}
+
 async function completar(mensagens, opcoes = {}) {
   const cfg = config.provedores.llm.openrouter;
   if (!cfg.apiKey) {
@@ -84,8 +95,13 @@ async function completar(mensagens, opcoes = {}) {
   }
 
   if (!resp.ok) {
-    const detalhe = await resp.text().catch(() => '');
-    throw new Error(`OpenRouter retornou erro ${resp.status}: ${detalhe.slice(0, 300)}`);
+    const corpo = (await resp.text().catch(() => '')).split(cfg.apiKey).join('[chave]');
+    const err = new Error(`OpenRouter retornou erro ${resp.status}: ${corpo.slice(0, 300)}`);
+    // Campos para quem chama montar uma frase util (ex.: gerarVariacoesMassaWa) sem reparsear a
+    // mensagem. `detalhe` e o error.message do provedor quando o corpo e JSON; senao, o corpo cru.
+    err.status = resp.status;
+    err.detalhe = extrairMensagemProvedor(corpo).slice(0, 200);
+    throw err;
   }
 
   const dados = await resp.json();
@@ -111,4 +127,4 @@ async function completar(mensagens, opcoes = {}) {
   return { texto, modelo, uso: normalizarUso(dados.usage), finishReason };
 }
 
-module.exports = { completar };
+module.exports = { completar, extrairMensagemProvedor };

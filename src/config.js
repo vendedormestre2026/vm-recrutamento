@@ -166,7 +166,8 @@ const config = {
       modeloComplexo: process.env.LLM_MODEL_COMPLEXO || 'deepseek/deepseek-v4-flash',
       modeloSimples: process.env.LLM_MODEL_SIMPLES || 'deepseek/deepseek-chat-v3.1',
       openrouter: {
-        apiKey: process.env.OPENROUTER_API_KEY || '',
+        // trim: chave colada no Railway com espaco ou quebra de linha vira 401 calado.
+        apiKey: (process.env.OPENROUTER_API_KEY || '').trim(),
         baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
       },
       anthropic: { apiKey: process.env.ANTHROPIC_API_KEY || '' },

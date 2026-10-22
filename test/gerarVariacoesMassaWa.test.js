@@ -106,6 +106,29 @@ test('LLM fora do ar: 3 tentativas, erro claro, sem fallback', async () => {
   assert.match(r.erro, /a IA não respondeu/);
 });
 
+test('regressao 2026-10-22: 401 do provedor chega a tela com status e causa, nao "falha na chamada"', async () => {
+  // Formato do erro que o adaptador openrouter lanca (ver llmOpenrouterErro.test.js).
+  const err = Object.assign(new Error('OpenRouter retornou erro 401: {"error":{"message":"User not found.","code":401}}'), {
+    status: 401,
+    detalhe: 'User not found.',
+  });
+  const llm = llmEmSequencia(err);
+  const r = await g.gerarVariacoes(BASE_LEMBRETE, { llm, db: dbDuble() });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.variacoes, []);
+  assert.match(r.erro, /provedor retornou 401 \(chave inválida ou revogada: User not found\.\)/);
+  assert.doesNotMatch(r.erro, /falha na chamada ao modelo/);
+});
+
+test('descreverFalhaLLM: traduz status, corta o detalhe e cai na mensagem quando nao ha status', () => {
+  assert.match(g.descreverFalhaLLM({ status: 402, detalhe: 'Insufficient credits' }), /402 \(sem saldo ou crédito: Insufficient credits\)/);
+  assert.match(g.descreverFalhaLLM({ status: 404, detalhe: '' }), /404 \(modelo não encontrado\)$/);
+  assert.match(g.descreverFalhaLLM({ status: 503 }), /503 \(provedor fora do ar\)/);
+  assert.ok(g.descreverFalhaLLM({ status: 401, detalhe: 'x'.repeat(1000) }).length < 260);
+  assert.match(g.descreverFalhaLLM(new Error('Falha de rede ao chamar o LLM via OpenRouter: fetch failed')), /falha na chamada ao modelo: Falha de rede/);
+  assert.match(g.descreverFalhaLLM(undefined), /a IA não respondeu \(falha na chamada ao modelo\)/);
+});
+
 test('JSON invalido: erro claro, sem fallback', async () => {
   const llm = llmEmSequencia('aqui estao as variacoes: 1) Oi');
   const r = await g.gerarVariacoes(BASE_LEMBRETE, { llm, db: dbDuble() });

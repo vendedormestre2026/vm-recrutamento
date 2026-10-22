@@ -85,6 +85,31 @@ function descreverProblema(p) {
   }
 }
 
+// Causa legivel de uma falha na chamada ao LLM, para a tela e para variacoes_erro. Ate 2026-10-22
+// a tela so dizia "falha na chamada ao modelo": a chave trocada no Railway sem redeploy deu 401
+// "User not found." e isso so aparecia no log. O adaptador ja tira a chave do corpo e expoe
+// err.status / err.detalhe; aqui so traduz o status.
+const CAUSA_POR_STATUS = {
+  400: 'requisição recusada',
+  401: 'chave inválida ou revogada',
+  402: 'sem saldo ou crédito',
+  403: 'acesso negado',
+  404: 'modelo não encontrado',
+  408: 'tempo esgotado',
+  429: 'limite de requisições',
+};
+
+function descreverFalhaLLM(err) {
+  const status = err && Number(err.status);
+  if (status) {
+    const causa = CAUSA_POR_STATUS[status] || (status >= 500 ? 'provedor fora do ar' : 'erro do provedor');
+    const detalhe = String((err && err.detalhe) || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    return `a IA não respondeu: provedor retornou ${status} (${causa}${detalhe ? `: ${detalhe}` : ''})`;
+  }
+  const msg = String((err && err.message) || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  return `a IA não respondeu (falha na chamada ao modelo${msg ? `: ${msg}` : ''})`;
+}
+
 // ── Prompt ──
 //
 // Exportada para o teste (e para revisao humana) inspecionar exatamente o que vai ao modelo.
@@ -231,8 +256,8 @@ async function gerarVariacoes(textoBase, deps = {}) {
         maxTokens: MAX_TOKENS,
       });
     } catch (err) {
-      console.error(`[massa-wa/variacoes] tentativa ${tentativas}: falha na chamada ao LLM: ${err && err.message}`);
-      motivo = 'a IA não respondeu (falha na chamada ao modelo)';
+      console.error(`[massa-wa/variacoes] tentativa ${tentativas}: falha na chamada ao LLM (status=${(err && err.status) || '-'}): ${err && err.message}`);
+      motivo = descreverFalhaLLM(err);
       continue;
     }
     registrarUso(db, resp);
@@ -286,6 +311,7 @@ module.exports = {
   montarMensagensVariacoes,
   parseVariacoes,
   problemasDoTextoBase,
+  descreverFalhaLLM,
   iaLigada,
   ENV_ATIVO,
   ERRO_IA_DESLIGADA,
