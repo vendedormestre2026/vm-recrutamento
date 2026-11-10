@@ -1,7 +1,7 @@
 'use strict';
 
-// convite_grupo_entrevista (2026-11-10): template da Vendedor Mestre aprovado na Meta
-// (marketing, pt_BR, SEM variaveis, com botao) cujo nome nao termina em "_vm". Entrou em
+// convite_grupo_entrevista_vox (2026-11-10): template da Vendedor Mestre aprovado na Meta
+// (marketing, pt_BR, SEM variaveis, com botao) cujo nome termina em "_vox", nao "_vm". Entrou em
 // EXCECOES_PADRAO_VM (src/lib/templatesWhatsapp.js). Este arquivo cobre o caminho inteiro:
 // sync -> boot (migrate) -> criacao da campanha -> envio, este ultimo em MOCK (zero rede).
 
@@ -27,7 +27,7 @@ const { criarRouterCampanhaWhatsapp } = require('../src/routes/admin_campanha_wh
 
 migrar();
 
-const NOME = 'convite_grupo_entrevista';
+const NOME = 'convite_grupo_entrevista_vox';
 
 const exec = (sql, ...p) => db.getDb().prepare(sql).run(...p);
 const uma = (sql, ...p) => db.getDb().prepare(sql).get(...p);
@@ -73,7 +73,7 @@ function templateApi({ name = NOME, botao = BOTOES.url_fixa } = {}) {
 
 // ══════════════════ Sincronizacao ══════════════════
 
-test('sync: convite_grupo_entrevista passa no filtro e grava variaveis=[] e ativo=1', () => {
+test('sync: convite_grupo_entrevista_vox passa no filtro e grava variaveis=[] e ativo=1', () => {
   zerar();
   assert.equal(pertenceVendedorMestre(NOME), true);
 
@@ -88,7 +88,7 @@ test('sync: convite_grupo_entrevista passa no filtro e grava variaveis=[] e ativ
   assert.equal(JSON.parse(t.botoes_json).length, 1);
 });
 
-for (const nome of ['convite_bni_workshop_ady', 'convite_grupo_entrevista_x']) {
+for (const nome of ['convite_bni_workshop_ady', 'convite_grupo_entrevista', 'convite_grupo_entrevista_x']) {
   test(`sync: '${nome}' continua ignorado como fora_do_padrao`, () => {
     zerar();
     const r = db.sincronizarTemplateWhatsapp(templateApi({ name: nome }));
@@ -101,7 +101,7 @@ for (const nome of ['convite_bni_workshop_ady', 'convite_grupo_entrevista_x']) {
 
 // ══════════════════ Boot ══════════════════
 
-test('boot: migrar() NAO desativa convite_grupo_entrevista (e segue desativando o de outro uso)', async () => {
+test('boot: migrar() NAO desativa convite_grupo_entrevista_vox (e segue desativando o de outro uso)', async () => {
   zerar();
   db.sincronizarTemplateWhatsapp(templateApi());
   exec(

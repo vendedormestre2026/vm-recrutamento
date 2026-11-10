@@ -21,13 +21,14 @@
 // O ideal, quando alguem tiver tempo, e renomear esses dois na Meta pra terminarem em _vm de
 // verdade e eliminar esta lista — ate la, ela e o jeito deliberado de nao quebrar producao.
 //
-// convite_grupo_entrevista (2026-11-10): template da Vendedor Mestre aprovado na Meta
-// (marketing, pt_BR, sem variaveis, com botao) cujo nome NAO termina em _vm — e por isso o
-// "Sincronizar templates" o ignorava como 'fora_do_padrao'. Entra pelo nome EXATO, como os
-// dois acima; os demais templates de outros usos da conta continuam barrados. Precisa estar
-// AQUI (e nao so no sync) porque db/migrate.js usa a mesma regra no boot e desativaria o
-// template a cada deploy.
-const EXCECOES_PADRAO_VM = ['nova_vaga_v1', 'nova_vaga_v2', 'convite_grupo_entrevista'];
+// convite_grupo_entrevista_vox (2026-11-10): template da Vendedor Mestre aprovado na Meta
+// (marketing, pt_BR, sem variaveis, com botao; instancia Jean API na Central Whats) cujo
+// nome termina em _vox, e nao em _vm — e por isso o "Sincronizar templates" o ignorava como
+// 'fora_do_padrao'. Entra pelo nome EXATO, como os dois acima: variantes parecidas
+// (convite_grupo_entrevista, convite_grupo_entrevista_x) e os templates de outros usos da
+// conta continuam barrados. Precisa estar AQUI (e nao so no sync) porque db/migrate.js usa a
+// mesma regra no boot e desativaria o template a cada deploy.
+const EXCECOES_PADRAO_VM = ['nova_vaga_v1', 'nova_vaga_v2', 'convite_grupo_entrevista_vox'];
 
 function pertenceVendedorMestre(nomeMeta) {
   const nome = String(nomeMeta || '').trim();
