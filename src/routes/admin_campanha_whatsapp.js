@@ -57,6 +57,9 @@ const OBJETIVOS = [
 // exibicao. Nao redeclara o enum, so o rotulo — a validacao usa db.STATUS_RECRUTADOR_VALIDOS
 // diretamente (ver lerCriterios).
 const STATUS_CANDIDATURA_OPCOES = [
+  // 'sem_decisao' e SENTINELA (NULL/'' no banco), aceita so neste objetivo — ver
+  // publico.STATUS_CANDIDATURA_SELECIONAVEIS.
+  ['sem_decisao', 'Sem decisão'],
   ['aprovado', 'Aprovado'],
   ['reprovado', 'Reprovado'],
   ['em_analise', 'Em análise'],
@@ -136,7 +139,7 @@ function lerCriterios(b = {}) {
     // nao redeclarado aqui, pra nunca divergir da allowlist que a decisao humana usa.
     statusList: [].concat(b.status_recrutador || [])
       .map(String)
-      .filter((s) => db.STATUS_RECRUTADOR_VALIDOS.includes(s)),
+      .filter((s) => publico.STATUS_CANDIDATURA_SELECIONAVEIS.includes(s)),
   };
 }
 

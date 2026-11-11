@@ -1694,7 +1694,8 @@ test('admin: form renderiza checkboxes de Cidade (segmentacao) e o bloco de Stat
     assert.match(html, /<div id="campo-segmentacao">/);
     // Checkbox de Cidade, novo neste incremento — nunca existiu nesta tela antes.
     assert.match(html, /<input type="checkbox" name="cidade" value="Joinville">/);
-    // Bloco de status: escondido por padrao, so 3 opcoes.
+    // Bloco de status: escondido por padrao, 4 opcoes (Sem decisao + as 3 gravaveis).
+    assert.match(html, /<input type="checkbox" name="status_recrutador" value="sem_decisao">\s*<span[^>]*>Sem decisão<\/span>/);
     assert.match(html, /<div id="campo-status-candidatura" hidden style="margin-bottom:1\.25rem;">/);
     // O paragrafo de "rascunho" tem margin-top negativo; sem a folga acima ele sobrepunha
     // o ultimo checkbox de status. A folga precisa ser maior que o recuo.
@@ -2732,6 +2733,136 @@ test('status_candidatura: opt-out e telefoneUtilizavel valem aqui tambem (mesmo 
 
   const r = semRuido(() => publico.listarPublicoStatusCandidatura(j, ['aprovado'])).r;
   assert.deepEqual(tels(r), ['5547900000614']);
+});
+
+// ══════════════════ status_candidatura: "Sem decisao" (NULL/'') ══════════════════
+
+// '' nao e gravavel por definirStatusRecrutador (grava NULL); convive em producao, entao o
+// teste escreve direto.
+function statusBruto(appId, statusRecrutador, estagio) {
+  exec('UPDATE applications SET status_recrutador = ? WHERE id = ?', statusRecrutador, appId);
+  if (estagio) exec('UPDATE applications SET status = ? WHERE id = ?', estagio, appId);
+}
+
+test('status_candidatura: sem_decisao inclui NULL e string vazia', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  candidatura(j, 'Nulo', '+55 47 90000-0800'); // nasce NULL
+  statusBruto(candidatura(j, 'Vazio', '+55 47 90000-0801'), '');
+  db.definirStatusRecrutador(candidatura(j, 'Reprovado', '+55 47 90000-0802'), 'reprovado');
+
+  const r = publico.listarPublicoStatusCandidatura(j, ['sem_decisao']);
+  assert.deepEqual(tels(r), ['5547900000800', '5547900000801']);
+});
+
+test('status_candidatura: sem_decisao combinado com reprovado soma os dois grupos, e nao mais', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  candidatura(j, 'Nulo', '+55 47 90000-0803');
+  db.definirStatusRecrutador(candidatura(j, 'Reprovado', '+55 47 90000-0804'), 'reprovado');
+  db.definirStatusRecrutador(candidatura(j, 'Aprovado', '+55 47 90000-0805'), 'aprovado');
+  // Outra vaga, sem decisao: continua fora.
+  candidatura(vagaCom('Curitiba'), 'Outra Vaga', '+55 41 90000-0806');
+
+  const r = publico.listarPublicoStatusCandidatura(j, ['sem_decisao', 'reprovado']);
+  assert.deepEqual(tels(r), ['5547900000803', '5547900000804']);
+});
+
+test('status_candidatura (decisao A): sem_decisao EXCLUI quem esta em_entrevista', () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  candidatura(j, 'Aplicado', '+55 47 90000-0807');
+  statusBruto(candidatura(j, 'Em Entrevista', '+55 47 90000-0808'), null, 'em_entrevista');
+  statusBruto(candidatura(j, 'Em Entrevista Vazio', '+55 47 90000-0809'), '', 'em_entrevista');
+  statusBruto(candidatura(j, 'Concluida', '+55 47 90000-0810'), null, 'concluido');
+
+  const r = publico.listarPublicoStatusCandidatura(j, ['sem_decisao']);
+  assert.deepEqual(tels(r), ['5547900000807', '5547900000810']);
+});
+
+test('status_candidatura (decisao B): opt-out de CAMPANHA exclui quando sem_decisao esta na lista, inclusive lista mista', () => {
+  zerarSeg();
+  // Liga a supressao explicitamente: testes anteriores do arquivo deixam o kill-switch
+  // desligado no banco compartilhado.
+  db.definirConfigBool(optout.CHAVE_ATIVO, true);
+  const j = vagaCom('Joinville');
+  candidatura(j, 'Sem Decisao Optout', '+55 47 90000-0811');
+  candidatura(j, 'Sem Decisao Livre', '+55 47 90000-0812');
+  db.definirStatusRecrutador(candidatura(j, 'Reprovado Optout', '+55 47 90000-0813'), 'reprovado');
+  optout.registrarOptout({ telefone: '5547900000811', escopo: 'campanha', origem: 'link' });
+  optout.registrarOptout({ telefone: '5547900000813', escopo: 'campanha', origem: 'link' });
+
+  assert.deepEqual(tels(publico.listarPublicoStatusCandidatura(j, ['sem_decisao'])), ['5547900000812']);
+  // Lista mista: a campanha inteira consulta o escopo campanha — o reprovado com opt-out sai.
+  assert.deepEqual(
+    tels(publico.listarPublicoStatusCandidatura(j, ['sem_decisao', 'reprovado'])),
+    ['5547900000812'],
+  );
+});
+
+test('status_candidatura (decisao B): sem sem_decisao, continua transacional (opt-out de campanha NAO exclui; total exclui)', () => {
+  zerarSeg();
+  // Liga a supressao explicitamente: testes anteriores do arquivo deixam o kill-switch
+  // desligado no banco compartilhado.
+  db.definirConfigBool(optout.CHAVE_ATIVO, true);
+  const j = vagaCom('Joinville');
+  db.definirStatusRecrutador(candidatura(j, 'Reprovado Campanha', '+55 47 90000-0814'), 'reprovado');
+  db.definirStatusRecrutador(candidatura(j, 'Aprovado Campanha', '+55 47 90000-0815'), 'aprovado');
+  db.definirStatusRecrutador(candidatura(j, 'Reprovado Total', '+55 47 90000-0816'), 'reprovado');
+  optout.registrarOptout({ telefone: '5547900000814', escopo: 'campanha', origem: 'link' });
+  optout.registrarOptout({ telefone: '5547900000815', escopo: 'campanha', origem: 'link' });
+  optout.registrarOptout({ telefone: '5547900000816', escopo: 'total', origem: 'manual' });
+
+  const r = publico.listarPublicoStatusCandidatura(j, ['aprovado', 'reprovado']);
+  assert.deepEqual(tels(r), ['5547900000814', '5547900000815']);
+});
+
+test('sem_decisao e aceito so localmente: STATUS_RECRUTADOR_VALIDOS (o que se GRAVA) nao muda', () => {
+  assert.deepEqual(db.STATUS_RECRUTADOR_VALIDOS, ['aprovado', 'reprovado', 'em_analise']);
+  assert.deepEqual(publico.STATUS_CANDIDATURA_SELECIONAVEIS, ['aprovado', 'reprovado', 'em_analise', 'sem_decisao']);
+});
+
+test('POST /previa: status_candidatura com sem_decisao chega ao publico pela rota', async () => {
+  zerarSeg();
+  const j = vagaCom('Joinville');
+  candidatura(j, 'Nulo', '+55 47 90000-0817');
+  db.definirStatusRecrutador(candidatura(j, 'Aprovado', '+55 47 90000-0818'), 'aprovado');
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp/previa`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams([
+        ['tipo_mensagem', 'status_candidatura'],
+        ['job_id', String(j)],
+        ['status_recrutador', 'sem_decisao'],
+      ]),
+    });
+    assert.equal(res.status, 200);
+    const corpo = await res.json();
+    assert.equal(corpo.ok, true);
+    assert.equal(corpo.total, 1);
+  });
+});
+
+test('POST /: sem_decisao nao vaza para outro objetivo (status_recrutador continua campo incompativel)', async () => {
+  zerarSeg();
+  const { tid } = montarCenario();
+  await comAdmin(async (base, h) => {
+    const res = await fetch(`${base}/admin/campanhas-whatsapp`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...h, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams([
+        ['nome', 'Convite com sem_decisao'],
+        ['template_id', String(tid)],
+        ['tipo_mensagem', 'convite_grupo'],
+        ['status_recrutador', 'sem_decisao'],
+      ]),
+    });
+    assert.equal(res.status, 302);
+    assert.match(res.headers.get('location') || '', /erro=campo_incompativel/);
+  });
+  assert.equal(uma("SELECT COUNT(*) n FROM campanhas_whatsapp WHERE nome = 'Convite com sem_decisao'").n, 0);
 });
 
 // ══════════════════ montarContextoWhatsapp (envio avulso de teste) ══════════════════

@@ -414,6 +414,11 @@ function listarPublicoDivulgacaoVaga(jobId, criterios = {}, deps = {}) {
 // statusList vazio LANCA (mesmo tratamento de jobId invalido), em vez de devolver publico
 // vazio ou publico total. NAO "conserte" isto de volta ao padrao de aplicarFiltroMulti sem
 // reler este comentario primeiro — a omissao aqui e intencional, nao um bug esquecido.
+// Status selecionaveis neste objetivo: o enum gravavel + a SENTINELA 'sem_decisao' (NULL/''
+// no banco). Local de proposito — db.STATUS_RECRUTADOR_VALIDOS tambem valida o que o
+// recrutador GRAVA, e 'sem_decisao' nunca pode ser gravado.
+const STATUS_CANDIDATURA_SELECIONAVEIS = Object.freeze([...dbPadrao.STATUS_RECRUTADOR_VALIDOS, 'sem_decisao']);
+
 function listarPublicoStatusCandidatura(jobId, statusList, deps = {}) {
   const db = deps.db || dbPadrao;
   const alvo = Number(jobId);
@@ -425,7 +430,7 @@ function listarPublicoStatusCandidatura(jobId, statusList, deps = {}) {
   // FILTRAVEIS = [...db.STATUS_RECRUTADOR_VALIDOS, 'sem_decisao']). Lida daqui, nao
   // redeclarada, para as duas fontes nunca divergirem.
   const statusValidos = Array.isArray(statusList)
-    ? statusList.filter((s) => dbPadrao.STATUS_RECRUTADOR_VALIDOS.includes(s))
+    ? statusList.filter((s) => STATUS_CANDIDATURA_SELECIONAVEIS.includes(s))
     : [];
   if (!statusValidos.length) {
     throw new Error('Informar situacao de candidatura exige pelo menos um status selecionado.');
@@ -446,6 +451,15 @@ function listarPublicoStatusCandidatura(jobId, statusList, deps = {}) {
   //
   // Escopo `total` continua bloqueando: quem pediu silencio COMPLETO, com o aviso na tela
   // dizendo o que isso significa, escolheu isto de olhos abertos.
+  //
+  // ── EXCECAO: COM "SEM DECISAO" NA LISTA, A CAMPANHA INTEIRA CONSULTA O ESCOPO `campanha` ──
+  // Para quem ainda nao tem decisao nao ha resultado a informar: a mensagem e um convite
+  // (ex.: entrevista em grupo), e convite respeita o opt-out de campanha. A regra vale para a
+  // campanha toda — lista mista (sem_decisao + reprovado) tambem respeita — porque uma
+  // supressao a mais nunca e risco. Sem 'sem_decisao' na lista, segue transacional.
+  const escopoOptout = statusValidos.includes('sem_decisao')
+    ? optout.CONSULTA_CAMPANHA
+    : optout.CONSULTA_TRANSACIONAL;
   const mapaOptout = optout.mapaOptoutAtivo({ db });
   const porTelefone = new Map();
 
@@ -454,7 +468,7 @@ function listarPublicoStatusCandidatura(jobId, statusList, deps = {}) {
     if (!telefone) continue;
     if (!telefoneUtilizavel(telefone, `application ${linha.id}`)) continue;
     if (optOut.has(telefone)) continue;
-    if (optout.optoutAtivoNoMapa(mapaOptout, telefone, optout.CONSULTA_TRANSACIONAL)) continue;
+    if (optout.optoutAtivoNoMapa(mapaOptout, telefone, escopoOptout)) continue;
     if (porTelefone.has(telefone)) continue; // duplicata por telefone: a primeira (menor id) vence
     porTelefone.set(telefone, {
       telefone,
@@ -474,5 +488,6 @@ module.exports = {
   listarPublicoConviteGrupo,
   listarPublicoDivulgacaoVaga,
   listarPublicoStatusCandidatura,
+  STATUS_CANDIDATURA_SELECIONAVEIS,
   coletarPessoas,
 };

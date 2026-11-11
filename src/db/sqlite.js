@@ -3520,14 +3520,21 @@ function listarTalentosParaCampanhaWhatsapp({ dataDe, dataAte } = {}) {
 // `talentos`, que nao tem status_recrutador (Base legada nunca passa por entrevista/decisao
 // do recrutador). Sem JOIN com talentos em lugar nenhum desta funcao, de proposito.
 //
-// `status_recrutador IN (...)` ja exclui NULL ("sem decisao") pela propria semantica SQL de
-// IN — NULL nunca casa com IN, entao nao precisa de AND status_recrutador IS NOT NULL
-// explicito. Mas o CHAMADOR (lib/publicoCampanhaWhatsapp) ainda precisa recusar statusList
-// vazio ANTES de chegar aqui — com [] o placeholder fica vazio e o SQL quebraria.
+// `status_recrutador IN (...)` nunca casa com NULL. "Sem decisao" so entra quando o chamador
+// pede pela SENTINELA 'sem_decisao' (nao e valor gravavel): vira NULL OU '' (as duas grafias
+// convivem), MENOS quem esta em entrevista — mesma regra do filtro "Sem decisao" da tela de
+// candidatos (listarApplications acima), para a contagem da campanha bater com a da tela.
+// O CHAMADOR (lib/publicoCampanhaWhatsapp) recusa statusList vazio antes de chegar aqui.
 function listarCandidatosPorVagaEStatusRecrutador(jobId, statusList) {
-  const status = Array.isArray(statusList) ? statusList.filter(Boolean) : [];
-  if (!status.length) return [];
-  const placeholders = status.map(() => '?').join(', ');
+  const lista = Array.isArray(statusList) ? statusList.filter(Boolean) : [];
+  const semDecisao = lista.includes('sem_decisao');
+  const status = lista.filter((s) => s !== 'sem_decisao');
+  if (!status.length && !semDecisao) return [];
+  const ramos = [];
+  if (status.length) ramos.push(`a.status_recrutador IN (${status.map(() => '?').join(', ')})`);
+  if (semDecisao) {
+    ramos.push("((a.status_recrutador IS NULL OR a.status_recrutador = '') AND a.status != 'em_entrevista')");
+  }
   return getDb()
     .prepare(
       `SELECT a.id, a.nome, a.telefone, a.status_recrutador,
@@ -3535,7 +3542,7 @@ function listarCandidatosPorVagaEStatusRecrutador(jobId, statusList) {
          FROM applications a
          JOIN jobs j ON j.id = a.job_id
         WHERE a.job_id = ?
-          AND a.status_recrutador IN (${placeholders})
+          AND (${ramos.join(' OR ')})
         ORDER BY a.id`,
     )
     .all(jobId, ...status);
