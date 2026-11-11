@@ -502,7 +502,9 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
         <!-- Status da candidatura: SO em status_candidatura. Pelo menos 1 marcado e
              obrigatorio (desvio deliberado do padrao "nada marcado = todos" — ver o
              comentario em lib/publicoCampanhaWhatsapp.js:listarPublicoStatusCandidatura). -->
-        <div id="campo-status-candidatura" hidden>
+        <!-- margin-bottom igual ao de .admin-filtros: o paragrafo de "rascunho" abaixo usa
+             margin-top negativo (-.6rem) e, sem esta folga, sobe por cima do ultimo checkbox. -->
+        <div id="campo-status-candidatura" hidden style="margin-bottom:1.25rem;">
           <div class="filtro">
             <span>Status (pelo menos um obrigatório)</span>
             ${checkboxes(escapeHtml, 'status_recrutador', STATUS_CANDIDATURA_OPCOES, [])}

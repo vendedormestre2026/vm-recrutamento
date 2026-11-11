@@ -1695,7 +1695,12 @@ test('admin: form renderiza checkboxes de Cidade (segmentacao) e o bloco de Stat
     // Checkbox de Cidade, novo neste incremento — nunca existiu nesta tela antes.
     assert.match(html, /<input type="checkbox" name="cidade" value="Joinville">/);
     // Bloco de status: escondido por padrao, so 3 opcoes.
-    assert.match(html, /<div id="campo-status-candidatura" hidden>/);
+    assert.match(html, /<div id="campo-status-candidatura" hidden style="margin-bottom:1\.25rem;">/);
+    // O paragrafo de "rascunho" tem margin-top negativo; sem a folga acima ele sobrepunha
+    // o ultimo checkbox de status. A folga precisa ser maior que o recuo.
+    const recuo = Number(html.match(/<p style="margin:-([\d.]+)rem 0 1rem;[^"]*">\s*A campanha nasce em/)[1]);
+    const folga = Number(html.match(/id="campo-status-candidatura" hidden style="margin-bottom:([\d.]+)rem;"/)[1]);
+    assert.ok(folga > recuo, `folga ${folga}rem deve superar o recuo ${recuo}rem`);
     assert.match(html, /<input type="checkbox" name="status_recrutador" value="aprovado">/);
     assert.match(html, /<input type="checkbox" name="status_recrutador" value="reprovado">/);
     assert.match(html, /<input type="checkbox" name="status_recrutador" value="em_analise">/);
