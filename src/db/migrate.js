@@ -8,7 +8,6 @@ const { config } = require('../config');
 const { aplicarSchema, getDb } = require('./sqlite');
 const { chave } = require('../lib/cidades');
 const { normalizarSlug } = require('../lib/slug');
-const { pertenceVendedorMestre } = require('../lib/templatesWhatsapp');
 
 // Vocabulario ORIGINAL de lib/cidades.CIDADES_VALIDAS antes da migracao (Incremento 4) do
 // array congelado para a tabela `cidades`. Preservado aqui, e SO aqui, como semente
@@ -650,38 +649,10 @@ function migrar() {
     }
   }
 
-  // ── Correcao pontual: desativa templates que nao pertencem a Vendedor Mestre (ETAPA C) ──
-  //
-  // Antes de o filtro de padrao de nome existir em sincronizarTemplateWhatsapp
-  // (db/sqlite.js), a sincronizacao gravou convite_bni_workshop_ady (outro uso da mesma
-  // conta Central Whats, do workshop do BNI) com ativo=1 — ele apareceu no dropdown de
-  // disparo do admin por engano. Esta correcao roda em TODO boot, e nao so uma vez, porque
-  // e a MESMA logica que protege contra qualquer sincronizacao futura que rode antes do
-  // filtro (ex.: um deploy antigo, um script isolado) deixar algo ativo por engano de novo —
-  // mesmo espirito da correcao de campanhas_whatsapp (Incremento 12, acima).
-  //
-  // NAO E UM SCRIPT MANUAL A PARTE, de proposito: roda automaticamente no boot (aqui em
-  // migrar(), chamado por server.js) — aplica sozinha no PROXIMO deploy, sem exigir alguem
-  // lembrar de rodar algo depois. Idempotente por natureza: so afeta linhas `ativo = 1` que
-  // nao pertencem ao padrao; depois de desativada, a condicao WHERE exclui a linha para
-  // sempre — reativar de volta continua sendo decisao HUMANA deliberada (mesma regra de
-  // sempre para esta coluna, ver o comentario de listarTemplatesWhatsapp).
-  {
-    const foraDoPadrao = getDb()
-      .prepare('SELECT id, nome_meta FROM templates_whatsapp WHERE ativo = 1')
-      .all()
-      .filter((linha) => !pertenceVendedorMestre(linha.nome_meta));
-    if (foraDoPadrao.length) {
-      const desativar = getDb().prepare(
-        "UPDATE templates_whatsapp SET ativo = 0, atualizado_em = datetime('now') WHERE id = ?",
-      );
-      for (const linha of foraDoPadrao) desativar.run(linha.id);
-      console.log(
-        `[migrate] templates_whatsapp: ${foraDoPadrao.length} template(s) fora do padrao ` +
-          `da Vendedor Mestre desativado(s): ${foraDoPadrao.map((l) => l.nome_meta).join(', ')}.`,
-      );
-    }
-  }
+  // (2026-11-11) Aqui havia uma correcao de boot que desativava templates_whatsapp fora do
+  // padrao de nome "_vm". Removida junto com a trava de nome: a instancia Jean API e so da
+  // Vendedor Mestre. Templates ja desativados por ela continuam com ativo=0 — reativar e
+  // decisao humana, como sempre foi para esta coluna.
 
   // Disparo em massa — de que texto-base as variacoes vieram (2026-10-14, ver "O TEXTO-BASE E A
   // FONTE DA VERDADE" em lib/variacoesMassaWa).

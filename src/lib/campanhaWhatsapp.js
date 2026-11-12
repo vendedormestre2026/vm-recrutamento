@@ -33,6 +33,7 @@ const { montarUrlVaga, UTM_SOURCE_WHATSAPP } = require('./ctaCampanha');
 // bug que o criou.
 const { montarParametrosBotao } = require('./parametrosBotaoWhatsapp');
 const optout = require('./optoutWhatsapp');
+const { temVariavelSemMapeamento } = require('./templatesWhatsapp');
 
 // Interruptor de DISPARO, no store `configuracoes` — mesmo padrao de promocao_ativa e
 // whatsapp_sequencia_ativa. Config de BANCO, com checkbox no painel; nao e env.
@@ -245,6 +246,21 @@ async function processarCicloCampanhaWhatsapp(deps = {}) {
       mapa = JSON.parse(linha.template_variaveis || '[]');
     } catch {
       mapa = [];
+    }
+    // Variavel sem mapeamento (PLACEHOLDER_CAMPO_*): iria vazia. A criacao da campanha ja
+    // recusa esse template; aqui e a ultima barreira (rascunho antigo, mapeamento desfeito a
+    // mao). Falha DESTE envio, como a praca sem link acima — nunca chega ao provedor.
+    if (temVariavelSemMapeamento(mapa)) {
+      db.marcarEnvioWhatsappFalha(
+        linha.id,
+        `configuracao: template '${linha.template_nome || '(sem nome)'}' com variavel sem mapeamento`,
+      );
+      resumo.falhas += 1;
+      console.error(
+        `[campanha-wa] template '${linha.template_nome || '(sem nome)'}' tem variavel sem mapeamento ` +
+          `(PLACEHOLDER_CAMPO_*) — envio ${linha.id} marcado como falha, nada enviado.`,
+      );
+      continue;
     }
     // `link_vaga` so existe em campanha de divulgacao, e e a MESMA URL para todos os
     // destinatarios da campanha — por isso e montada aqui e nao guardada por linha. A UTM

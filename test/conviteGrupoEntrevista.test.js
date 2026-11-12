@@ -1,8 +1,9 @@
 'use strict';
 
 // convite_grupo_entrevista_vox (2026-11-10): template da Vendedor Mestre aprovado na Meta
-// (marketing, pt_BR, SEM variaveis, com botao) cujo nome termina em "_vox", nao "_vm". Entrou em
-// EXCECOES_PADRAO_VM (src/lib/templatesWhatsapp.js). Este arquivo cobre o caminho inteiro:
+// (marketing, pt_BR, SEM variaveis, com botao) cujo nome termina em "_vox", nao "_vm". Desde
+// 2026-11-11 nao ha mais filtro por nome (a instancia Jean API e so da Vendedor Mestre), e este
+// arquivo segue como regressao de template SEM variaveis. Cobre o caminho inteiro:
 // sync -> boot (migrate) -> criacao da campanha -> envio, este ultimo em MOCK (zero rede).
 
 const os = require('node:os');
@@ -22,7 +23,6 @@ const db = require('../src/db');
 const { migrar } = require('../src/db/migrate');
 const transporte = require('../src/providers/centralWhats/centralWhats');
 const job = require('../src/lib/campanhaWhatsapp');
-const { pertenceVendedorMestre } = require('../src/lib/templatesWhatsapp');
 const { criarRouterCampanhaWhatsapp } = require('../src/routes/admin_campanha_whatsapp');
 
 migrar();
@@ -73,9 +73,8 @@ function templateApi({ name = NOME, botao = BOTOES.url_fixa } = {}) {
 
 // ══════════════════ Sincronizacao ══════════════════
 
-test('sync: convite_grupo_entrevista_vox passa no filtro e grava variaveis=[] e ativo=1', () => {
+test('sync: convite_grupo_entrevista_vox grava variaveis=[] e ativo=1', () => {
   zerar();
-  assert.equal(pertenceVendedorMestre(NOME), true);
 
   const r = db.sincronizarTemplateWhatsapp(templateApi());
 
@@ -89,19 +88,18 @@ test('sync: convite_grupo_entrevista_vox passa no filtro e grava variaveis=[] e 
 });
 
 for (const nome of ['convite_bni_workshop_ady', 'convite_grupo_entrevista', 'convite_grupo_entrevista_x']) {
-  test(`sync: '${nome}' continua ignorado como fora_do_padrao`, () => {
+  test(`sync: '${nome}' tambem entra (sem filtro por nome)`, () => {
     zerar();
     const r = db.sincronizarTemplateWhatsapp(templateApi({ name: nome }));
 
-    assert.equal(r.ignorado, true);
-    assert.equal(r.razao, 'fora_do_padrao');
-    assert.equal(linha(nome), undefined);
+    assert.equal(r.ignorado, false);
+    assert.equal(linha(nome).ativo, 1);
   });
 }
 
 // ══════════════════ Boot ══════════════════
 
-test('boot: migrar() NAO desativa convite_grupo_entrevista_vox (e segue desativando o de outro uso)', async () => {
+test('boot: migrar() nao desativa nenhum template por nome', async () => {
   zerar();
   db.sincronizarTemplateWhatsapp(templateApi());
   exec(
@@ -112,7 +110,7 @@ test('boot: migrar() NAO desativa convite_grupo_entrevista_vox (e segue desativa
   await semRuido(() => migrar());
 
   assert.equal(linha(NOME).ativo, 1);
-  assert.equal(linha('convite_bni_workshop_ady').ativo, 0);
+  assert.equal(linha('convite_bni_workshop_ady').ativo, 1);
 });
 
 // ══════════════════ Campanha: criacao + envio em mock ══════════════════

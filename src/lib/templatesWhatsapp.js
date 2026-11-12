@@ -1,39 +1,38 @@
 'use strict';
 
-// Convencao de nome que distingue templates DA VENDEDOR MESTRE de outros usos da MESMA
-// conta Central Whats — a instancia e compartilhada (ex.: convite_bni_workshop_ady, do
-// workshop do BNI de Joinville, nao tem nada a ver com o Recrutador, mas passa pela mesma
-// API de listagem).
+// Modulo-FOLHA (nenhum require proprio) de proposito: e usado por db/sqlite.js, pelas rotas e
+// pelo ciclo de campanha — mesmo raciocinio de lib/slug.js e lib/normalizarEmail.js,
+// importaveis pela camada de dados sem abrir ciclo.
 //
-// Modulo-FOLHA (nenhum require proprio) de proposito: e usado tanto por db/sqlite.js
-// (sincronizarTemplateWhatsapp, o que ENTRA a partir de agora) quanto por db/migrate.js (a
-// correcao pontual do que ja entrou errado antes desta regra existir) — mesmo raciocinio de
-// lib/slug.js e lib/normalizarEmail.js, importaveis pela camada de dados sem abrir ciclo.
-//
-// ── SUFIXO "_vm" E A CONVENCAO, MAS SO 1 DOS 3 TEMPLATES ORIGINAIS A SEGUE DE VERDADE ──
-// confirmacao_cadastro_vaga_vm bate a regra. nova_vaga_v1 e nova_vaga_v2 sao templates
-// LEGITIMOS da Vendedor Mestre, ja aprovados e em uso — mas nasceram ANTES desta convencao
-// de nome existir, com sufixo _v1/_v2 em vez de _vm. Tratar como "fora do padrao" os
-// desativaria por engano, exatamente o oposto do que esta regra existe para proteger. Por
-// isso entram como EXCECAO EXPLICITA — nao por regra de nome, por identidade — em vez de
-// afrouxar o padrao (o que reabriria a porta pra qualquer coisa tipo "*_v[0-9]" colar aqui).
-//
-// O ideal, quando alguem tiver tempo, e renomear esses dois na Meta pra terminarem em _vm de
-// verdade e eliminar esta lista — ate la, ela e o jeito deliberado de nao quebrar producao.
-//
-// convite_grupo_entrevista_vox (2026-11-10): template da Vendedor Mestre aprovado na Meta
-// (marketing, pt_BR, sem variaveis, com botao; instancia Jean API na Central Whats) cujo
-// nome termina em _vox, e nao em _vm — e por isso o "Sincronizar templates" o ignorava como
-// 'fora_do_padrao'. Entra pelo nome EXATO, como os dois acima: variantes parecidas
-// (convite_grupo_entrevista, convite_grupo_entrevista_x) e os templates de outros usos da
-// conta continuam barrados. Precisa estar AQUI (e nao so no sync) porque db/migrate.js usa a
-// mesma regra no boot e desativaria o template a cada deploy.
-const EXCECOES_PADRAO_VM = ['nova_vaga_v1', 'nova_vaga_v2', 'convite_grupo_entrevista_vox'];
+// ── SEM FILTRO POR NOME (2026-11-11) ──
+// Existia aqui uma trava por padrao de nome (sufixo "_vm" + lista de excecoes), porque a
+// conta Central Whats era tratada como compartilhada com outros usos. Decisao de produto: a
+// instancia Jean API e usada SO pela Vendedor Mestre — todo template que a Central Whats
+// devolve e nosso. A trava foi removida; o que protege o envio agora e a guarda abaixo, pelo
+// CONTEUDO do template e nao pelo nome.
 
-function pertenceVendedorMestre(nomeMeta) {
-  const nome = String(nomeMeta || '').trim();
-  if (!nome) return false;
-  return nome.endsWith('_vm') || EXCECOES_PADRAO_VM.includes(nome);
+// ── TEMPLATE COM VARIAVEL SEM MAPEAMENTO ──
+// O sync grava cada {{n}} do BODY como `PLACEHOLDER_CAMPO_<n>` (ver extrairVariaveisDoBody em
+// db/sqlite.js): a API sabe ONDE ha variavel, mas nao QUAL dado nosso ela representa. Enquanto
+// alguem nao trocar o placeholder pelo campo real, enviar esse template mandaria a variavel
+// vazia (resolverVariaveis) — o erro 131008 da Meta, ou uma mensagem truncada. Por isso um
+// template nesse estado nao pode ser escolhido nem enviado em campanha.
+//
+// Tolerante por contrato: aceita o JSON da coluna `variaveis` ou o array ja lido; JSON
+// invalido/ausente conta como "sem variaveis" (o mesmo que resolverVariaveis faz).
+const PREFIXO_PLACEHOLDER = 'PLACEHOLDER_CAMPO_';
+
+function temVariavelSemMapeamento(variaveis) {
+  let lista = variaveis;
+  if (!Array.isArray(lista)) {
+    try {
+      lista = JSON.parse(variaveis || '[]');
+    } catch {
+      lista = [];
+    }
+  }
+  if (!Array.isArray(lista)) return false;
+  return lista.some((v) => v && String(v.campo || '').startsWith(PREFIXO_PLACEHOLDER));
 }
 
 // ── TEMPLATES_COM_BOTAO_DINAMICO (diagnostico da sessao de 2026-08-26/27) ──
@@ -49,11 +48,11 @@ function pertenceVendedorMestre(nomeMeta) {
 // nova_vaga_v2 TAMBEM tem botao_parametro_fixo NULL hoje, e nao ha nenhuma evidencia de que
 // tenham botao dinamico — pelo CONTRATO DOCUMENTADO da coluna, NULL neles significa "sem
 // botao mesmo". Generalizar por NULL mandaria um button0 indevido pra eles no dia em que
-// alguem os usar de verdade (divulgacao_vaga). Mesmo precedente de EXCECOES_PADRAO_VM acima:
-// excecao por IDENTIDADE (nome do template), nao por inferencia de outro campo.
+// alguem os usar de verdade (divulgacao_vaga). Excecao por IDENTIDADE (nome do template),
+// nao por inferencia de outro campo.
 //
 // Quando outro template com o mesmo caso for aprovado na Meta, esta lista cresce — uma linha
-// de codigo, revisada, o mesmo raciocinio de EXCECOES_PADRAO_VM. Nao virou coluna nova (ex.:
+// de codigo, revisada. Nao virou coluna nova (ex.:
 // um enum 'tipo_botao') porque so ha UM caso confirmado ate agora; se um segundo aparecer
 // vale reabrir essa decisao.
 const TEMPLATES_COM_BOTAO_DINAMICO = ['convite_grupo_vagas_vm'];
@@ -182,8 +181,8 @@ function montarUrlDoBotao(padraoUrl, valor) {
 }
 
 module.exports = {
-  pertenceVendedorMestre,
-  EXCECOES_PADRAO_VM,
+  temVariavelSemMapeamento,
+  PREFIXO_PLACEHOLDER,
   precisaBotaoDinamico,
   TEMPLATES_COM_BOTAO_DINAMICO,
   extrairBotoes,

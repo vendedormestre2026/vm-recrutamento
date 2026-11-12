@@ -35,7 +35,7 @@ const { normalizarTelefoneRecebido } = require('../lib/whatsapp');
 // Modulo-FOLHA (nenhum require proprio) — usado por sincronizarTemplateWhatsapp pra decidir
 // quais templates da mesma conta Central Whats sao da Vendedor Mestre. Mesma justificativa
 // dos demais requires de lib/ nesta secao.
-const { pertenceVendedorMestre, extrairBotoes } = require('../lib/templatesWhatsapp');
+const { extrairBotoes } = require('../lib/templatesWhatsapp');
 // Mesmo criterio dos requires acima: lib/chaveTelefone e modulo-FOLHA. E a identidade de
 // supressao da tabela whatsapp_optout — quem grava e quem le passam por ele, sempre, para
 // as duas pontas usarem literalmente a mesma chave (ver o cabecalho de la).
@@ -3678,20 +3678,9 @@ function sincronizarTemplateWhatsapp(templateCentralWhats) {
     return { ignorado: true, razao: 'sem_nome', motivo: 'template sem "name"' };
   }
 
-  // ── FILTRO POR PADRAO DE NOME (a mesma conta Central Whats serve outros usos) ──
-  // pertenceVendedorMestre (lib/templatesWhatsapp.js): sufixo "_vm" OU lista de excecao
-  // explicita (nova_vaga_v1/v2 — templates legitimos que nasceram antes da convencao
-  // existir). Quem nao bate — ex.: convite_bni_workshop_ady, do workshop do BNI, outro uso
-  // da mesma instancia — e ignorado aqui, ANTES de tocar o banco: nunca chega a ser
-  // inserido nem atualizado. `razao: 'fora_do_padrao'` e distinta das outras (o chamador,
-  // a rota de sync, conta isso separado no resumo — ver admin_campanha_whatsapp.js).
-  if (!pertenceVendedorMestre(nomeMeta)) {
-    return {
-      ignorado: true,
-      razao: 'fora_do_padrao',
-      motivo: `nome '${nomeMeta}' nao pertence a Vendedor Mestre (nem termina em '_vm' nem esta na lista de excecao)`,
-    };
-  }
+  // Sem filtro por nome (2026-11-11): a instancia Jean API e so da Vendedor Mestre, entao
+  // todo template aprovado entra. Template com variavel ainda sem mapeamento entra tambem,
+  // mas nao pode ser usado em campanha — ver temVariavelSemMapeamento (lib/templatesWhatsapp).
 
   const categoria = String(t.category || '').trim().toLowerCase();
   if (!['marketing', 'utility', 'authentication'].includes(categoria)) {

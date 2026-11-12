@@ -32,6 +32,7 @@ const optout = require('../lib/optoutWhatsapp');
 const {
   botoesDoTemplate,
   indiceBotaoDescadastro,
+  temVariavelSemMapeamento,
 } = require('../lib/templatesWhatsapp');
 // Os parametros de botao (slug do grupo, token de descadastro) vem do modulo COMPARTILHADO
 // com o ciclo de campanha (lib/campanhaWhatsapp.js). Esta rota montava os dela a mao e ficou
@@ -257,7 +258,6 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
   const nSyncNovos = Number(query.sync_novos);
   const nSyncAtualizados = Number(query.sync_atualizados);
   const nSyncIgnorados = Number(query.sync_ignorados);
-  const nSyncForaDoPadrao = Number(query.sync_ignorados_fora_do_padrao);
   const flashSync =
     query.sync_erro != null
       ? `<div class="aviso-alerta">Não foi possível sincronizar com o Central Whats: ${escapeHtml(String(query.sync_erro))}</div>`
@@ -265,10 +265,6 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
         ? `<div class="aviso-ok">Sincronização concluída: ${nSyncNovos} template(s) novo(s), ${nSyncAtualizados} atualizado(s)${
             Number.isInteger(nSyncIgnorados) && nSyncIgnorados > 0
               ? `, ${nSyncIgnorados} ignorado(s) (status diferente de aprovado ou dado incompleto)`
-              : ''
-          }${
-            Number.isInteger(nSyncForaDoPadrao) && nSyncForaDoPadrao > 0
-              ? `, ${nSyncForaDoPadrao} fora do padrão de nome (não é da Vendedor Mestre, ignorado(s) de propósito)`
               : ''
           }.</div>`
         : '';
@@ -299,7 +295,11 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
   // so oferecem template ATIVO — `templates` (todos, inclusive placeholders com ativo=0)
   // continua alimentando so a tabela "Templates aprovados (somente leitura)", que existe
   // justamente para mostrar o espelho completo.
-  const templatesAtivos = db.listarTemplatesWhatsapp({ apenasAtivos: true });
+  // (2026-11-11) Template com variavel ainda sem mapeamento (PLACEHOLDER_CAMPO_*) tambem fica
+  // FORA dos selects: enviado, mandaria a variavel vazia. Ver temVariavelSemMapeamento.
+  const templatesAtivos = db
+    .listarTemplatesWhatsapp({ apenasAtivos: true })
+    .filter((t) => !temVariavelSemMapeamento(t.variaveis));
   const regioes = db.listarRegioesGrupos();
   // Vaga sendo DIVULGADA (Incremento 7): so ativas, mesmo recorte de admin_promocao.js
   // (vagasAtivas). Divulgar uma vaga inativa nao faz sentido — seria convidar gente para se
@@ -432,7 +432,11 @@ function montarConteudoCampanhaWhatsapp({ escapeHtml, fmtInt, formatarDataHora, 
               <td><code>${escapeHtml(t.nome_meta)}</code></td>
               <td>${escapeHtml(t.idioma)}</td>
               <td>${escapeHtml(t.categoria)}</td>
-              <td style="font-size:.85rem">${escapeHtml(t.variaveis)}</td>
+              <td style="font-size:.85rem">${escapeHtml(t.variaveis)}${
+                temVariavelSemMapeamento(t.variaveis)
+                  ? '<br><span class="badge badge--aplicado" title="Há variável sem campo mapeado (PLACEHOLDER_CAMPO_*). Não pode ser usado em campanha até o mapeamento ser configurado.">sem mapeamento — bloqueado</span>'
+                  : ''
+              }</td>
               <td style="font-size:.85rem">${celulaBotoesTemplate(t, escapeHtml)}</td>
               <td style="font-size:.85rem">${celulaSincronizacaoTemplate(t, escapeHtml, formatarDataHora)}</td>
             </tr>`).join('') || '<tr><td colspan="6">Nenhum template. Rode o seed.</td></tr>'}
@@ -895,22 +899,16 @@ function criarRouterCampanhaWhatsapp({
       let novos = 0;
       let atualizados = 0;
       let ignorados = 0;
-      // Contado A PARTE dos demais ignorados (status/categoria/nome ausente): sao templates
-      // de OUTRO uso da mesma conta Central Whats (ex.: convite_bni_workshop_ady, do
-      // workshop do BNI) — nao e um problema de dado, e o filtro funcionando como esperado.
-      // Ver razao: 'fora_do_padrao' em sincronizarTemplateWhatsapp (sqlite.js).
-      let ignoradosForaDoPadrao = 0;
       for (const t of resultado.templates) {
         const r = db.sincronizarTemplateWhatsapp(t);
-        if (r.ignorado && r.razao === 'fora_do_padrao') ignoradosForaDoPadrao += 1;
-        else if (r.ignorado) ignorados += 1;
+        if (r.ignorado) ignorados += 1;
         else if (r.novo) novos += 1;
         else atualizados += 1;
       }
 
       return res.redirect(
         `/admin/campanhas-whatsapp?sync_novos=${novos}&sync_atualizados=${atualizados}` +
-          `&sync_ignorados=${ignorados}&sync_ignorados_fora_do_padrao=${ignoradosForaDoPadrao}`,
+          `&sync_ignorados=${ignorados}`,
       );
     } catch (err) {
       console.error(`[campanha-wa] sincronizacao de templates falhou inesperadamente: ${err.message}`);
@@ -947,6 +945,11 @@ function criarRouterCampanhaWhatsapp({
     // no Incremento 7 (form adulterado/direto nao pode furar a checagem do servidor).
     if (!templateEscolhido.ativo) {
       return res.redirect('/admin/campanhas-whatsapp?erro=template_inativo');
+    }
+    // Variavel sem mapeamento (PLACEHOLDER_CAMPO_*): o select ja nao a oferece, mas o POST nao
+    // confia so nisso — mesma disciplina da checagem de ativo acima.
+    if (temVariavelSemMapeamento(templateEscolhido.variaveis)) {
+      return res.redirect('/admin/campanhas-whatsapp?erro=template_sem_mapeamento');
     }
     const tipo = OBJETIVOS.some(([v]) => v === b.tipo_mensagem) ? b.tipo_mensagem : 'convite_grupo';
 
@@ -1109,6 +1112,12 @@ function criarRouterCampanhaWhatsapp({
       return res.status(400).json({
         ok: false,
         erro: 'Este template não está ativo/sincronizado, não pode ser usado para envio.',
+      });
+    }
+    if (temVariavelSemMapeamento(template.variaveis)) {
+      return res.status(400).json({
+        ok: false,
+        erro: 'Este template tem variável sem mapeamento (PLACEHOLDER_CAMPO_*), não pode ser usado para envio.',
       });
     }
 

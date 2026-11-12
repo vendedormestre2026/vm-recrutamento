@@ -77,8 +77,8 @@ const TEMPLATE_B = {
   status: 'APPROVED',
   components: [{ type: 'BODY', text: 'Confira {{1}} vagas em {{2}}.' }],
 };
-// Fora do padrao _vm (nao e da Vendedor Mestre) — mesmo caso real de convite_bni_workshop_ady.
-const TEMPLATE_FORA_DO_PADRAO = {
+// Sem sufixo _vm (caso real de convite_bni_workshop_ady) — desde 2026-11-11 entra como qualquer outro.
+const TEMPLATE_SEM_VM = {
   name: 'convite_bni_workshop_ady',
   category: 'MARKETING',
   language: 'pt_BR',
@@ -133,24 +133,23 @@ test('template com status nao aprovado entra em sync_ignorados, sem virar erro',
   });
 });
 
-test('template fora do padrao de nome (outro uso da mesma conta) entra em sync_ignorados_fora_do_padrao, separado dos demais ignorados', async () => {
+test('template sem sufixo "_vm" e sincronizado como qualquer outro (sem filtro por nome)', async () => {
   zerar();
   const transportePartial = {
-    listarTemplatesCentralWhats: async () => ({ ok: true, templates: [TEMPLATE_A, TEMPLATE_FORA_DO_PADRAO] }),
+    listarTemplatesCentralWhats: async () => ({ ok: true, templates: [TEMPLATE_A, TEMPLATE_SEM_VM] }),
   };
 
   await comRotaSincronizar(transportePartial, async (base) => {
     const res = await post(base);
     const location = res.headers.get('location');
-    assert.match(location, /sync_novos=1/);
+    assert.match(location, /sync_novos=2/);
     assert.match(location, /sync_ignorados=0/);
-    assert.match(location, /sync_ignorados_fora_do_padrao=1/);
+    assert.doesNotMatch(location, /fora_do_padrao/);
   });
 
-  assert.equal(
+  assert.ok(
     db.getDb().prepare('SELECT 1 FROM templates_whatsapp WHERE nome_meta = ?').get('convite_bni_workshop_ady'),
-    undefined,
-    'template fora do padrao nao pode ser gravado',
+    'template sem "_vm" deveria ter sido gravado',
   );
 });
 
@@ -211,13 +210,14 @@ test('view: banner de erro aparece quando a query tem sync_erro, com o texto esc
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/, 'erro vindo de fora tem que passar por escapeHtml');
 });
 
-test('view: banner de sucesso menciona os ignorados fora do padrao quando houver', () => {
+test('view: banner de sucesso nao fala mais em "fora do padrão"', () => {
   const html = montarConteudoCampanhaWhatsapp({
     escapeHtml,
     fmtInt: String,
     query: { sync_novos: '1', sync_atualizados: '0', sync_ignorados: '0', sync_ignorados_fora_do_padrao: '1' },
   });
-  assert.match(html, /1 fora do padrão de nome/);
+  assert.match(html, /Sincronização concluída: 1 template\(s\) novo\(s\), 0 atualizado\(s\)\./);
+  assert.doesNotMatch(html, /fora do padrão/);
 });
 
 test('view: botao "Sincronizar templates" existe na tela, com a action certa', () => {

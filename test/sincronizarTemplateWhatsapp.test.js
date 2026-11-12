@@ -195,54 +195,32 @@ test('body sem nenhuma variavel {{n}}: variaveis vira array vazio, nao quebra', 
   assert.deepEqual(JSON.parse(linha('confirmacao_pedido_vm').variaveis), []);
 });
 
-// ══════════════════ Filtro por padrao de nome (ETAPA C, Incremento 2 da correcao) ══════════════════
+// ══════════════════ Sem filtro por nome (2026-11-11) ══════════════════
 //
-// A mesma conta Central Whats serve outros usos (ex.: convite_bni_workshop_ady, do workshop
-// do BNI de Joinville) — o filtro garante que a sincronizacao so toca templates da Vendedor
-// Mestre. Ver src/lib/templatesWhatsapp.js para a regra completa (sufixo "_vm" + excecoes).
+// A instancia Jean API e so da Vendedor Mestre: o sync aceita QUALQUER nome aprovado. O que
+// impede um template sem mapeamento de ser usado em campanha e temVariavelSemMapeamento
+// (ver test/templateSemMapeamentoBloqueado.test.js), nao o nome.
 
-test('nome com sufixo "_vm": sincroniza normalmente (insert)', () => {
-  zerar();
-  const r = db.sincronizarTemplateWhatsapp(templateApi({ name: 'qualquer_coisa_vm' }));
-  assert.equal(r.ignorado, false);
-  assert.equal(r.novo, true);
-  assert.ok(linha('qualquer_coisa_vm'));
-});
+for (const nome of ['qualquer_coisa_vm', 'convite_bni_workshop_ady', 'nova_vaga_v1', 'convite_grupo_entrevista_vox', 'followup1_workshop']) {
+  test(`sync aceita nome qualquer: '${nome}' e inserido`, () => {
+    zerar();
+    const r = db.sincronizarTemplateWhatsapp(templateApi({ name: nome }));
+    assert.equal(r.ignorado, false);
+    assert.equal(r.novo, true);
+    assert.ok(linha(nome));
+  });
+}
 
-test('nome SEM sufixo "_vm" e fora da lista de excecao: ignorado (nao aparece como novo, nao grava linha)', () => {
-  zerar();
-  const r = db.sincronizarTemplateWhatsapp(templateApi({ name: 'convite_bni_workshop_ady' }));
-  assert.equal(r.ignorado, true);
-  assert.equal(r.razao, 'fora_do_padrao');
-  assert.match(r.motivo, /convite_bni_workshop_ady/);
-  assert.equal(linha('convite_bni_workshop_ady'), undefined, 'nao pode gravar NENHUMA linha pra um nome fora do padrao');
-});
-
-test('nome fora do padrao, mas ja existente localmente: sync NAO atualiza (nao aparece como atualizado)', () => {
+test('nome sem "_vm" ja existente localmente: sync ATUALIZA (idioma vem da Meta)', () => {
   zerar();
   exec(
     `INSERT INTO templates_whatsapp (nome_meta, idioma, categoria, variaveis, ativo)
-     VALUES ('convite_bni_workshop_ady', 'pt_BR', 'marketing', '[]', 1)`,
+     VALUES ('convite_bni_workshop_ady', 'pt_BR', 'marketing', '[]', 0)`,
   );
   const r = db.sincronizarTemplateWhatsapp(
     templateApi({ name: 'convite_bni_workshop_ady', category: 'MARKETING', language: 'en_US' }),
   );
-  assert.equal(r.ignorado, true);
-  assert.equal(r.razao, 'fora_do_padrao');
-  // idioma NAO pode ter mudado pra en_US — o sync nem chegou a tocar a linha.
-  assert.equal(linha('convite_bni_workshop_ady').idioma, 'pt_BR');
-});
-
-test('EXCECAO explicita: nova_vaga_v1 sincroniza mesmo sem terminar em "_vm"', () => {
-  zerar();
-  const r = db.sincronizarTemplateWhatsapp(templateApi({ name: 'nova_vaga_v1', category: 'MARKETING' }));
-  assert.equal(r.ignorado, false);
-  assert.ok(linha('nova_vaga_v1'));
-});
-
-test('EXCECAO explicita: nova_vaga_v2 sincroniza mesmo sem terminar em "_vm"', () => {
-  zerar();
-  const r = db.sincronizarTemplateWhatsapp(templateApi({ name: 'nova_vaga_v2', category: 'MARKETING' }));
-  assert.equal(r.ignorado, false);
-  assert.ok(linha('nova_vaga_v2'));
+  assert.deepEqual(r, { ignorado: false, novo: false, nomeMeta: 'convite_bni_workshop_ady' });
+  assert.equal(linha('convite_bni_workshop_ady').idioma, 'en_US');
+  assert.equal(linha('convite_bni_workshop_ady').ativo, 0, 'sync nunca reativa: ativo e decisao humana');
 });
